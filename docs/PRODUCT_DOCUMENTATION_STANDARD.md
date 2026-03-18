@@ -1,54 +1,67 @@
-# Product Documentation Standard (Focista Schedulo)
+# Product Documentation Standard — Focista Schedulo
+
+**Last updated:** 2026-03-18  
+**Owner:** Product (with Design and Engineering)
+
+---
 
 ## Purpose
 
-This standard defines how we write, structure, and maintain product documentation for **Focista Schedulo** so it stays:
+This standard defines how we write, structure, and maintain product documentation for **Focista Schedulo** so that it remains:
 
-- **Current** with the shipped product
+- **Current** with the shipped product and codebase
 - **Readable** by product, design, and engineering
 - **Actionable** for decision-making, delivery, and onboarding
 
-## Document set and responsibilities
+All documentation should reflect the most up-to-date and comprehensive information about product overview, benefits, features, logic, business guidelines, tech guidelines, tech stack, and other important elements.
+
+---
+
+## Document Set and Responsibilities
 
 | Document | Audience | Ownership | Update cadence |
-|---|---|---|---|
-| `README.md` | Everyone | Engineering | Every meaningful change |
-| `docs/PRD.md` | Product, Design, Engineering | Product | Monthly + major features |
+|----------|----------|-----------|----------------|
+| `README.md` (root) | Everyone | Engineering | Every meaningful product or repo change |
+| `docs/README.md` | Everyone | Product | When doc set changes |
+| `docs/PRD.md` | Product, Design, Engineering | Product | Monthly and on major features |
 | `docs/USER_PERSONAS.md` | Product, Design | Product | Quarterly |
-| `docs/USER_STORIES.md` | Product, Engineering | Product | Sprint planning |
-| `docs/PRODUCT_METRICS.md` | Product | Product Analytics | Monthly |
+| `docs/USER_STORIES.md` | Product, Engineering | Product | Sprint planning and feature release |
+| `docs/PRODUCT_METRICS.md` | Product, Analytics | Product Analytics | Monthly |
 | `docs/METRICS_AND_OKRS.md` | Product Leadership | Product | Quarterly |
-| `docs/DESIGN_GUIDELINES.md` | Design, Engineering | Design | Quarterly + theme changes |
-| `docs/ARCHITECTURE.md` | Engineering | Engineering | Every architectural change |
-| `docs/VARIABLES.md` | Product, Analytics, Engineering | Product Analytics | Monthly + model changes |
+| `docs/DESIGN_GUIDELINES.md` | Design, Engineering | Design | Quarterly and on theme/component changes |
+| `docs/ARCHITECTURE.md` | Engineering | Engineering | On architectural or API changes |
+| `docs/VARIABLES.md` | Product, Analytics, Engineering | Product Analytics | Monthly and on model/schema changes |
+| `docs/PRODUCT_DOCUMENTATION_STANDARD.md` | All | Product | When standards change |
 
-## Writing principles
+---
 
-- **Single source of truth**: Every claim must map to either the current UI, the API, or a tracked plan in PRD.
-- **Prefer plain language**: Use short paragraphs, clear headings, and consistent terminology.
-- **Define before you use**: Every metric/variable should be defined once in `docs/VARIABLES.md`.
-- **Separate “shipped” vs “planned”**:
-  - **Shipped**: present in the current UI/API.
-  - **Planned**: explicitly labeled with status (e.g., “Planned”, “In discovery”).
-- **Avoid ambiguity**:
-  - Use examples and specify edge cases (time zones, recurring tasks, id formats).
-- **Traceability**:
-  - Architecture docs should reference the key files and endpoints.
+## Writing Principles
 
-## Required template sections
+1. **Single source of truth** — Every claim must map to the current UI, API, or a tracked plan in the PRD. Avoid contradicting the codebase.
+2. **Plain language** — Use short paragraphs, clear headings, and consistent terminology. Prefer active voice.
+3. **Define before use** — Every metric and variable is defined once in `docs/VARIABLES.md` with a friendly name, definition, formula (if derived), location in the app, and example.
+4. **Shipped vs planned** — Clearly separate:
+   - **Shipped:** Present in the current UI/API.
+   - **Planned:** Explicitly labeled (e.g., “Planned”, “In discovery”, “Roadmap”).
+5. **Avoid ambiguity** — Use examples and specify edge cases (time zones, recurring tasks, ID formats, multi-link and multi-location behavior).
+6. **Traceability** — Architecture and tech docs should reference key files and endpoints.
+
+---
+
+## Required Template Sections
 
 ### PRD (`docs/PRD.md`)
 
-- **Problem statement**
-- **Target users**
-- **Goals / Non-goals**
-- **Scope (MVP / Current / Next)**
-- **Functional requirements**
-- **Non-functional requirements**
-- **User experience**
-- **Analytics / Metrics**
-- **Risks and mitigations**
-- **Open questions**
+- Product summary and problem statement
+- Target users (with pointer to personas)
+- Goals and non-goals
+- Scope (MVP / current shipped / next)
+- Core features and functional requirements
+- Non-functional requirements
+- User experience (primary flows, key UX principles)
+- Analytics and metrics (pointer to metrics docs)
+- Risks and mitigations
+- Open questions and roadmap
 
 ### Variables (`docs/VARIABLES.md`)
 
@@ -58,35 +71,84 @@ For every variable (field, metric, derived value):
 - **Friendly name**
 - **Definition**
 - **Formula** (if derived)
-- **Location in app** (UI sections)
+- **Location in app** (UI sections and components)
 - **Source of truth** (backend vs frontend-derived)
 - **Example**
+- **Relationships** (e.g., used by which other variables or components); maintain a high-level relationship chart
 
 ### Design Guidelines (`docs/DESIGN_GUIDELINES.md`)
 
-- **Theme palettes** (with hex codes)
-- **Typography**
-- **Component rules** (buttons, pills, cards, drawers, calendar)
-- **Accessibility** (contrast, focus)
-- **Interaction states** (hover, active, disabled)
+- Theme palettes (with hex codes and usage)
+- Typography (families, sizes, weights)
+- Component rules (buttons, pills, cards, drawers, calendar, hovercard)
+- Priority and status color mapping
+- Accessibility (contrast, focus, keyboard)
+- Interaction states (hover, active, disabled)
 
-## Versioning and change management
+### User Personas (`docs/USER_PERSONAS.md`)
 
-- Every doc should include:
+- Profile, primary goals, key behaviors
+- Pain points and what success looks like
+- Optional: quote or scenario
+
+### User Stories (`docs/USER_STORIES.md`)
+
+- Format: “As a [role], I want [goal] so that [benefit].”
+- Acceptance criteria per story
+- Grouped by epic/area (capture, projects, recurrence, calendar, export, gamification, etc.)
+
+### Product Metrics (`docs/PRODUCT_METRICS.md`)
+
+- North Star and key product metrics
+- Definitions, formulas, instrumentation notes
+- Pointers to VARIABLES.md for underlying fields
+
+### Metrics and OKRs (`docs/METRICS_AND_OKRS.md`)
+
+- Guiding principles (outcome over output, leading/lagging)
+- Objectives and key results
+- Inputs and initiatives
+
+### Architecture (`docs/ARCHITECTURE.md`)
+
+- Overview and repository structure
+- Runtime topology (diagram)
+- Data model summary and persistence
+- Recurrence and identity strategy
+- API surface and frontend state synchronization
+- Build and dev commands
+
+---
+
+## Versioning and Change Management
+
+- Every document includes:
   - **Last updated** date
-  - **Owner** section
-- If a doc conflicts with behavior:
-  - Fix the docs within the same change set, or
-  - Add a “Known mismatch” note with a fix target date.
+  - **Owner** (role or team)
+- If a doc conflicts with actual behavior:
+  - Fix the docs in the same change set as the code, or
+  - Add a “Known mismatch” note with a target fix date.
 
-## Naming and terminology
+---
 
-Use the following canonical terms:
+## Naming and Terminology
 
-- **Task**: a unit of work with optional scheduling and metadata.
-- **Project**: a grouping container for tasks.
-- **Series**: a repeating task pattern (recurring).
-- **Occurrence**: a specific instance of a series.
-- **Calendar view**: month grid + day agenda timeline.
-- **Voice input**: speech-to-form autofill in the task editor.
+Use these canonical terms consistently:
 
+| Term | Definition |
+|------|-------------|
+| **Task** | A unit of work with optional scheduling and metadata. |
+| **Project** | A grouping container for tasks (e.g., Work, Personal). |
+| **Series** | A repeating task pattern (recurrence). |
+| **Occurrence** | A specific instance of a series (may have Child ID). |
+| **Parent ID** | Stable identifier for a task or series: `YYYYMMDD-N`. |
+| **Child ID** | Identifier for an occurrence within a series: `${parentId}-${index}`. |
+| **Calendar view** | Month grid plus day-agenda timeline. |
+| **Day agenda** | Hourly timeline for a single day. |
+| **Voice input** | Speech-to-form autofill in the task editor. |
+| **Hovercard** | Popover on task hover showing full task details. |
+| **List view** | Task list with optional timeframe and status filters; repeating tasks can be expanded to show occurrences. |
+
+---
+
+**Last updated:** 2026-03-18

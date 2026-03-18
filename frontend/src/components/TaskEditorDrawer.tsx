@@ -1,10 +1,16 @@
 import { Task } from "./TaskBoard";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 interface TaskEditorDrawerProps {
   task: Task | null;
   onClose: () => void;
   onSave: (task: Task) => void;
+  // Emits live label tokens while user edits, so the board/hovercard can update
+  // before "Save task" is pressed.
+  onLabelsDraftChange?: (labels: string[]) => void;
+  // Emits live link tokens while user edits, so the board/hovercard can update
+  // before "Save task" is pressed.
+  onLinksDraftChange?: (links: string[]) => void;
 }
 
 type SpeechRecognitionCtor = new () => {
@@ -18,8 +24,31 @@ type SpeechRecognitionCtor = new () => {
   stop: () => void;
 };
 
-export function TaskEditorDrawer({ task, onClose, onSave }: TaskEditorDrawerProps) {
+export function TaskEditorDrawer({
+  task,
+  onClose,
+  onSave,
+  onLabelsDraftChange,
+  onLinksDraftChange
+}: TaskEditorDrawerProps) {
   const [draft, setDraft] = useState<Task | null>(task);
+  // Keep the text inputs for labels/location empty so users can add new
+  // values without having to clear the existing draft content first.
+  const [labelsInputValue, setLabelsInputValue] = useState<string>("");
+  const hasInteractedWithLabelsRef = useRef(false);
+  const [selectedLabelKeys, setSelectedLabelKeys] = useState<Set<string>>(
+    () => new Set()
+  );
+  // Prevent the "sync labels -> input" effect from immediately overwriting
+  // the user's cleared buffer right after committing labels via Enter/blur.
+  const suppressLabelsInputSyncRef = useRef(false);
+
+  const [linksInputValue, setLinksInputValue] = useState<string>(
+    ""
+  );
+  const [locationInputValue, setLocationInputValue] = useState<string>("");
+  const hasInteractedWithLinksRef = useRef(false);
+  const suppressLinksInputSyncRef = useRef(false);
   const [voiceSupported, setVoiceSupported] = useState(true);
   const [listening, setListening] = useState(false);
   const [voiceError, setVoiceError] = useState<string | null>(null);
@@ -27,9 +56,348 @@ export function TaskEditorDrawer({ task, onClose, onSave }: TaskEditorDrawerProp
   const [durationUnit, setDurationUnit] = useState<"minute" | "hour" | "day">("minute");
   const [durationAmount, setDurationAmount] = useState<string>("");
 
+  const parseLabelsInput = (raw: string): string[] => {
+    const cleaned = raw
+      .trim()
+      .replaceAll(";", ",")
+      .replaceAll("&", ",")
+      // Allow “and” / “dan” style separators from text input.
+      .replace(/\s+(?:and|dan)\s+/gi, ",");
+    if (!cleaned) return [];
+
+    const parts = cleaned
+      .split(",")
+      .map((p) => p.trim())
+      .filter(Boolean)
+      .slice(0, 12);
+
+    const deduped: string[] = [];
+    const seen = new Set<string>();
+    for (const p of parts) {
+      const normalized = p.replace(/\s+/g, " ");
+      const key = normalized.toLowerCase();
+      if (seen.has(key)) continue;
+      seen.add(key);
+      deduped.push(normalized);
+    }
+    return deduped;
+  };
+
+  const normalizeSingleLabel = (raw: string): string => raw.trim().replace(/\s+/g, " ");
+
+  const mergeLabelTokens = (existing: string[], incoming: string[]): string[] => {
+    const out = [...(existing ?? [])];
+    const seen = new Set(out.map((l) => l.toLowerCase()));
+    for (const rawToken of incoming) {
+      const token = normalizeSingleLabel(rawToken);
+      if (!token) continue;
+      const key = token.toLowerCase();
+      if (seen.has(key)) continue;
+      seen.add(key);
+      out.push(token);
+    }
+    // Deterministic ordering for UX and exports: ascending, case-insensitive.
+    const toKey = (s: string) => s.trim().toLowerCase();
+    return out
+      .slice()
+      .sort((a, b) => toKey(a).localeCompare(toKey(b)) || a.localeCompare(b));
+  };
+
+  const normalizeLinkHref = (raw: string): string | null => {
+    let t = raw.trim();
+    if (!t) return null;
+
+    // Strip trailing punctuation that users often paste with URLs.
+    t = t.replace(/[),.;]+$/g, "");
+    if (!t) return null;
+
+    if (/^https?:\/\//i.test(t)) return t;
+    if (/^www\./i.test(t)) return `https://${t}`;
+
+    // If it looks like a domain (with optional path), assume https.
+    if (/^[a-z0-9-]+(\.[a-z0-9-]+)+([/?#].*)?$/i.test(t) && !/\s/.test(t)) {
+      return `https://${t}`;
+    }
+
+    // Reject whitespace-containing tokens.
+    if (/\s/.test(t)) return null;
+    return `https://${t}`;
+  };
+
+  const parseLinkAliasToken = (raw: string): { href: string; label?: string } | null => {
+    const t = raw.trim();
+    if (!t) return null;
+    const arrowIdx = t.indexOf("=>");
+    if (arrowIdx >= 0) {
+      const labelRaw = t.slice(0, arrowIdx).trim();
+      const hrefRaw = t.slice(arrowIdx + 2).trim();
+      if (!hrefRaw) return null;
+      const href = normalizeLinkHref(hrefRaw);
+      if (!href) return null;
+      const label = labelRaw ? labelRaw.replace(/\s+/g, " ").trim() : undefined;
+      return { href, label };
+    }
+
+    const href = normalizeLinkHref(t);
+    if (!href) return null;
+    return { href };
+  };
+
+  const normalizeLinkToken = (raw: string): string | null => {
+    const parsed = parseLinkAliasToken(raw);
+    if (!parsed) return null;
+    if (parsed.label) return `${parsed.label}=>${parsed.href}`;
+    return parsed.href;
+  };
+
+  const splitLinkStoredToken = (token: string): { href: string; label?: string } => {
+    const t = token.trim();
+    const idx = t.indexOf("=>");
+    if (idx >= 0) {
+      const label = t.slice(0, idx).trim();
+      const href = t.slice(idx + 2).trim();
+      return href ? { href, label: label || undefined } : { href: t };
+    }
+    return { href: t };
+  };
+
+  const linkHrefKey = (token: string): string => {
+    const { href } = splitLinkStoredToken(token);
+    return href.toLowerCase();
+  };
+
+  const sortLinksAsc = (links: string[]) => {
+    return links
+      .slice()
+      .sort((a, b) => linkHrefKey(a).localeCompare(linkHrefKey(b)) || a.localeCompare(b));
+  };
+
+  const parseLinksInput = (raw: string): string[] => {
+    const cleaned = raw
+      .trim()
+      .replaceAll(";", ",")
+      .replaceAll("&", ",")
+      .replace(/\n+/g, ",");
+    if (!cleaned) return [];
+
+    const parts = cleaned
+      .split(",")
+      .map((p) => p.trim())
+      .filter(Boolean)
+      .slice(0, 12);
+
+    const out: string[] = [];
+    const seenByHref = new Map<string, string>(); // hrefKey -> stored token
+    for (const p of parts) {
+      const norm = normalizeLinkToken(p);
+      if (!norm) continue;
+      const parsed = splitLinkStoredToken(norm);
+      const key = parsed.href.toLowerCase();
+      // If label exists, prefer it.
+      if (parsed.label) {
+        seenByHref.set(key, norm);
+      } else if (!seenByHref.has(key)) {
+        seenByHref.set(key, norm);
+      }
+    }
+    for (const token of seenByHref.values()) out.push(token);
+    return sortLinksAsc(out);
+  };
+
+  const mergeLinkTokens = (existing: string[], incoming: string[]): string[] => {
+    const map = new Map<string, string>(); // hrefKey -> stored token
+    for (const e of existing ?? []) {
+      const parsed = splitLinkStoredToken(e);
+      if (!parsed.href) continue;
+      map.set(parsed.href.toLowerCase(), e);
+    }
+
+    for (const rawToken of incoming) {
+      const norm = normalizeLinkToken(rawToken);
+      if (!norm) continue;
+      const parsed = splitLinkStoredToken(norm);
+      const key = parsed.href.toLowerCase();
+
+      const hasLabel = !!parsed.label;
+      if (hasLabel) {
+        map.set(key, norm);
+      } else if (!map.has(key)) {
+        map.set(key, norm);
+      }
+    }
+
+    return sortLinksAsc(Array.from(map.values()));
+  };
+
+  const normalizeSingleLocation = (raw: string): string =>
+    raw.trim().replace(/\s+/g, " ");
+
+  // Locations are persisted as a single string in the backend.
+  // We encode multiple locations as a pipe-delimited list: `loc1|loc2|...`.
+  const deserializeLocationTokens = (raw: string | undefined | null): string[] => {
+    const t = raw?.trim() ?? "";
+    if (!t) return [];
+    if (t.includes("|")) {
+      return t
+        .split("|")
+        .map((s) => normalizeSingleLocation(s))
+        .filter(Boolean);
+    }
+    // Backward compatible: a single legacy location is stored as-is.
+    return [normalizeSingleLocation(t)].filter(Boolean);
+  };
+
+  const serializeLocationTokens = (tokens: string[]): string | undefined => {
+    const cleaned = tokens.map(normalizeSingleLocation).filter(Boolean);
+    return cleaned.length ? cleaned.join("|") : undefined;
+  };
+
+  const parseLocationsInput = (raw: string): string[] => {
+    const cleaned = raw
+      .trim()
+      // Allow many common separators.
+      .replaceAll("|", ",")
+      .replaceAll(";", ",")
+      .replaceAll("&", ",")
+      .replace(/\n+/g, ",");
+    if (!cleaned) return [];
+
+    const parts = cleaned
+      .split(",")
+      .map((p) => p.trim())
+      .filter(Boolean)
+      .slice(0, 12);
+
+    const outByQuery = new Map<string, string>(); // queryKey -> stored token
+    for (const p of parts) {
+      const arrowIdx = p.indexOf("=>");
+      let label: string | undefined;
+      let query = p;
+      if (arrowIdx >= 0) {
+        const labelRaw = p.slice(0, arrowIdx).trim();
+        const queryRaw = p.slice(arrowIdx + 2).trim();
+        if (labelRaw) label = normalizeSingleLocation(labelRaw);
+        query = queryRaw;
+      }
+
+      query = normalizeSingleLocation(query);
+      if (!query) continue;
+
+      const queryKey = query.toLowerCase();
+      const storedToken = label ? `${label}=>${query}` : query;
+
+      // Prefer labeled token if provided.
+      const existing = outByQuery.get(queryKey);
+      if (!existing || label) outByQuery.set(queryKey, storedToken);
+    }
+
+    return Array.from(outByQuery.values());
+  };
+
+  const mergeLocationTokens = (existing: string[], incoming: string[]): string[] => {
+    const getQueryKey = (token: string) => {
+      const idx = token.indexOf("=>");
+      const q = idx >= 0 ? token.slice(idx + 2) : token;
+      return q.trim().toLowerCase();
+    };
+
+    const map = new Map<string, string>(); // queryKey -> stored token
+    for (const e of existing ?? []) {
+      const t = normalizeSingleLocation(e);
+      if (!t) continue;
+      map.set(getQueryKey(t), t);
+    }
+
+    for (const rawToken of incoming) {
+      const t0 = rawToken.trim();
+      if (!t0) continue;
+      const arrowIdx = t0.indexOf("=>");
+      let label: string | undefined;
+      let query = t0;
+      if (arrowIdx >= 0) {
+        const labelRaw = t0.slice(0, arrowIdx).trim();
+        const queryRaw = t0.slice(arrowIdx + 2).trim();
+        if (labelRaw) label = normalizeSingleLocation(labelRaw);
+        query = queryRaw;
+      }
+      query = normalizeSingleLocation(query);
+      if (!query) continue;
+
+      const queryKey = query.toLowerCase();
+      const storedToken = label ? `${label}=>${query}` : query;
+      const existingToken = map.get(queryKey);
+
+      // If incoming provides a label, replace; otherwise keep existing label if any.
+      if (!existingToken || label) map.set(queryKey, storedToken);
+    }
+
+    return Array.from(map.values());
+  };
+
+  const normalizeMaybeUrl = (raw: string): string | null => {
+    const t = raw.trim();
+    if (!t) return null;
+    if (/^https?:\/\//i.test(t)) return t;
+    if (/^www\./i.test(t)) return `https://${t}`;
+    // Treat plain domains as URLs (with optional path/query).
+    if (/^[a-z0-9-]+(\.[a-z0-9-]+)+([/?#].*)?$/i.test(t) && !/\s/.test(t)) {
+      return `https://${t}`;
+    }
+    return null;
+  };
+
+  const locationHrefMetaForToken = (
+    raw: string
+  ): { href: string; kind: "url" | "maps" } | null => {
+    const t0 = raw.trim();
+    if (!t0) return null;
+    const arrowIdx = t0.indexOf("=>");
+    const query = (arrowIdx >= 0 ? t0.slice(arrowIdx + 2) : t0).trim();
+
+    if (!query) return null;
+
+    // If user provided a real hyperlink, open it directly.
+    const maybeUrl = normalizeMaybeUrl(query);
+    if (maybeUrl) return { href: maybeUrl, kind: "url" };
+    return null;
+  };
+
   useEffect(() => {
     setDraft(task);
+    setLabelsInputValue("");
+    // Keep the input itself empty so the user can add new links without
+    // having to clear the existing tokens first.
+    setLinksInputValue("");
+    // Avoid emitting label updates on open/mount.
+    hasInteractedWithLabelsRef.current = false;
+    hasInteractedWithLinksRef.current = false;
+    setSelectedLabelKeys(new Set());
+    setLocationInputValue("");
   }, [task]);
+
+  useEffect(() => {
+    // Keep text input in sync when labels are updated via voice or other actions.
+    if (!draft) return;
+    if (suppressLabelsInputSyncRef.current) {
+      suppressLabelsInputSyncRef.current = false;
+      return;
+    }
+    // Input stays blank by design; labels are edited via the chips + Enter/blur.
+    setLabelsInputValue("");
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [draft?.id, draft?.labels]);
+
+  useEffect(() => {
+    // Keep links input in sync when links are updated via voice or other actions.
+    if (!draft) return;
+    if (suppressLinksInputSyncRef.current) {
+      suppressLinksInputSyncRef.current = false;
+      return;
+    }
+    // Input stays empty by design; links render via preview chips.
+    setLinksInputValue("");
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [draft?.id, draft?.link]);
 
   const setDurationUIFromMinutes = (mins: number | undefined | null) => {
     if (mins === undefined || mins === null) {
@@ -73,6 +441,78 @@ export function TaskEditorDrawer({ task, onClose, onSave }: TaskEditorDrawerProp
       typeof w.webkitSpeechRecognition === "function";
     setVoiceSupported(has);
   }, []);
+
+  const draftLabels = (draft?.labels ?? []).slice();
+  const pendingLabelTokens = parseLabelsInput(labelsInputValue);
+  const previewLabels =
+    pendingLabelTokens.length > 0
+      ? mergeLabelTokens(draftLabels, pendingLabelTokens)
+      : draftLabels.slice().sort(
+          (a, b) => a.toLowerCase().localeCompare(b.toLowerCase()) || a.localeCompare(b)
+        );
+
+  useEffect(() => {
+    if (!onLabelsDraftChange) return;
+    if (!hasInteractedWithLabelsRef.current) return;
+    onLabelsDraftChange(previewLabels);
+  }, [onLabelsDraftChange, previewLabels.join("|")]);
+
+  const draftLinks = (draft?.link ?? []).slice();
+  const pendingLinkTokens = parseLinksInput(linksInputValue);
+  const previewLinks =
+    pendingLinkTokens.length > 0
+      ? mergeLinkTokens(draftLinks, pendingLinkTokens)
+      : draftLinks.slice();
+
+  const draftLocations = deserializeLocationTokens(draft?.location);
+  const pendingLocationTokens = parseLocationsInput(locationInputValue);
+  const previewLocations =
+    pendingLocationTokens.length > 0
+      ? mergeLocationTokens(draftLocations, pendingLocationTokens)
+      : draftLocations.slice();
+
+  useEffect(() => {
+    if (!onLinksDraftChange) return;
+    if (!hasInteractedWithLinksRef.current) return;
+    onLinksDraftChange(previewLinks);
+  }, [onLinksDraftChange, previewLinks.join("|")]);
+
+  const labelKey = (s: string) => s.trim().toLowerCase();
+  const sortLabelsAsc = (labels: string[]) =>
+    labels
+      .slice()
+      .sort((a, b) => labelKey(a).localeCompare(labelKey(b)) || a.localeCompare(b));
+
+  const applyLabelSet = (nextLabels: string[]) => {
+    if (!draft) return;
+    const sorted = sortLabelsAsc(nextLabels);
+    hasInteractedWithLabelsRef.current = true;
+    suppressLabelsInputSyncRef.current = true;
+    setDraft({ ...draft, labels: sorted });
+    // Keep the input itself blank; show values as preview chips only.
+    setLabelsInputValue("");
+    setSelectedLabelKeys(new Set());
+  };
+
+  const applyLinkSet = (nextLinks: string[]) => {
+    if (!draft) return;
+    const sorted = sortLinksAsc(nextLinks);
+    hasInteractedWithLinksRef.current = true;
+    suppressLinksInputSyncRef.current = true;
+    setDraft({ ...draft, link: sorted.length ? sorted : undefined });
+    // Keep input empty; user edits via the dedicated input box above.
+    setLinksInputValue("");
+  };
+
+  const applyLocationSet = (nextLocations: string[]) => {
+    if (!draft) return;
+    const merged = nextLocations.map((l) => l.trim()).filter(Boolean);
+    setDraft({
+      ...draft,
+      location: serializeLocationTokens(merged)
+    });
+    setLocationInputValue("");
+  };
 
   if (!draft) return null;
 
@@ -353,31 +793,43 @@ export function TaskEditorDrawer({ task, onClose, onSave }: TaskEditorDrawerProp
       if (time) out.dueTime = time;
     }
 
-    // Deadline date/time: "deadline 2026-01-30 17:00"
-    {
-      const m = lower.match(/\bdeadline\b([^.]*)/);
-      if (m?.[1]) {
-        const date = parseSpokenDate(m[1]);
-        const time = parseSpokenTime(m[1]);
-        if (date) out.deadlineDate = date;
-        if (time) out.deadlineTime = time;
-      }
-    }
-
     // Labels: "labels work, errands" / "label: work dan errands"
     {
       const m = lower.match(/\b(?:labels?|tag|tags|label)\b[: ]([^.]*)/);
       if (m?.[1]) {
-        const raw = m[1]
+        // Stop label capture when another field keyword starts later in the sentence.
+        // Example: "label home location gym" should become ["home"], not ["home location gym"].
+        const raw0 = m[1];
+        const stopMatch = raw0.match(
+          /\b(?:location|lokasi|reminder|ingatkan|pengingat|due|tanggal|date|on|time|jam|pukul|repeat|every|priority|project|duration|durasi|selama|for)\b/
+        );
+        const raw1 = (stopMatch?.index !== undefined ? raw0.slice(0, stopMatch.index) : raw0).trim();
+
+        const raw = raw1
           .replaceAll(" dan ", ",")
           .replaceAll(" and ", ",")
+          .replaceAll("&", ",")
           .replaceAll(";", ",");
+
         const parts = raw
           .split(",")
           .map((p) => p.trim())
           .filter(Boolean)
           .slice(0, 12);
-        if (parts.length) out.labels = parts.map((p) => p.replace(/\s+/g, " "));
+
+        if (parts.length) {
+          const normalized = parts.map((p) => p.replace(/\s+/g, " "));
+          // De-duplicate case-insensitively, but preserve the first seen casing.
+          const seen = new Set<string>();
+          const deduped: string[] = [];
+          for (const l of normalized) {
+            const key = l.toLowerCase();
+            if (seen.has(key)) continue;
+            seen.add(key);
+            deduped.push(l);
+          }
+          out.labels = deduped;
+        }
       }
     }
 
@@ -385,8 +837,19 @@ export function TaskEditorDrawer({ task, onClose, onSave }: TaskEditorDrawerProp
     {
       const m = lower.match(/\b(?:location|lokasi)\b[: ]([^.]*)/);
       if (m?.[1]) {
-        const loc = m[1].trim();
-        if (loc) out.location = loc;
+        const raw = m[1].trim();
+        if (raw) {
+          // Support multiple locations spoken like:
+          // "location home office, gym" / "location home office and gym"
+          const normalized = raw
+            .replace(/\s+(?:and|dan)\s+/gi, ",")
+            .replaceAll(";", ",")
+            .replaceAll("&", ",")
+            .replace(/\n+/g, ",")
+            .replaceAll("|", ",");
+          const tokens = parseLocationsInput(normalized);
+          if (tokens.length) out.location = serializeLocationTokens(tokens);
+        }
       }
     }
 
@@ -453,6 +916,7 @@ export function TaskEditorDrawer({ task, onClose, onSave }: TaskEditorDrawerProp
   };
 
   const applyVoiceTranscript = (text: string) => {
+    hasInteractedWithLabelsRef.current = true;
     const cleaned = text.trim().replace(/\s+/g, " ");
     if (!cleaned) return;
     const parsed = parseVoiceFields(cleaned);
@@ -474,9 +938,11 @@ export function TaskEditorDrawer({ task, onClose, onSave }: TaskEditorDrawerProp
           ? `${existingDesc}\n${cleaned}`
           : cleaned;
 
+      // Merge labels case-insensitively while preserving the casing
+      // of the first occurrence (existing labels win).
       const mergedLabels =
         parsed.labels && parsed.labels.length
-          ? Array.from(new Set([...(prev.labels ?? []), ...parsed.labels]))
+          ? mergeLabelTokens(prev.labels ?? [], parsed.labels)
           : prev.labels;
 
       const {
@@ -560,7 +1026,7 @@ export function TaskEditorDrawer({ task, onClose, onSave }: TaskEditorDrawerProp
         return true;
       }
       // If we already have a reasonable amount of content, be willing to stop sooner.
-      if (t.length >= 40 && /\b(at|on|due|deadline|repeat|every|labels?|location|reminder|tanggal|jam|pukul|setiap|pengingat|lokasi|label)\b/.test(t)) {
+      if (t.length >= 40 && /\b(at|on|due|repeat|every|labels?|location|reminder|tanggal|jam|pukul|setiap|pengingat|lokasi|label)\b/.test(t)) {
         return true;
       }
       return false;
@@ -803,64 +1269,323 @@ export function TaskEditorDrawer({ task, onClose, onSave }: TaskEditorDrawerProp
             </div>
           </label>
 
-          <div className="field-grid">
-            <label className="field">
-              <span>Deadline date</span>
-              <input
-                type="date"
-                value={draft.deadlineDate ?? ""}
-                onChange={(e) =>
-                  setDraft({
-                    ...draft,
-                    deadlineDate: e.target.value || undefined
-                  })
-                }
-              />
-            </label>
-            <label className="field">
-              <span>Deadline time</span>
-              <input
-                type="time"
-                value={draft.deadlineTime ?? ""}
-                onChange={(e) =>
-                  setDraft({
-                    ...draft,
-                    deadlineTime: e.target.value || undefined
-                  })
-                }
-              />
-            </label>
-          </div>
-
           <label className="field">
             <span>Labels (comma separated)</span>
             <input
-              value={draft.labels.join(", ")}
-              onChange={(e) =>
-                setDraft({
-                  ...draft,
-                  labels: e.target.value
-                    .split(",")
-                    .map((l) => l.trim())
-                    .filter(Boolean)
-                })
-              }
+              value={labelsInputValue}
+              onChange={(e) => {
+                hasInteractedWithLabelsRef.current = true;
+                setLabelsInputValue(e.target.value);
+              }}
+              onKeyDown={(e) => {
+                if (e.key !== "Enter") return;
+                e.preventDefault();
+                e.stopPropagation();
+                if (!draft) return;
+
+                hasInteractedWithLabelsRef.current = true;
+                const raw = labelsInputValue;
+                const tokens = parseLabelsInput(raw);
+                if (!tokens.length) return;
+
+                suppressLabelsInputSyncRef.current = true;
+                setDraft((prev) =>
+                  prev
+                    ? { ...prev, labels: mergeLabelTokens(prev.labels, tokens) }
+                    : prev
+                );
+                setLabelsInputValue("");
+              }}
+              onBlur={() => {
+                if (!draft) return;
+                const raw = labelsInputValue;
+                setDraft((prev) => {
+                  const tokens = parseLabelsInput(raw);
+                  if (!tokens.length) return prev;
+                  hasInteractedWithLabelsRef.current = true;
+                  suppressLabelsInputSyncRef.current = true;
+                  return { ...prev, labels: mergeLabelTokens(prev.labels, tokens) };
+                });
+                setLabelsInputValue("");
+              }}
               placeholder="Work, Deep focus, Errands"
             />
+            {previewLabels.length > 0 ? (
+              <div style={{ marginTop: "0.45rem" }}>
+                <div
+                  style={{
+                    display: "flex",
+                    flexWrap: "wrap",
+                    gap: "0.35rem"
+                  }}
+                >
+                  {previewLabels.map((l) => {
+                    const key = labelKey(l);
+                    const isSelected = selectedLabelKeys.has(key);
+                    return (
+                      <span
+                        key={l}
+                        className="pill label-pill"
+                        role="button"
+                        tabIndex={0}
+                        onClick={() => {
+                          setSelectedLabelKeys((prev) => {
+                            const next = new Set(prev);
+                            if (next.has(key)) next.delete(key);
+                            else next.add(key);
+                            return next;
+                          });
+                        }}
+                        style={{
+                          cursor: "pointer",
+                          display: "inline-flex",
+                          alignItems: "center",
+                          gap: "0.35rem",
+                          borderColor: isSelected ? "rgba(239, 68, 68, 0.85)" : undefined,
+                          background: isSelected ? "rgba(254, 226, 226, 0.9)" : undefined
+                        }}
+                        aria-pressed={isSelected}
+                        aria-label={`Select label ${l}`}
+                      >
+                        {l}
+                        <button
+                          type="button"
+                          className="label-chip-delete"
+                          style={{
+                            padding: 0,
+                            border: "none",
+                            background: "transparent",
+                            cursor: "pointer",
+                            color: "rgba(239, 68, 68, 1)",
+                            fontWeight: 900,
+                            lineHeight: 1
+                          }}
+                          aria-label={`Delete label ${l}`}
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            applyLabelSet(previewLabels.filter((x) => labelKey(x) !== key));
+                          }}
+                        >
+                          ×
+                        </button>
+                      </span>
+                    );
+                  })}
+                </div>
+
+                {selectedLabelKeys.size > 0 ? (
+                  <div style={{ marginTop: "0.55rem" }}>
+                    <button
+                      type="button"
+                      className="ghost-button small"
+                      onClick={() => {
+                        hasInteractedWithLabelsRef.current = true;
+                        applyLabelSet(
+                          previewLabels.filter((x) => !selectedLabelKeys.has(labelKey(x)))
+                        );
+                      }}
+                    >
+                      Remove selected ({selectedLabelKeys.size})
+                    </button>
+                  </div>
+                ) : null}
+              </div>
+            ) : null}
           </label>
 
           <label className="field">
             <span>Location</span>
             <input
-              value={draft.location ?? ""}
-              onChange={(e) =>
-                setDraft({
-                  ...draft,
-                  location: e.target.value || undefined
-                })
-              }
-              placeholder="Home office, Gym, Meeting room"
+              value={locationInputValue}
+              onChange={(e) => {
+                setLocationInputValue(e.target.value);
+              }}
+              placeholder="Outdoor, Home, Alias=>https://example.com"
+              onKeyDown={(e) => {
+                if (e.key !== "Enter") return;
+                e.preventDefault();
+                e.stopPropagation();
+                if (!draft) return;
+                const tokens = parseLocationsInput(locationInputValue);
+                if (!tokens.length) return;
+                applyLocationSet(mergeLocationTokens(deserializeLocationTokens(draft.location), tokens));
+              }}
+              onBlur={() => {
+                if (!draft) return;
+                const tokens = parseLocationsInput(locationInputValue);
+                if (!tokens.length) return;
+                applyLocationSet(mergeLocationTokens(deserializeLocationTokens(draft.location), tokens));
+              }}
             />
+            {previewLocations.length > 0 ? (
+              <div style={{ marginTop: "0.45rem" }}>
+                <div
+                  style={{
+                    display: "flex",
+                    flexWrap: "wrap",
+                    gap: "0.35rem"
+                  }}
+                >
+                  {previewLocations.map((loc) => {
+                    const arrowIdx = loc.indexOf("=>");
+                    const label = arrowIdx >= 0 ? loc.slice(0, arrowIdx).trim() : "";
+                    const query = arrowIdx >= 0 ? loc.slice(arrowIdx + 2).trim() : loc;
+                    const display = label || query;
+                    const meta = locationHrefMetaForToken(loc);
+                    const href = meta?.href ?? null;
+                    return (
+                      <span
+                        key={loc}
+                        className="pill label-pill"
+                        style={{
+                          display: "inline-flex",
+                          alignItems: "center",
+                          gap: "0.35rem"
+                        }}
+                      >
+                        <span>{display}</span>
+                        {href ? (
+                          <a
+                            href={href}
+                            target="_blank"
+                            rel="noreferrer"
+                            className="location-map-link"
+                            onClick={(e) => e.stopPropagation()}
+                            title={
+                              meta?.kind === "url" ? `Open ${display}` : `Open ${display}`
+                            }
+                          >
+                            {meta?.kind === "url" ? "Open" : "Open"}
+                          </a>
+                        ) : null}
+                        <button
+                          type="button"
+                          className="label-chip-delete"
+                          aria-label={`Delete location ${display}`}
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            const delQueryKey = query.toLowerCase();
+                            applyLocationSet(
+                              previewLocations.filter((x) => {
+                                const i = x.indexOf("=>");
+                                const q = i >= 0 ? x.slice(i + 2).trim() : x;
+                                return q.toLowerCase() !== delQueryKey;
+                              })
+                            );
+                          }}
+                        >
+                          ×
+                        </button>
+                      </span>
+                    );
+                  })}
+                </div>
+              </div>
+            ) : null}
+          </label>
+
+          <label className="field">
+            <span>Link</span>
+            <input
+              value={linksInputValue}
+              onChange={(e) => setLinksInputValue(e.target.value)}
+              placeholder="Alias=>URL or URL (comma/newline separated)"
+              onKeyDown={(e) => {
+                if (e.key !== "Enter") return;
+                e.preventDefault();
+                e.stopPropagation();
+                if (!draft) return;
+
+                const tokens = parseLinksInput(linksInputValue);
+                if (!tokens.length) return;
+                hasInteractedWithLinksRef.current = true;
+                suppressLinksInputSyncRef.current = true;
+                setDraft((prev) =>
+                  prev
+                    ? {
+                        ...prev,
+                        link: mergeLinkTokens(prev.link ?? [], tokens)
+                      }
+                    : prev
+                );
+                setLinksInputValue("");
+              }}
+              onBlur={() => {
+                if (!draft) return;
+                const tokens = parseLinksInput(linksInputValue);
+                if (!tokens.length) return;
+                hasInteractedWithLinksRef.current = true;
+                suppressLinksInputSyncRef.current = true;
+                setDraft((prev) =>
+                  prev
+                    ? {
+                        ...prev,
+                        link: mergeLinkTokens(prev.link ?? [], tokens)
+                      }
+                    : prev
+                );
+                setLinksInputValue("");
+              }}
+            />
+            {previewLinks.length > 0 ? (
+              <div style={{ marginTop: "0.45rem" }}>
+                <div
+                  style={{
+                    display: "flex",
+                    flexWrap: "wrap",
+                    gap: "0.35rem"
+                  }}
+                >
+                  {previewLinks.map((l) => {
+                    const parsed = parseLinkAliasToken(l) ?? { href: l };
+                    const display = parsed.label ?? l;
+                    const href = parsed.href;
+                    return (
+                    <span
+                      key={l}
+                      className="pill label-pill"
+                      style={{
+                        display: "inline-flex",
+                        alignItems: "center",
+                        gap: "0.35rem"
+                      }}
+                    >
+                      <a
+                        href={href}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="link-preview-anchor"
+                        onClick={(e) => {
+                          // Keep drawer open; do not block navigation.
+                          e.stopPropagation();
+                        }}
+                      >
+                        {display}
+                      </a>
+                      <button
+                        type="button"
+                        className="label-chip-delete"
+                        aria-label={`Delete link ${display}`}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          const delKey = href.toLowerCase();
+                          applyLinkSet(
+                            previewLinks.filter((x) => {
+                              const p = parseLinkAliasToken(x);
+                              const xHref = p?.href ?? x;
+                              return xHref.toLowerCase() !== delKey;
+                            })
+                          );
+                        }}
+                      >
+                        ×
+                      </button>
+                    </span>
+                    );
+                  })}
+                </div>
+              </div>
+            ) : null}
           </label>
 
           <label className="field">
@@ -898,7 +1623,39 @@ export function TaskEditorDrawer({ task, onClose, onSave }: TaskEditorDrawerProp
           </button>
           <button
             className="primary-button"
-            onClick={() => draft && onSave(normalizeDraft(draft))}
+            onClick={() => {
+              if (!draft) return;
+              // Merge any in-progress label text into draft.labels so the user
+              // doesn't need to press Enter/blur before saving.
+              const tokens = parseLabelsInput(labelsInputValue);
+              const labelsToSave =
+                tokens.length > 0
+                  ? mergeLabelTokens(draft.labels ?? [], tokens)
+                  : (draft.labels ?? [])
+                      .slice()
+                      .sort((a, b) => a.toLowerCase().localeCompare(b.toLowerCase()) || a.localeCompare(b));
+              const linkTokens = parseLinksInput(linksInputValue);
+              const linksToSave =
+                linkTokens.length > 0
+                  ? mergeLinkTokens(draft.link ?? [], linkTokens)
+                  : (draft.link ?? []).slice();
+
+              const locationTokens = parseLocationsInput(locationInputValue);
+              const baseLocations = deserializeLocationTokens(draft.location);
+              const locationsToSave =
+                locationTokens.length > 0
+                  ? mergeLocationTokens(baseLocations, locationTokens)
+                  : baseLocations;
+
+              onSave(
+                normalizeDraft({
+                  ...draft,
+                  labels: labelsToSave,
+                  link: linksToSave.length ? linksToSave : undefined,
+                  location: serializeLocationTokens(locationsToSave)
+                })
+              );
+            }}
             disabled={!draft.title.trim()}
           >
             Save task

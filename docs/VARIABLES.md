@@ -1,317 +1,475 @@
 # Variables Catalog — Focista Schedulo
 
-**Last updated**: 2026-03-18  
-**Owner**: Product Analytics (with Engineering)  
+**Last updated:** 2026-03-18  
+**Owner:** Product Analytics (with Engineering)
 
-This document defines the key **variables** used across the product: stored fields, derived values, and product metrics. It is written to help product, analytics, and engineering align on meaning.
+This document defines the key **variables** used across the product: stored fields, derived values, and product metrics. Each variable is documented with a **variable name**, **friendly name**, **definition**, **formula** (when applicable), **location in the app**, **source of truth**, and **example** to align product, analytics, and engineering.
 
-## Entities and storage
+---
 
-- **Backend persistence**: JSON files in `backend/data/`
-  - `tasks.json` (source of truth for tasks)
-  - `projects.json` (source of truth for projects)
-- **Frontend derived variables**: built in React for calendar segmentation, grouping, sorting, and export formatting.
+## Entities and Storage
 
-## Relationship chart (high level)
+- **Backend persistence:** JSON files in `backend/data/`
+  - `tasks.json` — source of truth for tasks
+  - `projects.json` — source of truth for projects
+- **Frontend-derived variables:** Built in React for calendar segmentation, grouping, sorting, filtering, and export formatting.
+
+---
+
+## Variable Relationship Chart
+
+The following diagram shows how main entities and variables connect and flow through the application.
 
 ```mermaid
-flowchart LR
-  subgraph Backend
-    P[Project<br/>id,name]
-    T[Task<br/>id,parentId,childId,projectId,...]
-    S[Stats (derived)<br/>completedToday,pointsToday,totalPoints,level,xpToNext]
+flowchart TB
+  subgraph Backend["Backend (Source of Truth)"]
+    P[Project<br/>id, name]
+    T[Task<br/>id, title, priority, dueDate, dueTime, durationMinutes,<br/>repeat, parentId, childId, projectId, completed,<br/>labels, location, link[], ...]
+    S[Stats API /api/stats<br/>completedToday, pointsToday, totalPoints,<br/>level, xpToNext, streakDays]
   end
 
-  subgraph Frontend
-    TB[TaskBoard<br/>list + calendar]
-    TE[TaskEditorDrawer<br/>voice -> draft fields]
-    CE[CalendarEntry (derived)<br/>dateIso,startMin,endMin,isAllDay]
-    EX[Export (derived)<br/>CSV/JSON]
+  subgraph Frontend["Frontend (Derived & UI)"]
+    TB[TaskBoard<br/>filteredTasks, tasksWithRepeats, groupedByParent]
+    CE[CalendarEntry<br/>dateIso, startMin, endMin, isAllDay]
+    TE[TaskEditorDrawer<br/>draft fields, voice transcript]
+    HC[Hovercard<br/>formatDurationMinutesForOverview]
+    EX[Export<br/>CSV/JSON rows]
   end
 
-  P -- projectId --> T
-  T -- tasks changed --> TB
-  TB -- segment by date/duration --> CE
-  TE -- save/update --> T
-  T -- aggregate --> S
-  TB -- generate --> EX
+  P -->|projectId| T
+  T -->|aggregate by completed + dueDate| S
+  T -->|segment by dueDate + durationMinutes| CE
+  T -->|filter by timeScope, projectId, search| TB
+  TB -->|render list/calendar| CE
+  TB -->|generate| EX
+  TE -->|save/update| T
+  T -->|display details| HC
 ```
 
-## Stored variables (Backend API model)
+### Relationship Summary
+
+| From | To | Relationship |
+|------|-----|--------------|
+| `project.id` | `task.projectId` | Task belongs to a project; filter and display by project. |
+| `task.parentId` | `task.childId` | Series identity; occurrences share parentId and have unique childId. |
+| `task.dueDate` + `task.dueTime` + `task.durationMinutes` | `CalendarEntry` | Frontend segments tasks into per-day calendar blocks. |
+| `task.priority` | `stats` points | Points per completion: low=1, medium=2, high=3, urgent=4. |
+| `task.completed` + `task.dueDate` | `stats.completedToday`, `stats.pointsToday`, `stats.streakDays` | Stats derived from completed tasks and dates. |
+| `task` (all fields) | Hovercard, Export | Full task data shown in hovercard and export output. |
+
+---
+
+## Stored Variables (Backend API Model)
 
 ### Project
 
 #### `project.id`
 
-- **Friendly name**: Project ID
-- **Definition**: Canonical identifier for a project.
-- **Format**: `P<number>` (e.g., `P1`, `P2`)
-- **Location**:
-  - Sidebar project list
-  - Task project indicator/pill
-  - API: `/api/projects`
-- **Source of truth**: Backend (standardized on load + creation)
-- **Example**: `P3`
+| Attribute | Value |
+|-----------|--------|
+| **Variable name** | `project.id` |
+| **Friendly name** | Project ID |
+| **Definition** | Canonical identifier for a project. |
+| **Format** | `P<number>` (e.g. `P1`, `P2`). |
+| **Location in app** | Sidebar project list; task project pill; move dialog; API `/api/projects`. |
+| **Source of truth** | Backend (normalized on load and creation). |
+| **Example** | `P3` |
 
 #### `project.name`
 
-- **Friendly name**: Project name
-- **Definition**: Human-readable project title.
-- **Location**: Sidebar project list; move dialog
-- **Source of truth**: Backend
-- **Example**: `Work — Q2 Launch`
+| Attribute | Value |
+|-----------|--------|
+| **Variable name** | `project.name` |
+| **Friendly name** | Project name |
+| **Definition** | Human-readable project title. |
+| **Location in app** | Sidebar project list; move dialog. |
+| **Source of truth** | Backend. |
+| **Example** | `Work — Q2 Launch` |
 
 ### Task
 
 #### `task.id`
 
-- **Friendly name**: Task ID
-- **Definition**: Unique identifier for a task record.
-- **Location**: Backend persistence and API.
-- **Source of truth**: Backend
-- **Example**: `t_1710a4...` (implementation-dependent)
+| Attribute | Value |
+|-----------|--------|
+| **Variable name** | `task.id` |
+| **Friendly name** | Task ID |
+| **Definition** | Unique identifier for a task record. |
+| **Location in app** | Backend persistence; API; internal React keys. |
+| **Source of truth** | Backend. |
+| **Example** | `t_1710a4...` (implementation-dependent) |
 
 #### `task.title`
 
-- **Friendly name**: Title
-- **Definition**: Short summary of what needs to be done.
-- **Location**: Task cards (list/calendar), editor drawer
-- **Source of truth**: Backend
-- **Example**: `Prepare client proposal`
+| Attribute | Value |
+|-----------|--------|
+| **Variable name** | `task.title` |
+| **Friendly name** | Title |
+| **Definition** | Short summary of what needs to be done. |
+| **Location in app** | Task cards (list/calendar); editor drawer; hovercard. |
+| **Source of truth** | Backend. |
+| **Example** | `Prepare client proposal` |
 
 #### `task.description`
 
-- **Friendly name**: Description
-- **Definition**: Optional details/context for the task.
-- **Location**: Editor drawer
-- **Source of truth**: Backend
-- **Example**: `Include pricing options and timeline.`
+| Attribute | Value |
+|-----------|--------|
+| **Variable name** | `task.description` |
+| **Friendly name** | Description |
+| **Definition** | Optional details or context for the task. |
+| **Location in app** | Editor drawer; hovercard (optional). |
+| **Source of truth** | Backend. |
+| **Example** | `Include pricing options and timeline.` |
 
 #### `task.priority`
 
-- **Friendly name**: Priority
-- **Definition**: Urgency/importance label used for sorting/visual legend and gamification points.
-- **Allowed values**: `low | medium | high | urgent`
-- **Location**:
-  - Task card priority pill/legend
-  - Calendar entry accent
-  - Stats points calculation
-- **Source of truth**: Backend
-- **Example**: `high`
+| Attribute | Value |
+|-----------|--------|
+| **Variable name** | `task.priority` |
+| **Friendly name** | Priority |
+| **Definition** | Urgency/importance label used for sorting, visual legend, and gamification points. |
+| **Allowed values** | `low` \| `medium` \| `high` \| `urgent` |
+| **Location in app** | Task card priority pill; calendar and day-agenda accent; hovercard; stats points. |
+| **Source of truth** | Backend. |
+| **Example** | `high` |
 
 #### `task.dueDate`
 
-- **Friendly name**: Due date
-- **Definition**: Scheduled local date in ISO format for when work should happen.
-- **Format**: `YYYY-MM-DD`
-- **Location**: Task card; calendar month/day views
-- **Source of truth**: Backend
-- **Example**: `2026-03-20`
+| Attribute | Value |
+|-----------|--------|
+| **Variable name** | `task.dueDate` |
+| **Friendly name** | Due date |
+| **Definition** | Scheduled local date in ISO format for when work should happen. |
+| **Format** | `YYYY-MM-DD` |
+| **Location in app** | Task card; calendar month and day views; hovercard; list filters. |
+| **Source of truth** | Backend. |
+| **Example** | `2026-03-20` |
 
 #### `task.dueTime`
 
-- **Friendly name**: Due time
-- **Definition**: Optional local time for start time within a day.
-- **Format**: `HH:mm` (24-hour)
-- **Location**: Task card; day agenda timeline
-- **Source of truth**: Backend
-- **Example**: `09:30`
+| Attribute | Value |
+|-----------|--------|
+| **Variable name** | `task.dueTime` |
+| **Friendly name** | Due time |
+| **Definition** | Optional local time for start time within the day. |
+| **Format** | `HH:mm` (24-hour). |
+| **Location in app** | Task card; day agenda timeline; hovercard. |
+| **Source of truth** | Backend. |
+| **Example** | `09:30` |
 
 #### `task.durationMinutes`
 
-- **Friendly name**: Duration (minutes)
-- **Definition**: Planned time length for the task, stored as minutes.
-- **Constraints**: positive integer if set
-- **Location**:
-  - Task card duration pill (formatted)
-  - Calendar day agenda block height
-  - Calendar multi-day segmentation (spans across days)
-- **Source of truth**: Backend (with series sync)
-- **Example**: `90` (1h30m)
+| Attribute | Value |
+|-----------|--------|
+| **Variable name** | `task.durationMinutes` |
+| **Friendly name** | Duration (minutes) |
+| **Definition** | Planned time length for the task, stored as minutes. |
+| **Constraints** | Positive integer if set. |
+| **Location in app** | Task card duration pill (formatted); day agenda block height; hovercard (human-readable, e.g. “1 hour & 15 mins”); multi-day calendar segmentation. |
+| **Source of truth** | Backend (synced across series occurrences where applicable). |
+| **Example** | `90` (1h 30m) |
 
 #### `task.deadlineDate`
 
-- **Friendly name**: Deadline date
-- **Definition**: Optional “must be done by” date, distinct from due schedule.
-- **Format**: `YYYY-MM-DD`
-- **Location**: Editor drawer; task metadata display
-- **Source of truth**: Backend
-- **Example**: `2026-03-25`
+| Attribute | Value |
+|-----------|--------|
+| **Variable name** | `task.deadlineDate` |
+| **Friendly name** | Deadline date |
+| **Definition** | Optional “must be done by” date, distinct from due date. |
+| **Format** | `YYYY-MM-DD` |
+| **Location in app** | Editor drawer; hovercard. |
+| **Source of truth** | Backend. |
+| **Example** | `2026-03-25` |
 
 #### `task.deadlineTime`
 
-- **Friendly name**: Deadline time
-- **Definition**: Optional “must be done by” time for the deadline date.
-- **Format**: `HH:mm`
-- **Location**: Editor drawer; task metadata display
-- **Source of truth**: Backend
-- **Example**: `17:00`
+| Attribute | Value |
+|-----------|--------|
+| **Variable name** | `task.deadlineTime` |
+| **Friendly name** | Deadline time |
+| **Definition** | Optional “must be done by” time for the deadline date. |
+| **Format** | `HH:mm` |
+| **Location in app** | Editor drawer; hovercard. |
+| **Source of truth** | Backend. |
+| **Example** | `17:00` |
 
 #### `task.repeat`
 
-- **Friendly name**: Repeat pattern
-- **Definition**: Specifies recurrence type.
-- **Allowed values**: `none | daily | weekly | weekdays | weekends | monthly | quarterly | yearly | custom`
-- **Location**: Editor drawer; recurrence engine
-- **Source of truth**: Backend
-- **Example**: `weekly`
+| Attribute | Value |
+|-----------|--------|
+| **Variable name** | `task.repeat` |
+| **Friendly name** | Repeat pattern |
+| **Definition** | Specifies recurrence type. |
+| **Allowed values** | `none` \| `daily` \| `weekly` \| `weekdays` \| `weekends` \| `monthly` \| `quarterly` \| `yearly` \| `custom` |
+| **Location in app** | Editor drawer; recurrence engine; list expand logic. |
+| **Source of truth** | Backend. |
+| **Example** | `weekly` |
 
 #### `task.repeatEvery`
 
-- **Friendly name**: Repeat every (N)
-- **Definition**: Custom recurrence interval (multiplier).
-- **Constraints**: positive integer if set
-- **Location**: Editor drawer
-- **Source of truth**: Backend
-- **Example**: `2` (every 2 weeks)
+| Attribute | Value |
+|-----------|--------|
+| **Variable name** | `task.repeatEvery` |
+| **Friendly name** | Repeat every (N) |
+| **Definition** | Custom recurrence interval (multiplier). |
+| **Constraints** | Positive integer if set. |
+| **Location in app** | Editor drawer (when repeat is custom). |
+| **Source of truth** | Backend. |
+| **Example** | `2` (every 2 weeks) |
 
 #### `task.repeatUnit`
 
-- **Friendly name**: Repeat unit
-- **Definition**: Unit for custom recurrence.
-- **Allowed values**: `day | week | month | quarter | year`
-- **Location**: Editor drawer
-- **Source of truth**: Backend
-- **Example**: `week`
+| Attribute | Value |
+|-----------|--------|
+| **Variable name** | `task.repeatUnit` |
+| **Friendly name** | Repeat unit |
+| **Definition** | Unit for custom recurrence. |
+| **Allowed values** | `day` \| `week` \| `month` \| `quarter` \| `year` |
+| **Location in app** | Editor drawer (when repeat is custom). |
+| **Source of truth** | Backend. |
+| **Example** | `week` |
 
 #### `task.labels`
 
-- **Friendly name**: Labels
-- **Definition**: Free-form tags for grouping and filtering.
-- **Type**: string array
-- **Location**: Task cards; editor drawer
-- **Source of truth**: Backend
-- **Example**: `["client", "proposal"]`
+| Attribute | Value |
+|-----------|--------|
+| **Variable name** | `task.labels` |
+| **Friendly name** | Labels |
+| **Definition** | Free-form tags for grouping and filtering. |
+| **Type** | Array of strings. |
+| **Location in app** | Task cards; editor drawer; hovercard; search. |
+| **Source of truth** | Backend. |
+| **Example** | `["client", "proposal"]` |
 
 #### `task.location`
 
-- **Friendly name**: Location
-- **Definition**: Optional location context (place, URL, or meeting room).
-- **Location**: Editor drawer; task display
-- **Source of truth**: Backend
-- **Example**: `Zoom` / `Office 12B`
+| Attribute | Value |
+|-----------|--------|
+| **Variable name** | `task.location` |
+| **Friendly name** | Location |
+| **Definition** | Optional location context (place name, URL, or meeting room). API stores a single string; UI may support multiple values (e.g. comma-separated or alias format `Alias=>URL`). Only real URLs get an “Open” link; plain text is not turned into a map link. |
+| **Location in app** | Editor drawer; hovercard (clickable when URL). |
+| **Source of truth** | Backend. |
+| **Example** | `Zoom` or `Office 12B` or `Meeting Room=>https://...` |
+
+#### `task.link`
+
+| Attribute | Value |
+|-----------|--------|
+| **Variable name** | `task.link` |
+| **Friendly name** | Links |
+| **Definition** | One or more URLs associated with the task. Stored as an array; backend normalizes and sorts. UI supports optional alias per link (e.g. `Alias=>https://...`). |
+| **Type** | Array of strings (optional). |
+| **Location in app** | Editor drawer (chips); hovercard (clickable chips; open in new tab). |
+| **Source of truth** | Backend. |
+| **Example** | `["https://docs.example.com", "Review=>https://..."]` |
 
 #### `task.reminderMinutesBefore`
 
-- **Friendly name**: Reminder lead time
-- **Definition**: Minutes before due time/date to remind the user (UI-level representation).
-- **Constraints**: non-negative integer if set
-- **Location**: Editor drawer
-- **Source of truth**: Backend
-- **Example**: `15`
+| Attribute | Value |
+|-----------|--------|
+| **Variable name** | `task.reminderMinutesBefore` |
+| **Friendly name** | Reminder lead time |
+| **Definition** | Minutes before due time or date to remind the user. |
+| **Constraints** | Non-negative integer if set. |
+| **Location in app** | Editor drawer; hovercard. |
+| **Source of truth** | Backend. |
+| **Example** | `15` |
 
 #### `task.projectId`
 
-- **Friendly name**: Project association
-- **Definition**: The project a task belongs to. `null` means “All tasks” (no project).
-- **Format**: `P<number>` or `null`
-- **Location**: Task project indicator; project filtering
-- **Source of truth**: Backend
-- **Example**: `P2`
+| Attribute | Value |
+|-----------|--------|
+| **Variable name** | `task.projectId` |
+| **Friendly name** | Project association |
+| **Definition** | The project the task belongs to. `null` means no project (All tasks). |
+| **Format** | `P<number>` or `null` |
+| **Location in app** | Task project pill; project filter; move dialog. |
+| **Source of truth** | Backend. |
+| **Example** | `P2` |
 
 #### `task.completed`
 
-- **Friendly name**: Completed flag
-- **Definition**: Whether the task has been completed.
-- **Location**: Active vs completed views; stats
-- **Source of truth**: Backend
-- **Example**: `true`
+| Attribute | Value |
+|-----------|--------|
+| **Variable name** | `task.completed` |
+| **Friendly name** | Completed flag |
+| **Definition** | Whether the task has been completed. |
+| **Location in app** | Active vs completed views; status filter; stats. |
+| **Source of truth** | Backend. |
+| **Example** | `true` |
 
 #### `task.cancelled`
 
-- **Friendly name**: Cancelled flag (series deletion guard)
-- **Definition**: Marks a repeating task occurrence/series as cancelled so it does not reappear via recurrence expansion.
-- **Location**: Recurrence expansion + delete logic
-- **Source of truth**: Backend
-- **Example**: `true`
+| Attribute | Value |
+|-----------|--------|
+| **Variable name** | `task.cancelled` |
+| **Friendly name** | Cancelled flag |
+| **Definition** | Marks a repeating task occurrence or series as cancelled so it does not reappear via recurrence expansion. |
+| **Location in app** | Recurrence expansion; delete logic; list filtering. |
+| **Source of truth** | Backend. |
+| **Example** | `true` |
 
 #### `task.parentId`
 
-- **Friendly name**: Series/parent ID
-- **Definition**: Stable identifier for a task’s identity group. Used for:
-  - grouping completed occurrences
-  - ensuring recurring series consistency
-  - consistent display across views
-- **Format**: `YYYYMMDD-N` (e.g., `20260318-1`)
-- **Source of truth**: Backend (standardized on load + on create/update)
-- **Example**: `20260318-4`
+| Attribute | Value |
+|-----------|--------|
+| **Variable name** | `task.parentId` |
+| **Friendly name** | Series / Parent ID |
+| **Definition** | Stable identifier for a task’s identity group. Used for grouping completed occurrences, recurring series consistency, and consistent display across views. |
+| **Format** | `YYYYMMDD-N` (e.g. `20260318-1`) |
+| **Location in app** | Task card (Parent ID pill); list expand key; hovercard Identifiers section. |
+| **Source of truth** | Backend (normalized on load and create/update). |
+| **Example** | `20260318-4` |
 
 #### `task.childId`
 
-- **Friendly name**: Occurrence ID
-- **Definition**: Identifier for a specific occurrence in a recurring series.
-- **Format**: `${parentId}-${occurrenceNumber}` (e.g., `20260318-4-2`)
-- **Source of truth**: Backend
-- **Example**: `20260318-4-7`
+| Attribute | Value |
+|-----------|--------|
+| **Variable name** | `task.childId` |
+| **Friendly name** | Occurrence ID |
+| **Definition** | Identifier for a specific occurrence in a recurring series. |
+| **Format** | `${parentId}-${index}` (e.g. `20260318-4-2`) |
+| **Location in app** | Hovercard Identifiers; list expanded occurrence cards (optional showChildId). |
+| **Source of truth** | Backend. |
+| **Example** | `20260318-4-7` |
 
-## Derived variables (Frontend)
+---
+
+## Derived Variables (Frontend)
 
 ### `seriesKey`
 
-- **Friendly name**: Series key
-- **Definition**: A derived key used to identify repeating series membership when normalizing IDs.
-- **Formula**: `projectId :: title :: repeat :: repeatEvery :: repeatUnit`
-- **Location**: Backend series normalization functions; recurrence logic
-- **Example**: `P2::Prepare report::weekly::::`
+| Attribute | Value |
+|-----------|--------|
+| **Variable name** | `seriesKey` |
+| **Friendly name** | Series key |
+| **Definition** | Derived key used to identify repeating series membership when normalizing IDs. |
+| **Formula** | `projectId :: title :: repeat :: repeatEvery :: repeatUnit` (concatenated). |
+| **Location in app** | Backend series normalization; recurrence logic. |
+| **Source of truth** | Derived (backend and frontend). |
+| **Example** | `P2::Prepare report::weekly::::` |
 
 ### `CalendarEntry`
 
-- **Friendly name**: Calendar segment
-- **Definition**: A per-day segment of a task, derived from dueDate/dueTime + durationMinutes.
-- **Key fields**:
-  - `dateIso` = calendar date the segment appears on
-  - `startMin`/`endMin` = minutes since midnight (0..1440)
-  - `isAllDay` = true if no time and spans whole day
-  - `startsToday` = whether segment starts on its task’s start day
-- **Location**: Calendar month view + day agenda timeline
-- **Example**: A 36-hour task produces segments on two dates.
+| Attribute | Value |
+|-----------|--------|
+| **Variable name** | `CalendarEntry` (concept) |
+| **Friendly name** | Calendar segment |
+| **Definition** | A per-day segment of a task, derived from dueDate, dueTime, and durationMinutes. |
+| **Key fields** | `dateIso` (date the segment appears on), `startMin` / `endMin` (minutes since midnight 0–1440), `isAllDay`, `startsToday`. |
+| **Location in app** | Calendar month view; day agenda timeline. |
+| **Source of truth** | Frontend-derived. |
+| **Example** | A 36-hour task produces segments on two consecutive dates. |
+
+### `formatDurationMinutesForOverview` (duration display)
+
+| Attribute | Value |
+|-----------|--------|
+| **Variable name** | (Display logic) |
+| **Friendly name** | Duration (human-readable) |
+| **Definition** | Human-readable duration string for hovercard and overview. |
+| **Formula** | 15→“15 mins”; 60→“1 hour”; 75→“1 hour & 15 mins”; 1440→“1 day”; 10080→“1 week”; weeks and months for larger values. |
+| **Location in app** | Task hovercard; duration display in overview. |
+| **Source of truth** | Frontend-derived from `task.durationMinutes`. |
+| **Example** | `125` → “2 hours & 5 mins” |
 
 ### `exportRow.recordType`
 
-- **Friendly name**: Export record type
-- **Definition**: Indicates whether a CSV row represents a project or task.
-- **Allowed values**: `project | task`
-- **Location**: Export CSV generator
-- **Example**: `task`
+| Attribute | Value |
+|-----------|--------|
+| **Variable name** | `exportRow.recordType` |
+| **Friendly name** | Export record type |
+| **Definition** | Indicates whether a CSV row represents a project or a task. |
+| **Allowed values** | `project` \| `task` |
+| **Location in app** | Export CSV generator. |
+| **Source of truth** | Frontend-derived. |
+| **Example** | `task` |
 
-## Derived variables (Backend stats)
+### UI state (filter and expand)
+
+| Variable | Friendly name | Definition | Location |
+|----------|----------------|-------------|----------|
+| `timeScope` | Timeframe filter | Current filter: today, tomorrow, week, next_week, sprint, month, next_month, all. | TaskBoard header. |
+| `completionFilter` | Status filter | active, completed, or all. | TaskBoard header. |
+| `expandedGroups` | Expanded series | Set of parentId keys for which “Show occurrences” is expanded. | List view repeating task rows. |
+
+---
+
+## Derived Variables (Backend Stats)
 
 ### `stats.completedToday`
 
-- **Friendly name**: Tasks completed today
-- **Definition**: Count of tasks completed for the current local date.
-- **Formula**: implementation-derived from persisted tasks (and completion timestamps if present; currently based on stored task states and backend logic).
-- **Location**: `/api/stats` response; Progress panel
-- **Example**: `5`
+| Attribute | Value |
+|-----------|--------|
+| **Variable name** | `stats.completedToday` |
+| **Friendly name** | Tasks completed today |
+| **Definition** | Count of tasks completed on the current local date (by dueDate). |
+| **Formula** | Count of tasks where `completed === true` and `dueDate === todayIso`. |
+| **Location in app** | `GET /api/stats`; Progress panel. |
+| **Source of truth** | Backend (derived from tasks). |
+| **Example** | `5` |
 
 ### `stats.pointsToday`
 
-- **Friendly name**: Points earned today
-- **Definition**: Sum of points for tasks completed today.
-- **Formula**: \(\sum points(priority)\) for tasks completed today.
-- **Points mapping**: low=1, medium=2, high=3, urgent=4
-- **Location**: `/api/stats`; Progress panel
-- **Example**: `11`
+| Attribute | Value |
+|-----------|--------|
+| **Variable name** | `stats.pointsToday` |
+| **Friendly name** | Points earned today |
+| **Definition** | Sum of points for tasks completed today. |
+| **Formula** | ∑ points(priority) for tasks in completedToday. Points: low=1, medium=2, high=3, urgent=4. |
+| **Location in app** | `/api/stats`; Progress panel. |
+| **Source of truth** | Backend. |
+| **Example** | `11` |
 
 ### `stats.totalPoints`
 
-- **Friendly name**: Total points
-- **Definition**: Lifetime sum of points for completed tasks.
-- **Location**: `/api/stats`; Progress panel
+| Attribute | Value |
+|-----------|--------|
+| **Variable name** | `stats.totalPoints` |
+| **Friendly name** | Total points |
+| **Definition** | Lifetime sum of points for all completed tasks. |
+| **Formula** | Sum of points(priority) over all completed tasks. |
+| **Location in app** | `/api/stats`; Progress panel. |
+| **Source of truth** | Backend. |
+| **Example** | `340` |
 
 ### `stats.level`
 
-- **Friendly name**: Level
-- **Definition**: Gamification level derived from total points.
-- **Formula**: `floor(totalPoints / 50) + 1`
-- **Location**: Progress panel
-- **Example**: totalPoints=120 → level=3
+| Attribute | Value |
+|-----------|--------|
+| **Variable name** | `stats.level` |
+| **Friendly name** | Level |
+| **Definition** | Gamification level derived from total points. |
+| **Formula** | `1 + floor(totalPoints / 50)` |
+| **Location in app** | Progress panel. |
+| **Source of truth** | Backend. |
+| **Example** | totalPoints = 120 → level = 3 |
 
 ### `stats.xpToNext`
 
-- **Friendly name**: XP to next level
-- **Definition**: Remaining points to reach the next level boundary.
-- **Formula**: `50 - (totalPoints % 50)`
-- **Location**: Progress panel
-- **Example**: totalPoints=120 → xpToNext=30
+| Attribute | Value |
+|-----------|--------|
+| **Variable name** | `stats.xpToNext` |
+| **Friendly name** | XP to next level |
+| **Definition** | Points remaining to reach the next level boundary. |
+| **Formula** | `50 - (totalPoints % 50)` when totalPoints % 50 ≠ 0; else 50. |
+| **Location in app** | Progress panel. |
+| **Source of truth** | Backend. |
+| **Example** | totalPoints = 120 → xpToNext = 30 |
 
+### `stats.streakDays`
+
+| Attribute | Value |
+|-----------|--------|
+| **Variable name** | `stats.streakDays` |
+| **Friendly name** | Streak days |
+| **Definition** | Consecutive days ending today on which the user completed at least one task (by dueDate). |
+| **Formula** | Count backward from today; increment while the day has ≥1 completed task; stop on first day with zero. |
+| **Location in app** | `/api/stats`; Progress panel. |
+| **Source of truth** | Backend. |
+| **Example** | `7` |
+
+---
+
+**Last updated:** 2026-03-18

@@ -33,10 +33,18 @@ export function ProjectSidebar({
   useEffect(() => {
     const controller = new AbortController();
     async function load() {
-      const res = await fetch("/api/projects", { signal: controller.signal });
-      if (!res.ok) return;
-      const data: Project[] = await res.json();
-      setProjects(data);
+      try {
+        const res = await fetch("/api/projects", { signal: controller.signal });
+        if (!res.ok) return;
+        const data: Project[] = await res.json();
+        setProjects(data);
+      } catch (err) {
+        if (err instanceof DOMException && err.name === "AbortError") {
+          // fetch was aborted on unmount; safe to ignore
+          return;
+        }
+        // swallow other errors for now; sidebar will just show no projects
+      }
     }
     load();
     return () => controller.abort();

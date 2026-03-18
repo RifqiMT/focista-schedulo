@@ -1,153 +1,188 @@
 # PRD — Focista Schedulo
 
-**Last updated**: 2026-03-18  
-**Owner**: Product (with Engineering + Design)  
+**Last updated:** 2026-03-18  
+**Owner:** Product (with Engineering and Design)
 
-## Product summary
+---
 
-**Focista Schedulo** helps people plan work with clarity, focus without noise, and celebrate what they complete. It combines rich task metadata, projects, recurring scheduling, calendar + agenda views, voice-to-form input, and lightweight gamification.
+## Product Summary
 
-## Problem statement
+**Focista Schedulo** helps people plan work with clarity, focus without noise, and celebrate what they complete. It combines rich task metadata, projects, recurring scheduling, calendar and day-agenda views, voice-to-form input, export, and lightweight gamification in a single, focused application.
+
+---
+
+## Problem Statement
 
 People struggle to keep tasks:
 
-- **Structured** (projects, priorities, reminders, deadlines, recurrence)
-- **Actionable** (quick editing, bulk actions, moving tasks)
-- **Visible** (calendar context and day timeline)
-- **Motivating** (feedback loops and progress tracking)
+- **Structured** — Projects, priorities, reminders, deadlines, and recurrence are often scattered or inconsistent across tools.
+- **Actionable** — Quick editing, bulk actions, and moving tasks between contexts are cumbersome in many to-do apps.
+- **Visible** — Calendar context and a clear day timeline are missing or hard to use.
+- **Motivating** — Feedback loops and progress tracking are absent or superficial.
 
-## Target users
+Focista Schedulo addresses these by providing one place to capture, organize, schedule, and complete tasks with stable recurrence behavior and clear visual feedback.
 
-- **Busy professionals** juggling meetings and deliverables
-- **Students / learners** managing repetitive routines and projects
-- **Personal productivity users** who want organization without complexity
+---
 
-See `USER_PERSONAS.md` for details.
+## Target Users
+
+- **Busy professionals** juggling meetings and deliverables across projects.
+- **Students and learners** managing repetitive routines and study projects.
+- **Personal productivity users** who want organization without unnecessary complexity.
+
+See `USER_PERSONAS.md` for detailed personas.
+
+---
 
 ## Goals
 
-- Make it fast to create tasks with enough structure to be useful.
-- Provide clear day/week/month views and a reliable agenda timeline.
-- Ensure recurring series are stable (IDs, “next occurrence”, edits, deletion).
-- Provide immediate feedback (real-time updates; gamification).
+- Make it **fast** to create tasks with enough structure to be useful.
+- Provide **clear** day, week, and month views and a reliable agenda timeline.
+- Ensure **recurring series** are stable (IDs, next occurrence, edits, deletion and cancellation).
+- Deliver **immediate feedback** (real-time updates, gamification stats).
 
-## Non-goals (current)
+---
+
+## Non-Goals (Current)
 
 - Multi-user accounts and collaboration
 - Cloud sync across devices
-- External calendar two-way sync (Google/Apple) with invitations
-- Time zone-aware travel scheduling (advanced)
+- Two-way sync with external calendars (Google, Apple) and invitations
+- Time-zone-aware travel scheduling (advanced)
+- Native mobile apps (current focus is web)
 
-## Current scope (shipped)
+---
 
-### Core tasks
+## Current Scope (Shipped)
 
-- Create/edit tasks in a drawer
-- Rich metadata:
-  - title, description
-  - priority: low/medium/high/urgent
-  - due date/time
-  - **duration** (stored as minutes; input supports minutes/hours/days)
-  - deadline date/time
-  - labels, location
-  - reminder offset (minutes before)
-  - completion state
-  - project association
-- Bulk selection + bulk delete + move
+### Core Tasks
+
+- Create and edit tasks in a drawer.
+- **Rich metadata:**
+  - Title, description
+  - Priority: low, medium, high, urgent
+  - Due date and time
+  - **Duration** (stored as minutes; UI supports minutes, hours, days; hovercard and overview use human-readable format: e.g., 15 min → “15 mins”, 60 → “1 hour”, 75 → “1 hour & 15 mins”, 1440 → “1 day”, weeks and months where applicable)
+  - Deadline date and time
+  - **Labels** (array)
+  - **Locations** (single field in API; UI can support multiple values; plain text or URL with optional alias, e.g. `Alias=>https://...`; no automatic Google Maps for non-URL text)
+  - **Links** (array of URLs per task; optional alias per link, e.g. `Alias=>URL`; normalized and shown as clickable chips in editor and hovercard)
+  - Reminder offset (minutes before)
+  - Completion state
+  - Project association
+- **Task hovercard:** On hover (or focus), a popover shows full task details: schedule, details, tags, and identifiers. Links and locations are clickable (open in new tab). Position adapts (left/right, above/below) to stay on screen.
+- **Task cards (list view):** Show title, date, time, duration, priority, project, Parent ID, and labels (no description, repeat, link, or virtual pill on the card itself).
+- **Bulk selection:** Bulk delete and move tasks to another project.
 
 ### Projects
 
-- Create, edit, delete projects
-- Project IDs are standardized as `P1`, `P2`, … (backend-enforced)
-- Deleting a project deletes its tasks
+- Create, edit, delete projects.
+- Project IDs are standardized as `P1`, `P2`, … (backend-enforced).
+- Deleting a project deletes its tasks.
 
-### Recurrence / series logic
+### Recurrence / Series Logic
 
-- Repeat types:
-  - none, daily, weekly, weekdays, weekends, monthly, quarterly, yearly, custom
-- Custom recurrence:
-  - repeatEvery + repeatUnit (day/week/month/quarter/year)
-- Upcoming occurrences:
-  - frontend generates at most one “upcoming occurrence” virtual card per series
-  - virtual tasks are materialized on interaction
-- IDs:
-  - Parent ID standardized as `YYYYMMDD-N` (backend-enforced for one-time and recurring)
-  - Child ID uses `${parentId}-${index}` for occurrences
+- **Repeat types:** none, daily, weekly, weekdays, weekends, monthly, quarterly, yearly, custom.
+- **Custom recurrence:** repeatEvery + repeatUnit (day, week, month, quarter, year).
+- **Upcoming occurrences:** Frontend generates at most one “upcoming occurrence” virtual card per series; virtual tasks are materialized on interaction.
+- **IDs:** Parent ID format `YYYYMMDD-N` (backend-enforced); Child ID `${parentId}-${index}` for occurrences.
+- **List view expand:** Repeating tasks (Today, Tomorrow, Week, etc.) show a “Show occurrences” / “Hide occurrences” control; expanding displays related/child occurrence cards. Works for both active and completed (grouped) repeating tasks, including when there is only one occurrence in the timeframe.
 
-### Calendar and agenda
+### Calendar and Agenda
 
-- Month grid calendar
-- Clicking a day opens a day agenda timeline with hourly schedule
-- Multi-day durations are split into per-day segments
+- Month grid calendar.
+- Clicking a day opens a day-agenda timeline with hourly schedule.
+- Multi-day durations are split into per-day segments.
 
-### Voice input
+### Voice Input
 
-- One-button voice capture that auto-stops intelligently
-- Voice transcript parsed to populate fields (date/time, duration, priority, labels, location, reminder, repeat)
+- One-button voice capture with auto-stop.
+- Transcript parsed to populate priority, date/time, duration, labels, location, reminder, repeat.
 
 ### Export
 
-- One-button export with format selection:
-  - JSON (projects + tasks)
-  - CSV single file (recordType=project/task)
+- One-button export with format selection: JSON (projects + tasks) or CSV (recordType: project | task).
 
 ### Gamification
 
-- `/api/stats` calculates:
-  - completedToday, pointsToday, totalPoints, level, xpToNext
-- Points per priority:
-  - low=1, medium=2, high=3, urgent=4
-- UI updates via `pst:tasks-changed` events
+- `/api/stats` provides: completedToday, pointsToday, totalPoints, level, xpToNext, streakDays, last7Days, optional achievements and milestoneAchievements.
+- Points per priority: low=1, medium=2, high=3, urgent=4.
+- UI updates via `pst:tasks-changed` events.
 
-## User experience
+### Empty State and Filters
 
-### Primary flows
+- “No tasks yet” only when the current view (list or calendar, timeframe, status filter, grouped-by-parent) truly has no tasks to show.
+- Filters: Timeframe (Today, Tomorrow, Week, Next week, Sprint, Month, Next month, All), View (List, Calendar), Status (Active, Completed, All).
 
-- **Capture**: create a task quickly (text or voice) with a due date/time and duration.
-- **Organize**: group tasks into projects; label and prioritize.
-- **Plan**: use calendar month + day agenda to see time distribution.
-- **Execute**: complete tasks; review progress and streak/XP.
+---
 
-### Key UX principles
+## User Experience
 
-- Maintain a calm interface (clear hierarchy, minimal cognitive load)
-- Show the right defaults (Active tasks by default)
-- Make actions predictable and reversible where possible
+### Primary Flows
 
-## Functional requirements
+- **Capture** — Create a task quickly (form or voice) with due date/time and duration.
+- **Organize** — Group tasks into projects; add labels, priority, locations, and links.
+- **Plan** — Use calendar month and day agenda to see time distribution.
+- **Execute** — Complete tasks; review progress, streak, and XP in the progress panel.
+- **Review** — Hover tasks for full details; expand repeating tasks in list view to see occurrences.
 
-- **FR-1**: Task CRUD with validation (backend schema)
-- **FR-2**: Project CRUD with stable ID format `P<number>`
-- **FR-3**: Recurrence engine with one upcoming occurrence per series
-- **FR-4**: Calendar month view + day agenda view
-- **FR-5**: Voice-to-form parsing, auto-stop, and preview transcript
-- **FR-6**: Export all data as JSON/CSV
-- **FR-7**: Gamification stats and real-time updates
+### Key UX Principles
 
-## Non-functional requirements
+- Calm interface with clear hierarchy and minimal cognitive load.
+- Sensible defaults (e.g., Active tasks by default).
+- Actions predictable and reversible where possible.
+- Links and locations open in a new tab from hovercard and editor.
 
-- **Reliability**: IDs stable across input methods and edits.
-- **Performance**: fast local operations; lists and calendar render quickly.
-- **Accessibility**: focus states, readable contrast, keyboard navigation for interactive controls.
+---
 
-## Analytics and metrics
+## Functional Requirements
+
+| ID | Requirement |
+|----|-------------|
+| FR-1 | Task CRUD with validation (backend schema). |
+| FR-2 | Project CRUD with stable ID format `P<number>`. |
+| FR-3 | Recurrence engine with one upcoming occurrence per series; list expand for occurrences. |
+| FR-4 | Calendar month view and day-agenda view; multi-day segmentation. |
+| FR-5 | Voice-to-form parsing, auto-stop, and transcript preview. |
+| FR-6 | Export all data as JSON or CSV. |
+| FR-7 | Gamification stats and real-time updates. |
+| FR-8 | Task hovercard with full details and clickable links/locations; positioning that keeps card on screen. |
+| FR-9 | Multi-link and multi-location (UI) with normalization and alias support where applicable. |
+
+---
+
+## Non-Functional Requirements
+
+- **Reliability** — IDs stable across input methods and edits; recurrence and calendar behavior consistent.
+- **Performance** — Fast local operations; lists and calendar render quickly; reduced re-renders and heavy work.
+- **Accessibility** — Focus states, readable contrast, keyboard navigation for interactive controls.
+
+---
+
+## Analytics and Metrics
 
 See `PRODUCT_METRICS.md` and `METRICS_AND_OKRS.md`.
 
-## Risks and mitigations
+---
 
-- **Recurring series edge cases**: DST, time parsing, duplication.
-  - Mitigation: local-date normalization, backend ID enforcement, series normalization.
-- **Speech recognition variability** across browsers.
-  - Mitigation: degrade gracefully; allow manual corrections.
-- **Single-user local persistence** limits portability.
-  - Mitigation: document “local-only”; plan cloud sync separately.
+## Risks and Mitigations
 
-## Roadmap (suggested)
+| Risk | Mitigation |
+|------|-------------|
+| Recurring series edge cases (DST, time parsing, duplication) | Local-date normalization, backend ID enforcement, series normalization. |
+| Speech recognition variability across browsers | Graceful degradation; allow manual corrections. |
+| Single-user local persistence limits portability | Document “local-only”; plan cloud sync as a separate initiative. |
+
+---
+
+## Roadmap (Suggested)
 
 - Week view calendar with drag-to-reschedule
 - Task duration blocks with resize handles
-- Search and advanced filters
+- Search and advanced filters (already partially present; refine and document)
 - Dedicated “Completed insights” view (patterns, completion time)
 - Cloud sync and authentication
 
+---
+
+**Last updated:** 2026-03-18

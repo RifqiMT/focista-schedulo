@@ -1,128 +1,160 @@
 # User Stories — Focista Schedulo
 
-**Last updated**: 2026-03-18  
-**Owner**: Product  
+**Last updated:** 2026-03-18  
+**Owner:** Product
 
-## Capture and edit tasks
+User stories are written in the format: **As a [role], I want [goal] so that [benefit].** Acceptance criteria define when the story is done.
+
+---
+
+## Capture and Edit Tasks
 
 ### US-1 Create a task (text)
 
 As a user, I want to create a task with key details so I can plan and execute it.
 
-**Acceptance criteria**
+**Acceptance criteria:**
 
-- User can create a task with:
-  - title (required)
-  - description (optional)
-  - priority (optional)
-  - due date/time (optional)
-  - duration (optional)
-  - labels/location (optional)
-  - reminder (optional)
-  - deadline (optional)
-  - project association (optional)
-- After save, the task appears in the list and (if scheduled) in the calendar.
+- User can create a task with: title (required); description (optional); priority (optional); due date/time (optional); duration (optional); labels, locations, links (optional); reminder (optional); deadline (optional); project (optional).
+- After save, the task appears in the list and, if scheduled, in the calendar.
 
 ### US-2 Edit a task
 
 As a user, I want to edit a task so it stays accurate as my plan changes.
 
-**Acceptance criteria**
+**Acceptance criteria:**
 
-- Editing updates the task immediately in the list/calendar.
-- Recurring tasks preserve their series identity (stable parent/child IDs).
-- Duration changes propagate to series occurrences where applicable.
+- Editing updates the task immediately in the list and calendar.
+- Recurring tasks preserve series identity (stable Parent ID / Child ID).
+- Duration and other definition-level changes propagate to series occurrences where applicable.
 
 ### US-3 Use voice input to fill a task
 
 As a user, I want to speak a task naturally so the app can fill fields for me.
 
-**Acceptance criteria**
+**Acceptance criteria:**
 
 - One button starts voice capture; capture stops automatically when speech ends.
-- Parsed fields can include:
-  - priority
-  - due date/time
-  - duration
-  - repeat pattern
-  - reminder
-  - labels and location
-- User can still manually correct fields before saving.
+- Parsed fields can include: priority, due date/time, duration, repeat pattern, reminder, labels, location.
+- User can correct any field manually before saving.
+
+### US-4 View full task details in a hovercard
+
+As a user, I want to see full task details on hover so I can quickly check schedule, links, and locations without opening the editor.
+
+**Acceptance criteria:**
+
+- Hovering (or focusing) a task shows a hovercard with grouped sections: Schedule, Details, Tags, Identifiers.
+- All relevant fields are shown (duration in human-readable form, e.g. “1 hour & 15 mins”).
+- Links and locations are clickable and open in a new tab; alias shown when present.
+- Hovercard position adapts so it stays on screen (e.g. left/right, above/below).
+
+---
 
 ## Projects
 
-### US-4 Create and manage projects
+### US-5 Create and manage projects
 
 As a user, I want to group tasks into projects so I can focus by context.
 
-**Acceptance criteria**
+**Acceptance criteria:**
 
 - User can create, rename, and delete projects.
-- Project IDs remain consistent in the `P<number>` format.
+- Project IDs remain in the format `P<number>`.
 - Deleting a project deletes its tasks.
 
-## Completion and progress
+---
 
-### US-5 Complete and reactivate tasks
+## Completion and Progress
 
-As a user, I want to complete tasks and re-activate them if needed.
+### US-6 Complete and reactivate tasks
 
-**Acceptance criteria**
+As a user, I want to complete tasks and reactivate them if needed.
 
-- Completing a task moves it into completed views.
-- Reactivating returns it to active tasks without changing its series identity.
+**Acceptance criteria:**
 
-### US-6 See progress and points
+- Completing a task moves it into completed views (or grouped completed section when Status = All).
+- Reactivating returns the task to active without changing series identity.
+
+### US-7 See progress and points
 
 As a user, I want to see my progress so I feel motivated to continue.
 
-**Acceptance criteria**
+**Acceptance criteria:**
 
-- Progress panel shows tasks completed today, streak, level, and XP.
-- Points awarded per completed task:
-  - low=1, medium=2, high=3, urgent=4
+- Progress panel shows tasks completed today, streak, level, and XP to next level.
+- Points per completed task: low=1, medium=2, high=3, urgent=4.
 - Stats update when tasks change (no manual refresh required).
 
-## Recurrence and calendar
+---
 
-### US-7 Set a task to repeat and only see the next occurrence
+## Recurrence and List View
 
-As a user, I want recurring tasks to show only the next upcoming occurrence so my list doesn’t get cluttered.
+### US-8 Set a task to repeat and see the next occurrence
 
-**Acceptance criteria**
+As a user, I want recurring tasks to show only the next upcoming occurrence so my list stays uncluttered.
 
-- For a recurring series, the UI shows the active instance and a single next upcoming occurrence.
-- Upcoming occurrence behaves like a normal task: can be opened, edited, and completed.
+**Acceptance criteria:**
 
-### US-8 View tasks on a calendar and drill into a day agenda
+- For a recurring series, the UI shows the active instance and at most one next upcoming occurrence.
+- Upcoming occurrence can be opened, edited, and completed like a normal task.
+
+### US-9 Expand repeating tasks to see occurrences
+
+As a user, I want to expand repeating tasks in the list so I can see all related/child occurrence cards for the current timeframe.
+
+**Acceptance criteria:**
+
+- In list view (Today, Tomorrow, Week, etc.), repeating tasks show a “Show occurrences” / “Hide occurrences” control when there is at least one occurrence in the timeframe.
+- Expanding shows occurrence cards (with optional child ID); works for both active and completed (grouped) repeating tasks, including when only one occurrence exists in the timeframe.
+
+---
+
+## Calendar and Agenda
+
+### US-10 View tasks on a calendar and drill into a day agenda
 
 As a user, I want a calendar view so I can see when tasks happen and plan my day.
 
-**Acceptance criteria**
+**Acceptance criteria:**
 
 - Month grid shows tasks on their respective dates.
-- Clicking a day opens an agenda view showing tasks on an hourly timeline.
-- Multi-day tasks appear on every day they span.
+- Clicking a day opens an agenda view with tasks on an hourly timeline.
+- Multi-day tasks appear on every day they span; duration is shown in human-readable form where relevant.
 
-## Data management
+---
 
-### US-9 Export my data
+## Data and Links
 
-As a user, I want to export my data so I can back it up or analyze it elsewhere.
+### US-11 Add multiple links and locations to a task
 
-**Acceptance criteria**
+As a user, I want to add one or more links and locations to a task so I can quickly open references and places.
 
-- One export entry point.
-- User can choose JSON or CSV.
-- Export includes both projects and tasks.
+**Acceptance criteria:**
 
-### US-10 Bulk delete and move
+- Task can have multiple links (stored as array); optional alias per link (e.g. `Alias=>URL`).
+- Task can have location(s); UI supports multiple values; plain text or URL with optional alias; only real URLs get an “Open” link (no automatic map for non-URL text).
+- Links and locations appear as clickable chips in the editor and in the hovercard; they open in a new tab.
 
-As a user, I want bulk actions so I can clean up and reorganize faster.
+### US-12 Export my data
 
-**Acceptance criteria**
+As a user, I want to export my data so I can back it up or use it elsewhere.
+
+**Acceptance criteria:**
+
+- One export entry point; user can choose JSON or CSV.
+- Export includes projects and tasks.
+
+### US-13 Bulk delete and move
+
+As a user, I want bulk actions so I can clean up and reorganize quickly.
+
+**Acceptance criteria:**
 
 - User can select multiple tasks.
-- User can move selected tasks to a different project (subject to guardrails).
+- User can move selected tasks to another project.
 - User can bulk delete selected tasks.
 
+---
+
+**Last updated:** 2026-03-18

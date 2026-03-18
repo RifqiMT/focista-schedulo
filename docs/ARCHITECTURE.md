@@ -37,7 +37,7 @@ flowchart LR
 See `VARIABLES.md` for full definitions.
 
 - **Project**: `{ id: "P<number>", name }`
-- **Task**: rich fields including `priority`, `dueDate`, `dueTime`, `durationMinutes`, `repeat*`, `projectId`, `completed`, `parentId`, `childId`, `cancelled`
+- **Task**: rich fields including `priority`, `dueDate`, `dueTime`, `durationMinutes`, `repeat*`, `projectId`, `completed`, `parentId`, `childId`, `cancelled`, `labels`, `location`, `link` (array of URLs), `reminderMinutesBefore`, `deadlineDate`, `deadlineTime`
 
 ## Persistence and migrations
 
@@ -98,7 +98,11 @@ Deletion of repeating items uses a **cancellation** strategy (`cancelled: true`)
 
 ### Stats
 
-- `GET /api/stats` → stats used by Progress panel (points, level, streak, etc.)
+- `GET /api/stats` → stats used by Progress panel (points, level, streak, last7Days, achievements, milestoneAchievements)
+
+### Admin
+
+- `POST /api/admin/reload-data` → reloads tasks and projects from disk (e.g. after editing JSON); triggers no persistence, used by frontend “Sync data” for consistency
 
 ## Frontend state synchronization
 
