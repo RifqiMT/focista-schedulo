@@ -1,1 +1,0 @@
-# focista-schedulo
