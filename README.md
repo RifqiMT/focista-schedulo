@@ -20,7 +20,7 @@ Focista Schedulo is a cross-platform to-do application focused on **rich task me
 
 ## Running in development
 
-From the `focista-schedulo` directory:
+From the repository root:
 
 ```bash
 npm install
