@@ -584,6 +584,8 @@ export function TaskBoard({ selectedProjectId, timeScope, onTimeScopeChange }: T
   } | null>(null);
   const projectsFetchInFlight = useRef(false);
   const tasksFetchInFlight = useRef(false);
+  const virtualMaterializeInFlightRef = useRef<Map<string, Promise<Task | null>>>(new Map());
+  const taskMutationInFlightRef = useRef<Set<string>>(new Set());
   const hoverAutoCloseTimerRef = useRef<ReturnType<typeof window.setTimeout> | null>(
     null
   );
@@ -1272,32 +1274,58 @@ export function TaskBoard({ selectedProjectId, timeScope, onTimeScopeChange }: T
     if (!task.virtual) return task;
     if (!task.dueDate) return null;
 
-    const res = await fetch("/api/tasks", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        title: task.title,
-        description: task.description,
-        priority: task.priority,
-        dueDate: task.dueDate,
-        dueTime: task.dueTime,
-        durationMinutes: task.durationMinutes,
-        repeat: task.repeat ?? "none",
-        repeatEvery: task.repeatEvery,
-        repeatUnit: task.repeatUnit,
-        labels: task.labels,
-        location: task.location,
-        link: task.link,
-        reminderMinutesBefore: task.reminderMinutesBefore,
-        projectId: task.projectId,
-        parentId: task.parentId,
-        childId: task.childId
-      })
-    });
-    if (!res.ok) return null;
-    const created: Task = await res.json();
-    setTasks((prev) => [...prev, created]);
-    return created;
+    const materializeKey = `${seriesKeyForTask(task)}::${task.dueDate}`;
+    const inFlight = virtualMaterializeInFlightRef.current.get(materializeKey);
+    if (inFlight) return inFlight;
+
+    const existingReal = tasks.find(
+      (t) =>
+        !t.virtual &&
+        !t.cancelled &&
+        !!t.dueDate &&
+        t.dueDate === task.dueDate &&
+        seriesKeyForTask(t) === seriesKeyForTask(task)
+    );
+    if (existingReal) return existingReal;
+
+    const promise = (async () => {
+      const res = await fetch("/api/tasks", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          title: task.title,
+          description: task.description,
+          priority: task.priority,
+          dueDate: task.dueDate,
+          dueTime: task.dueTime,
+          durationMinutes: task.durationMinutes,
+          repeat: task.repeat ?? "none",
+          repeatEvery: task.repeatEvery,
+          repeatUnit: task.repeatUnit,
+          labels: task.labels,
+          location: task.location,
+          link: task.link,
+          reminderMinutesBefore: task.reminderMinutesBefore,
+          projectId: task.projectId,
+          parentId: task.parentId,
+          childId: task.childId
+        })
+      });
+      if (!res.ok) return null;
+      const created: Task = await res.json();
+      setTasks((prev) => {
+        if (prev.some((t) => t.id === created.id)) return prev;
+        return [...prev, created];
+      });
+      return created;
+    })();
+
+    virtualMaterializeInFlightRef.current.set(materializeKey, promise);
+    try {
+      return await promise;
+    } finally {
+      virtualMaterializeInFlightRef.current.delete(materializeKey);
+    }
   };
 
   const toggleComplete = (task: Task) => {
@@ -1308,13 +1336,25 @@ export function TaskBoard({ selectedProjectId, timeScope, onTimeScopeChange }: T
         if (!created) return;
         target = created;
       }
-      setTasks((prev) =>
-        prev.map((t) =>
-          t.id === target.id ? { ...t, completed: !t.completed } : t
-        )
-      );
-      await fetch(`/api/tasks/${target.id}/complete`, { method: "PATCH" });
-      notifyTasksChanged();
+      if (taskMutationInFlightRef.current.has(target.id)) return;
+      taskMutationInFlightRef.current.add(target.id);
+      try {
+        setTasks((prev) =>
+          prev.map((t) =>
+            t.id === target.id ? { ...t, completed: !t.completed } : t
+          )
+        );
+        const res = await fetch(`/api/tasks/${target.id}/complete`, { method: "PATCH" });
+        if (!res.ok) {
+          void refreshTasks();
+        } else {
+          notifyTasksChanged();
+        }
+      } catch {
+        void refreshTasks();
+      } finally {
+        taskMutationInFlightRef.current.delete(target.id);
+      }
     };
     void update();
   };
@@ -3949,11 +3989,22 @@ export function TaskBoard({ selectedProjectId, timeScope, onTimeScopeChange }: T
                 const created: Task = await res.json();
                 setTasks((prev) => [...prev, created]);
                 notifyTasksChanged();
+              } else {
+                void refreshTasks();
               }
             } else {
-              const { deadlineDate: _deadlineDate, deadlineTime: _deadlineTime, ...rest } =
-                updated;
-              const res = await fetch(`/api/tasks/${updated.id}`, {
+              let target = updated;
+              if (updated.virtual) {
+                const created = await materializeVirtualTask(updated);
+                if (!created) {
+                  void refreshTasks();
+                  return;
+                }
+                target = { ...updated, ...created, id: created.id, virtual: false };
+              }
+              const { deadlineDate: _deadlineDate, deadlineTime: _deadlineTime, virtual: _virtual, ...rest } =
+                target;
+              const res = await fetch(`/api/tasks/${target.id}`, {
                 method: "PUT",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify(rest)
@@ -3964,6 +4015,8 @@ export function TaskBoard({ selectedProjectId, timeScope, onTimeScopeChange }: T
                   prev.map((t) => (t.id === saved.id ? saved : t))
                 );
                 notifyTasksChanged();
+              } else {
+                void refreshTasks();
               }
             }
             setEditingTask(null);

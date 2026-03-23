@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
 interface Stats {
   completedToday: number;
@@ -107,6 +107,7 @@ function Icon({
 
 export function GamificationPanel() {
   const [stats, setStats] = useState<Stats | null>(null);
+  const latestFetchIdRef = useRef(0);
   const [badgesOpen, setBadgesOpen] = useState(false);
   const [hoveredBadge, setHoveredBadge] = useState<{
     title: string;
@@ -123,10 +124,13 @@ export function GamificationPanel() {
     let timeoutId: number | undefined;
 
     const fetchStats = async (signal: AbortSignal) => {
+      const fetchId = ++latestFetchIdRef.current;
       try {
         const res = await fetch("/api/stats", { signal });
         if (!res.ok) return;
         const data: Stats = await res.json();
+        // Ignore late responses from older requests.
+        if (fetchId !== latestFetchIdRef.current) return;
         setStats(data);
       } catch {
         // ignore network/abort errors
@@ -146,8 +150,8 @@ export function GamificationPanel() {
     void fetchStats(controller.signal);
 
     const onDataChanged = () => {
-      // Debounce rapid task/project changes into a single refresh.
-      scheduleRefresh(150);
+      // Keep stats and badges synced immediately after task/project mutations.
+      scheduleRefresh(0);
     };
 
     const onVisibilityChange = () => {
@@ -163,7 +167,7 @@ export function GamificationPanel() {
     // Gentle periodic refresh (e.g. if backend state changes indirectly).
     const intervalId = window.setInterval(() => {
       scheduleRefresh(0);
-    }, 60_000);
+    }, 15_000);
 
     return () => {
       controller.abort();

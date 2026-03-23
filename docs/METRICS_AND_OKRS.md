@@ -104,4 +104,32 @@ This document frames quarterly OKRs and the metrics used to measure them for the
 
 ---
 
-**Last updated:** 2026-03-18
+## OKR Governance Model
+
+1. KR definitions must map to operational formulas in `PRODUCT_METRICS.md` and `VARIABLES.md`.
+2. KR status updates follow monthly operating review cadence.
+3. Any metric definition change requires versioned note in this document.
+4. Delivery initiatives must map to requirements in `TRACEABILITY_MATRIX.md`.
+
+---
+
+## Quarter Execution Rhythm (Recommended)
+
+- Week 1: Baseline and target reaffirmation
+- Week 2-3: Initiative delivery and instrumentation validation
+- Week 4: KPI review, retrospective, and KR confidence scoring
+
+---
+
+## Risk Signals for Escalation
+
+Escalate when one or more conditions hold for two consecutive reporting cycles:
+
+- Q1 recurrence duplication rate > 0
+- Q2 calendar correctness drops below target
+- R2 streak continuation trend declines with no corresponding scope change
+- E3 recurrence adoption declines after recurrence-related releases
+
+---
+
+**Last updated:** 2026-03-23

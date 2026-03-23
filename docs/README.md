@@ -21,6 +21,8 @@ This folder contains product, design, and engineering documentation for Focista 
 | [USER_STORIES.md](USER_STORIES.md) | User stories and acceptance criteria for capture, projects, completion, recurrence, calendar, export, and gamification. |
 | [PRODUCT_METRICS.md](PRODUCT_METRICS.md) | Product metrics: North Star (WCST), activation, engagement, retention, quality. |
 | [METRICS_AND_OKRS.md](METRICS_AND_OKRS.md) | OKRs and product-team metrics with key results and initiatives. |
+| [TRACEABILITY_MATRIX.md](TRACEABILITY_MATRIX.md) | Enterprise-style traceability across personas, stories, requirements, code modules, APIs, tests, and metrics/KRs. |
+| [GUARDRAILS.md](GUARDRAILS.md) | Business and technical guardrails: constraints, risk controls, data handling boundaries, and operating limits. |
 
 ---
 
@@ -49,4 +51,19 @@ This folder contains product, design, and engineering documentation for Focista 
 
 ---
 
-**Last updated:** 2026-03-18
+## Documentation Coverage and Status
+
+| Area | Coverage status | Notes |
+|------|------------------|-------|
+| Product overview and scope | Complete | Canonical source: `PRD.md` |
+| Personas and user stories | Complete | Aligned to shipped and near-term roadmap |
+| Variables and formulas | Complete | Includes relationship chart and app-location mapping |
+| Product metrics and OKRs | Complete | Includes operational definitions and ownership |
+| Design system and component guidance | Complete | Includes color palettes, states, and accessibility |
+| Architecture and API | Complete | Current backend/frontend implementation reflected |
+| Traceability matrix | Complete | New enterprise matrix added |
+| Guardrails and constraints | Complete | New business/technical guardrails added |
+
+---
+
+**Last updated:** 2026-03-23

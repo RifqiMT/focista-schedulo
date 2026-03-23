@@ -128,4 +128,35 @@ See `VARIABLES.md` for:
 
 ---
 
-**Last updated:** 2026-03-18
+## Metric Ownership and Reporting Cadence
+
+| Metric Group | Primary Owner | Secondary Owner | Reporting Cadence |
+|--------------|---------------|-----------------|-------------------|
+| Activation (A1, A2) | Product | Engineering | Weekly |
+| Engagement (E1-E4) | Product Analytics | Product | Weekly |
+| Retention (R1, R2) | Product Analytics | Product | Monthly |
+| Quality (Q1-Q3) | Engineering | Product | Weekly + release gate |
+
+---
+
+## Data Quality Checks
+
+Before metrics are consumed for decisions:
+
+1. Validate no duplicate task IDs in persisted data.
+2. Validate no duplicate recurring occurrences in the same series/date.
+3. Validate local-date correctness for daily calculations (`completedToday`, `streakDays`, `last7Days`).
+4. Validate milestone and level formulas in `/api/stats`.
+
+---
+
+## Instrumentation Backlog (Planned)
+
+- Formal event taxonomy and naming convention.
+- Dashboard mapping by audience (PM, engineering, leadership).
+- Baseline/target snapshots by quarter.
+- SLA for metric refresh latency and data quality alerts.
+
+---
+
+**Last updated:** 2026-03-23

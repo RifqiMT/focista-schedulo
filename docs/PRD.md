@@ -185,4 +185,38 @@ See `PRODUCT_METRICS.md` and `METRICS_AND_OKRS.md`.
 
 ---
 
-**Last updated:** 2026-03-18
+## Requirements Traceability Summary
+
+This PRD is governed together with:
+
+- `docs/USER_PERSONAS.md` for user context
+- `docs/USER_STORIES.md` for delivery-level acceptance criteria
+- `docs/TRACEABILITY_MATRIX.md` for persona -> story -> requirement -> code -> test -> metric lineage
+- `docs/GUARDRAILS.md` for business and technical boundaries
+
+---
+
+## Release Readiness Criteria
+
+A release is considered ready only when:
+
+1. Scope requirements are verified in both UI and API behavior.
+2. Data integrity checks pass (schema validity, recurrence consistency, no duplicate IDs).
+3. Core metrics remain correct (`completedToday`, `streakDays`, `level`, `xpToNext`, milestone progress).
+4. Export paths (JSON/CSV) remain reliable.
+5. Related product documentation is updated in the same release train.
+
+---
+
+## Assumptions and Constraints Register
+
+| ID | Assumption / Constraint | Impact | Owner | Status |
+|----|--------------------------|--------|-------|--------|
+| AC-01 | Local-first JSON persistence remains the primary storage strategy | Fast setup and high data ownership | Engineering | Active |
+| AC-02 | Single-user product model is the current operational scope | Collaboration flows are intentionally deferred | Product | Active |
+| AC-03 | Voice input quality depends on browser speech capabilities | Requires manual fallback and correction UX | Product + Engineering | Active |
+| AC-04 | Recurrence identity (`parentId`, `childId`) must remain deterministic | Core to complete/edit reliability | Engineering | Active |
+
+---
+
+**Last updated:** 2026-03-23

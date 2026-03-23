@@ -472,4 +472,55 @@ flowchart TB
 
 ---
 
-**Last updated:** 2026-03-18
+## Additional Metrics Variables (Comprehensive)
+
+### `stats.last7Days[]`
+
+| Attribute | Value |
+|-----------|--------|
+| **Variable name** | `stats.last7Days[]` |
+| **Friendly name** | Last 7 days completion series |
+| **Definition** | Rolling seven-day array containing date, completed count, and points for each day. |
+| **Formula** | For each day `d` in `[today-6, today]`: `{date, completed=count(tasks completed on d), points=sum(priorityPoints for d)}` |
+| **Location in app** | Progress panel -> Last 7 days mini-chart |
+| **Source of truth** | Backend (`GET /api/stats`) |
+| **Example** | `[{date:"2026-03-23", completed:5, points:9}, ...]` |
+
+### `stats.milestoneAchievements.levelsUp.progressToNext`
+
+| Attribute | Value |
+|-----------|--------|
+| **Variable name** | `stats.milestoneAchievements.levelsUp.progressToNext` |
+| **Friendly name** | Levels-up progress percentage |
+| **Definition** | Fractional progress from current level milestone toward the next level milestone. |
+| **Formula** | `(level + pointsIntoLevel/50 - previousMilestone) / (nextMilestone - previousMilestone)` clamped `[0..1]` |
+| **Location in app** | Progress panel -> Milestones -> Levels up bar |
+| **Source of truth** | Backend |
+| **Example** | level=18, pointsIntoLevel=8, prev=10, next=20 -> `0.632` |
+
+---
+
+## Data Lineage (Operational)
+
+1. User action in UI (`TaskBoard.tsx` / `TaskEditorDrawer.tsx`)
+2. API mutation (`POST/PUT/PATCH/DELETE /api/tasks`, project endpoints)
+3. Persistence update (`backend/data/tasks.json`, `backend/data/projects.json`)
+4. Stats recomputation (`GET /api/stats`)
+5. Progress/Badges render (`GamificationPanel.tsx`)
+
+This lineage is the canonical path for debugging variable drift or stale values.
+
+---
+
+## Variable Governance Notes
+
+- New persisted fields must be validated in backend schema (`TaskSchema`/`ProjectSchema`) before frontend usage.
+- Derived formulas must be documented here before release.
+- Breaking formula changes require:
+  1. update in `PRODUCT_METRICS.md`,
+  2. update in `METRICS_AND_OKRS.md` if KR impact exists,
+  3. update in `TRACEABILITY_MATRIX.md`.
+
+---
+
+**Last updated:** 2026-03-23

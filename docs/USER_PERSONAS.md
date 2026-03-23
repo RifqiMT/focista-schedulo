@@ -96,4 +96,30 @@ This document describes the primary user personas for Focista Schedulo. Personas
 
 ---
 
-**Last updated:** 2026-03-18
+## Persona Prioritization and Coverage
+
+| Persona | Priority | Primary Epics | Current Coverage |
+|--------|----------|---------------|------------------|
+| Project Operator | P0 | Task CRUD, projects, bulk actions, calendar/day agenda | Strong |
+| Routine Builder | P0 | Recurrence, complete/reactivate loops, progress and milestones, voice capture | Strong |
+| Personal Planner | P1 | Labels/locations/links, reminders, export, calendar balancing | Strong |
+
+---
+
+## Jobs-to-be-Done (JTBD)
+
+1. When my day changes quickly, I want to reprioritize and move tasks fast so I can keep momentum.
+2. When I rely on routines, I want recurrence to behave predictably so I can trust future planning.
+3. When I manage personal commitments, I want schedule visibility and reminders so nothing critical slips.
+
+---
+
+## Anti-Personas (Out of Current Scope)
+
+- Large multi-team PMO requiring enterprise workflow approvals.
+- Real-time collaborative teams needing shared editing and role-based permissions.
+- Compliance-heavy organizations requiring cloud audit trail and policy controls.
+
+---
+
+**Last updated:** 2026-03-23

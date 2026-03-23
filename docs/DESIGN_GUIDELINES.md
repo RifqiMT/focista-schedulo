@@ -188,4 +188,35 @@ Priorities are visually distinct in task pills, calendar items, day agenda, and 
 
 ---
 
-**Last updated:** 2026-03-18
+## Component State Matrix (Enterprise Summary)
+
+| Component | Required States |
+|-----------|-----------------|
+| Task card | default, hover, selected, completed, focused |
+| Task editor drawer | closed, open, voice-listening, validation error, saving |
+| Project sidebar item | default, hover, active, focused |
+| Progress milestone card | default, hover tooltip, loading fallback |
+| Badge modal | closed, open, section expanded/collapsed, hovercard visible |
+| Calendar day cell | empty, has tasks, selected, today, out-of-month |
+
+---
+
+## Accessibility Validation Checklist
+
+1. Keyboard navigation reaches all actionable controls.
+2. Focus indicator is visible on cards, buttons, chips, and modal controls.
+3. Status communication includes text labels (not color-only).
+4. Milestone/badge info remains understandable when hover is unavailable.
+5. Color contrast remains acceptable for primary text and actionable controls.
+
+---
+
+## Design Guardrails
+
+- Do not introduce new semantic colors without documenting purpose and usage.
+- Do not mix interaction patterns for equivalent controls (e.g., button vs clickable text without rationale).
+- Preserve density and scanability in task list; avoid adding dense decorative-only UI.
+
+---
+
+**Last updated:** 2026-03-23

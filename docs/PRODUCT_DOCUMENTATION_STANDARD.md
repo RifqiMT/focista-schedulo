@@ -31,6 +31,8 @@ All documentation should reflect the most up-to-date and comprehensive informati
 | `docs/DESIGN_GUIDELINES.md` | Design, Engineering | Design | Quarterly and on theme/component changes |
 | `docs/ARCHITECTURE.md` | Engineering | Engineering | On architectural or API changes |
 | `docs/VARIABLES.md` | Product, Analytics, Engineering | Product Analytics | Monthly and on model/schema changes |
+| `docs/TRACEABILITY_MATRIX.md` | Product, Design, Engineering, QA | Product Ops | Every sprint and release |
+| `docs/GUARDRAILS.md` | Product, Engineering, Security | Product + Engineering | Quarterly and on major capability changes |
 | `docs/PRODUCT_DOCUMENTATION_STANDARD.md` | All | Product | When standards change |
 
 ---
@@ -109,6 +111,19 @@ For every variable (field, metric, derived value):
 - Objectives and key results
 - Inputs and initiatives
 
+### Traceability Matrix (`docs/TRACEABILITY_MATRIX.md`)
+
+- Explicit lineage from persona -> user story -> requirement -> code artifact -> API -> test -> metric/KR
+- Coverage status (implemented / partial / planned)
+- Release criticality and owner for each requirement group
+
+### Guardrails (`docs/GUARDRAILS.md`)
+
+- Product guardrails (scope boundaries, anti-goals, acceptable use)
+- Technical guardrails (performance, reliability, data integrity, security)
+- Operational guardrails (monitoring, rollback, incident response)
+- AI/voice guardrails (input quality, parsing ambiguity, fallback behavior)
+
 ### Architecture (`docs/ARCHITECTURE.md`)
 
 - Overview and repository structure
@@ -151,4 +166,4 @@ Use these canonical terms consistently:
 
 ---
 
-**Last updated:** 2026-03-18
+**Last updated:** 2026-03-23

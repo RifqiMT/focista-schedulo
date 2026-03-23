@@ -117,6 +117,8 @@ Runs ESLint for backend and frontend.
 | [docs/METRICS_AND_OKRS.md](docs/METRICS_AND_OKRS.md) | OKRs and product team metrics |
 | [docs/DESIGN_GUIDELINES.md](docs/DESIGN_GUIDELINES.md) | Design system, themes, components |
 | [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | System architecture and API |
+| [docs/TRACEABILITY_MATRIX.md](docs/TRACEABILITY_MATRIX.md) | Enterprise traceability matrix across persona, story, requirement, code, test, and metrics |
+| [docs/GUARDRAILS.md](docs/GUARDRAILS.md) | Business and technical guardrails for safe, scalable product development |
 
 ---
 
@@ -134,4 +136,4 @@ Data is persisted to JSON files under `backend/data/`, so data survives restarts
 
 ---
 
-**Last updated:** 2026-03-18
+**Last updated:** 2026-03-23

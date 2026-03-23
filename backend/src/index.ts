@@ -63,6 +63,10 @@ type Project = z.infer<typeof ProjectSchema>;
 let tasks: Task[] = [];
 let projects: Project[] = [];
 
+function makeTaskId(): string {
+  return `${Date.now()}-${Math.random().toString(16).slice(2, 10)}`;
+}
+
 function yyyymmddLocal(d: Date): string {
   const y = d.getFullYear();
   const m = String(d.getMonth() + 1).padStart(2, "0");
@@ -531,6 +535,40 @@ async function loadData() {
         labels: sortLabelsAsc(t.labels),
         link: t.link ? sortLinksAsc(t.link) : t.link
       }));
+
+      // Repair inconsistent data from historical race conditions:
+      // 1) remove duplicate IDs (keep latest record)
+      // 2) collapse duplicate repeating occurrences on the same dueDate
+      //    within the same logical series (prefer completed=true if either is completed)
+      const byId = new Map<string, Task>();
+      for (const t of tasks) {
+        byId.set(t.id, t);
+      }
+      const afterIdDedup = Array.from(byId.values());
+
+      const bySeriesDue = new Map<string, Task>();
+      for (const t of afterIdDedup) {
+        if (!isRepeatingTask(t) || !t.dueDate || t.cancelled) {
+          bySeriesDue.set(`id:${t.id}`, t);
+          continue;
+        }
+        const key = `series:${seriesKeyForTask(t)}::${t.dueDate}`;
+        const existing = bySeriesDue.get(key);
+        if (!existing) {
+          bySeriesDue.set(key, t);
+          continue;
+        }
+        bySeriesDue.set(key, {
+          ...existing,
+          ...t,
+          completed: existing.completed || t.completed
+        });
+      }
+      const normalized = Array.from(bySeriesDue.values());
+      if (normalized.length !== tasks.length) {
+        tasks = normalized;
+        await persistTasks();
+      }
     }
   } catch {
     tasks = [];
@@ -854,7 +892,7 @@ app.post("/api/tasks", async (req, res) => {
       : [];
 
   const task: Task = {
-    id: Date.now().toString(),
+    id: makeTaskId(),
     completed: false,
     cancelled: false,
     ...sortedParsedData,
@@ -1014,8 +1052,15 @@ app.delete("/api/tasks/:id", async (req, res) => {
 });
 
 app.get("/api/stats", (_req, res) => {
-  const toIsoLocal = (d: Date) => d.toISOString().slice(0, 10);
-  const addDays = (d: Date, days: number) => {
+  // Use local calendar dates so "today/streak/last7" match the UI date inputs
+  // and update correctly in real time for the user's timezone.
+  const toIsoLocal = (d: Date) => {
+    const y = d.getFullYear();
+    const m = String(d.getMonth() + 1).padStart(2, "0");
+    const day = String(d.getDate()).padStart(2, "0");
+    return `${y}-${m}-${day}`;
+  };
+  const addDaysLocal = (d: Date, days: number) => {
     const x = new Date(d.getTime());
     x.setDate(x.getDate() + days);
     return x;
@@ -1108,7 +1153,7 @@ app.get("/api/stats", (_req, res) => {
     // Consecutive days ending today where the user completed >=1 task on that day.
     let streak = 0;
     for (let i = 0; i < 365; i += 1) {
-      const dayIso = toIsoLocal(addDays(now, -i));
+      const dayIso = toIsoLocal(addDaysLocal(now, -i));
       const count = completionsByDay.get(dayIso) ?? 0;
       if (count <= 0) break;
       streak += 1;
@@ -1120,7 +1165,7 @@ app.get("/api/stats", (_req, res) => {
     // oldest -> newest
     const days: { date: string; completed: number; points: number }[] = [];
     for (let i = 6; i >= 0; i -= 1) {
-      const iso = toIsoLocal(addDays(now, -i));
+      const iso = toIsoLocal(addDaysLocal(now, -i));
       const completed = completionsByDay.get(iso) ?? 0;
       const points = completedTasks
         .filter((t) => t.dueDate === iso)
@@ -1207,6 +1252,7 @@ app.get("/api/stats", (_req, res) => {
     const completedCount = allCompleted.length;
     const xpGained = totalPoints;
     const levelValue = level;
+    const levelProgressValue = level + pointsIntoLevel / 50;
 
     const streakBase = [1, 3, 5, 7, 30, 60, 90, 180, 365, 730, 1095, 1460, 1825, 3650];
     const countBase = [1, 5, 10, 25, 100, 150, 250, 500, 750, 1000];
@@ -1244,6 +1290,20 @@ app.get("/api/stats", (_req, res) => {
       minCount: 150,
       maxCount: 150
     });
+    const levelsPrev = levelsUp.achieved.length
+      ? levelsUp.achieved[levelsUp.achieved.length - 1]
+      : 0;
+    const levelsProgressToNext =
+      levelsUp.next === null
+        ? 1
+        : Math.max(
+            0,
+            Math.min(
+              1,
+              (levelProgressValue - levelsPrev) /
+                Math.max(1, levelsUp.next - levelsPrev)
+            )
+          );
 
     const compact = (arr: number[], tail = 6) =>
       arr.length <= tail ? arr : arr.slice(-tail);
@@ -1291,7 +1351,7 @@ app.get("/api/stats", (_req, res) => {
         unit: "levels",
         current: levelValue,
         next: levelsUp.next,
-        progressToNext: levelsUp.progressToNext,
+        progressToNext: levelsProgressToNext,
         achievedCount: levelsUp.achievedCount,
         recentUnlocked: compact(levelsUp.achieved),
         milestones: levelsUp.milestones,

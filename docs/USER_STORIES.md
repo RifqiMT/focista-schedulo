@@ -157,4 +157,30 @@ As a user, I want bulk actions so I can clean up and reorganize quickly.
 
 ---
 
-**Last updated:** 2026-03-18
+## Story-to-Requirement Mapping (Summary)
+
+| Story IDs | Requirement Group | Primary Components / APIs |
+|-----------|-------------------|----------------------------|
+| US-1, US-2, US-4 | Core task lifecycle and details visibility | `TaskEditorDrawer.tsx`, `TaskBoard.tsx`, `POST/PUT /api/tasks` |
+| US-5 | Project lifecycle and task grouping | `ProjectSidebar.tsx`, `/api/projects` |
+| US-6, US-7 | Completion and motivation loop | `TaskBoard.tsx`, `GamificationPanel.tsx`, `/api/tasks/:id/complete`, `/api/stats` |
+| US-8, US-9 | Recurrence and occurrence management | `TaskBoard.tsx`, `backend/src/index.ts` recurrence logic |
+| US-10 | Calendar and day-agenda planning | `TaskBoard.tsx` calendar/day agenda rendering |
+| US-11, US-12 | Context and data ownership | links/locations UI, export workflow |
+| US-13 | High-speed list maintenance | bulk selection, move, delete actions |
+
+---
+
+## Coverage Status
+
+- Implemented: US-1 through US-13
+- Highest regression sensitivity: US-6, US-8, US-9, US-10
+- Verification priority per release:
+  1. Complete/reactivate (including future recurring occurrences)
+  2. Recurrence identity and expansion behavior
+  3. Calendar rendering and day-agenda segmentation
+  4. Export integrity (JSON/CSV)
+
+---
+
+**Last updated:** 2026-03-23
