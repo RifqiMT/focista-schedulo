@@ -77,13 +77,20 @@ function completedChildIndex(task: Task, all: Task[]): number | null {
 
 type TimeScope =
   | "all"
+  | "yesterday"
   | "today"
   | "tomorrow"
+  | "last_week"
   | "week"
   | "next_week"
   | "sprint"
+  | "last_month"
   | "month"
-  | "next_month";
+  | "next_month"
+  | "custom"
+  | "last_quarter"
+  | "quarter"
+  | "next_quarter";
 
 interface TaskBoardProps {
   selectedProjectId: string | null;
@@ -599,7 +606,6 @@ export function TaskBoard({ selectedProjectId, timeScope, onTimeScopeChange }: T
   const [selectedCalendarDayIso, setSelectedCalendarDayIso] = useState<string | null>(null);
   const [dayAgendaOpen, setDayAgendaOpen] = useState(false);
   const [taskSearchQuery, setTaskSearchQuery] = useState("");
-
   const hoveredTaskId = hoveredTask?.task.id;
 
   const activeBaseTasks = useMemo(() => tasks.filter((t) => !t.cancelled), [tasks]);
@@ -673,26 +679,6 @@ export function TaskBoard({ selectedProjectId, timeScope, onTimeScopeChange }: T
     window.addEventListener("pst:open-export", onOpenExport);
     return () => window.removeEventListener("pst:open-export", onOpenExport);
   }, []);
-
-  useEffect(() => {
-    if (viewMode !== "calendar") return;
-    const d = new Date();
-    d.setHours(12, 0, 0, 0);
-    if (timeScope === "all" || timeScope === "month" || timeScope === "next_month") {
-      const m = new Date(d.getTime());
-      m.setDate(1);
-      if (timeScope === "next_month") {
-        m.setMonth(m.getMonth() + 1);
-      }
-      setCalendarMonthAnchor(m);
-      return;
-    }
-    const todayIsoLocal = toISODateLocal(d);
-    setSelectedCalendarDayIso(todayIsoLocal);
-    // When viewing "Today" or "Tomorrow" in calendar, open the day agenda by default.
-    // For other timeframe ranges (week/sprint/month/next_month/all), keep agenda collapsed initially.
-    setDayAgendaOpen(timeScope === "today" || timeScope === "tomorrow");
-  }, [timeScope, viewMode]);
 
   useEffect(() => {
     if (!openCluster) return;
@@ -1056,6 +1042,11 @@ export function TaskBoard({ selectedProjectId, timeScope, onTimeScopeChange }: T
   };
 
   const todayIso = new Date().toISOString().slice(0, 10);
+  const yesterdayIso = (() => {
+    const d = new Date();
+    d.setDate(d.getDate() - 1);
+    return d.toISOString().slice(0, 10);
+  })();
   const tomorrowIso = (() => {
     const d = new Date();
     d.setDate(d.getDate() + 1);
@@ -1097,6 +1088,16 @@ export function TaskBoard({ selectedProjectId, timeScope, onTimeScopeChange }: T
     d.setDate(d.getDate() + 6);
     return d.toISOString().slice(0, 10);
   })();
+  const lastWeekStartIso = (() => {
+    const d = new Date(startOfWeekMondayIso + "T12:00:00");
+    d.setDate(d.getDate() - 7);
+    return d.toISOString().slice(0, 10);
+  })();
+  const lastWeekEndIso = (() => {
+    const d = new Date(lastWeekStartIso + "T12:00:00");
+    d.setDate(d.getDate() + 6);
+    return d.toISOString().slice(0, 10);
+  })();
   const nextMonthStartIso = (() => {
     const d = new Date();
     d.setDate(1);
@@ -1108,6 +1109,118 @@ export function TaskBoard({ selectedProjectId, timeScope, onTimeScopeChange }: T
     d.setMonth(d.getMonth() + 2, 0);
     return d.toISOString().slice(0, 10);
   })();
+  const lastMonthStartIso = (() => {
+    const d = new Date();
+    d.setDate(1);
+    d.setMonth(d.getMonth() - 1);
+    return d.toISOString().slice(0, 10);
+  })();
+  const lastMonthEndIso = (() => {
+    const d = new Date();
+    d.setDate(0);
+    return d.toISOString().slice(0, 10);
+  })();
+  const thisQuarterStartIso = (() => {
+    const d = new Date();
+    const qStartMonth = Math.floor(d.getMonth() / 3) * 3;
+    const s = new Date(d.getFullYear(), qStartMonth, 1, 12, 0, 0, 0);
+    return s.toISOString().slice(0, 10);
+  })();
+  const thisQuarterEndIso = (() => {
+    const d = new Date(thisQuarterStartIso + "T12:00:00");
+    const e = new Date(d.getFullYear(), d.getMonth() + 3, 0, 12, 0, 0, 0);
+    return e.toISOString().slice(0, 10);
+  })();
+  const nextQuarterStartIso = (() => {
+    const d = new Date(thisQuarterStartIso + "T12:00:00");
+    const s = new Date(d.getFullYear(), d.getMonth() + 3, 1, 12, 0, 0, 0);
+    return s.toISOString().slice(0, 10);
+  })();
+  const nextQuarterEndIso = (() => {
+    const d = new Date(nextQuarterStartIso + "T12:00:00");
+    const e = new Date(d.getFullYear(), d.getMonth() + 3, 0, 12, 0, 0, 0);
+    return e.toISOString().slice(0, 10);
+  })();
+  const lastQuarterStartIso = (() => {
+    const d = new Date(thisQuarterStartIso + "T12:00:00");
+    const s = new Date(d.getFullYear(), d.getMonth() - 3, 1, 12, 0, 0, 0);
+    return s.toISOString().slice(0, 10);
+  })();
+  const lastQuarterEndIso = (() => {
+    const d = new Date(lastQuarterStartIso + "T12:00:00");
+    const e = new Date(d.getFullYear(), d.getMonth() + 3, 0, 12, 0, 0, 0);
+    return e.toISOString().slice(0, 10);
+  })();
+  const [customRangeStartIso, setCustomRangeStartIso] = useState<string>(todayIso);
+  const [customRangeEndIso, setCustomRangeEndIso] = useState<string>(todayIso);
+  const [customRangeDraftStartIso, setCustomRangeDraftStartIso] = useState<string>(todayIso);
+  const [customRangeDraftEndIso, setCustomRangeDraftEndIso] = useState<string>(todayIso);
+  const normalizeRange = (start: string, end: string): [string, string] =>
+    start <= end ? [start, end] : [end, start];
+  const customRangeStartNormalizedIso =
+    customRangeStartIso <= customRangeEndIso ? customRangeStartIso : customRangeEndIso;
+  const customRangeEndNormalizedIso =
+    customRangeStartIso <= customRangeEndIso ? customRangeEndIso : customRangeStartIso;
+
+  useEffect(() => {
+    if (viewMode !== "calendar") return;
+    const d = new Date();
+    d.setHours(12, 0, 0, 0);
+    if (timeScope === "custom") {
+      const start = new Date(`${customRangeStartNormalizedIso}T12:00:00`);
+      const m = new Date(start.getTime());
+      m.setDate(1);
+      setCalendarMonthAnchor(m);
+      setSelectedCalendarDayIso(customRangeStartNormalizedIso);
+      setDayAgendaOpen(true);
+      return;
+    }
+    if (timeScope === "quarter" || timeScope === "next_quarter" || timeScope === "last_quarter") {
+      const startIso =
+        timeScope === "quarter"
+          ? thisQuarterStartIso
+          : timeScope === "next_quarter"
+            ? nextQuarterStartIso
+            : lastQuarterStartIso;
+      const start = new Date(`${startIso}T12:00:00`);
+      const m = new Date(start.getTime());
+      m.setDate(1);
+      setCalendarMonthAnchor(m);
+      setSelectedCalendarDayIso(startIso);
+      setDayAgendaOpen(true);
+      return;
+    }
+    if (
+      timeScope === "all" ||
+      timeScope === "month" ||
+      timeScope === "next_month" ||
+      timeScope === "last_month"
+    ) {
+      const m = new Date(d.getTime());
+      m.setDate(1);
+      if (timeScope === "next_month") {
+        m.setMonth(m.getMonth() + 1);
+      } else if (timeScope === "last_month") {
+        m.setMonth(m.getMonth() - 1);
+      }
+      setCalendarMonthAnchor(m);
+      return;
+    }
+    const todayIsoLocal = toISODateLocal(d);
+    setSelectedCalendarDayIso(todayIsoLocal);
+    // When viewing "Today" or "Tomorrow" in calendar, open the day agenda by default.
+    // For other timeframe ranges (week/sprint/month/next_month/all), keep agenda collapsed initially.
+    setDayAgendaOpen(
+      timeScope === "yesterday" || timeScope === "today" || timeScope === "tomorrow"
+    );
+  }, [
+    timeScope,
+    viewMode,
+    customRangeStartNormalizedIso,
+    thisQuarterStartIso,
+    nextQuarterStartIso,
+    lastQuarterStartIso
+  ]);
 
   // For the list view:
   // - show only the next upcoming occurrence per series for active/all views
@@ -1115,13 +1228,20 @@ export function TaskBoard({ selectedProjectId, timeScope, onTimeScopeChange }: T
   //   the full history of a recurring series (e.g., 55 completed standups).
   const listRangeStartIso = (() => {
     if (timeScope === "all") return "0000-01-01";
+    if (timeScope === "yesterday") return yesterdayIso;
     if (timeScope === "today") return todayIso;
     if (timeScope === "tomorrow") return tomorrowIso;
+    if (timeScope === "last_week") return lastWeekStartIso;
     if (timeScope === "week") return startOfWeekMondayIso;
     if (timeScope === "next_week") return nextWeekStartIso;
     if (timeScope === "sprint") return startOfWeekMondayIso;
+    if (timeScope === "last_month") return lastMonthStartIso;
     if (timeScope === "month") return thisMonthStartIso;
     if (timeScope === "next_month") return nextMonthStartIso;
+    if (timeScope === "last_quarter") return lastQuarterStartIso;
+    if (timeScope === "quarter") return thisQuarterStartIso;
+    if (timeScope === "next_quarter") return nextQuarterStartIso;
+    if (timeScope === "custom") return customRangeStartNormalizedIso;
     return todayIso;
   })();
   const listSource =
@@ -1171,8 +1291,16 @@ export function TaskBoard({ selectedProjectId, timeScope, onTimeScopeChange }: T
       }
 
       let inTimeScope = false;
-      if (timeScope === "today") inTimeScope = t.dueDate === todayIso;
+      if (timeScope === "yesterday") inTimeScope = t.dueDate === yesterdayIso;
+      else if (timeScope === "today") inTimeScope = t.dueDate === todayIso;
       else if (timeScope === "tomorrow") inTimeScope = t.dueDate === tomorrowIso;
+      else if (timeScope === "last_week") {
+        inTimeScope = t.dueDate >= lastWeekStartIso && t.dueDate <= lastWeekEndIso;
+      } else if (timeScope === "last_month") {
+        inTimeScope = t.dueDate >= lastMonthStartIso && t.dueDate <= lastMonthEndIso;
+      } else if (timeScope === "last_quarter") {
+        inTimeScope = t.dueDate >= lastQuarterStartIso && t.dueDate <= lastQuarterEndIso;
+      }
       else if (timeScope === "week") {
         inTimeScope = t.dueDate >= startOfWeekMondayIso && t.dueDate <= endOfWeekSundayIso;
       } else if (timeScope === "next_week") {
@@ -1183,6 +1311,13 @@ export function TaskBoard({ selectedProjectId, timeScope, onTimeScopeChange }: T
         inTimeScope = t.dueDate >= thisMonthStartIso && t.dueDate <= thisMonthEndIso;
       } else if (timeScope === "next_month") {
         inTimeScope = t.dueDate >= nextMonthStartIso && t.dueDate <= nextMonthEndIso;
+      } else if (timeScope === "quarter") {
+        inTimeScope = t.dueDate >= thisQuarterStartIso && t.dueDate <= thisQuarterEndIso;
+      } else if (timeScope === "next_quarter") {
+        inTimeScope = t.dueDate >= nextQuarterStartIso && t.dueDate <= nextQuarterEndIso;
+      } else if (timeScope === "custom") {
+        inTimeScope =
+          t.dueDate >= customRangeStartNormalizedIso && t.dueDate <= customRangeEndNormalizedIso;
       } else {
         inTimeScope = true;
       }
@@ -1212,18 +1347,34 @@ export function TaskBoard({ selectedProjectId, timeScope, onTimeScopeChange }: T
       if (selectedProjectId && t.projectId !== selectedProjectId) return false;
 
       if (!t.dueDate || timeScope === "all") return true;
+      if (timeScope === "yesterday") return t.dueDate === yesterdayIso;
       if (timeScope === "today") return t.dueDate === todayIso;
       if (timeScope === "tomorrow") return t.dueDate === tomorrowIso;
+      if (timeScope === "last_week")
+        return t.dueDate >= lastWeekStartIso && t.dueDate <= lastWeekEndIso;
       if (timeScope === "week")
         return t.dueDate >= startOfWeekMondayIso && t.dueDate <= endOfWeekSundayIso;
       if (timeScope === "next_week")
         return t.dueDate >= nextWeekStartIso && t.dueDate <= nextWeekEndIso;
       if (timeScope === "sprint")
         return t.dueDate >= startOfWeekMondayIso && t.dueDate <= endOfSprintIso;
+      if (timeScope === "last_month")
+        return t.dueDate >= lastMonthStartIso && t.dueDate <= lastMonthEndIso;
       if (timeScope === "month")
         return t.dueDate >= thisMonthStartIso && t.dueDate <= thisMonthEndIso;
       if (timeScope === "next_month")
         return t.dueDate >= nextMonthStartIso && t.dueDate <= nextMonthEndIso;
+      if (timeScope === "last_quarter")
+        return t.dueDate >= lastQuarterStartIso && t.dueDate <= lastQuarterEndIso;
+      if (timeScope === "quarter")
+        return t.dueDate >= thisQuarterStartIso && t.dueDate <= thisQuarterEndIso;
+      if (timeScope === "next_quarter")
+        return t.dueDate >= nextQuarterStartIso && t.dueDate <= nextQuarterEndIso;
+      if (timeScope === "custom")
+        return (
+          t.dueDate >= customRangeStartNormalizedIso &&
+          t.dueDate <= customRangeEndNormalizedIso
+        );
       return true;
     };
 
@@ -1538,11 +1689,17 @@ export function TaskBoard({ selectedProjectId, timeScope, onTimeScopeChange }: T
             if (selectedProjectId && t.projectId !== selectedProjectId) return false;
             if (!matchesTaskSearch(t)) return false;
             if (!t.dueDate || timeScope === "all") return true;
+            if (timeScope === "yesterday") {
+              return t.dueDate === yesterdayIso;
+            }
             if (timeScope === "today") {
               return t.dueDate === todayIso;
             }
             if (timeScope === "tomorrow") {
               return t.dueDate === tomorrowIso;
+            }
+            if (timeScope === "last_week") {
+              return t.dueDate >= lastWeekStartIso && t.dueDate <= lastWeekEndIso;
             }
             if (timeScope === "week") {
               return t.dueDate >= startOfWeekMondayIso && t.dueDate <= endOfWeekSundayIso;
@@ -1553,11 +1710,29 @@ export function TaskBoard({ selectedProjectId, timeScope, onTimeScopeChange }: T
             if (timeScope === "sprint") {
               return t.dueDate >= startOfWeekMondayIso && t.dueDate <= endOfSprintIso;
             }
+            if (timeScope === "last_month") {
+              return t.dueDate >= lastMonthStartIso && t.dueDate <= lastMonthEndIso;
+            }
             if (timeScope === "month") {
               return t.dueDate >= thisMonthStartIso && t.dueDate <= thisMonthEndIso;
             }
             if (timeScope === "next_month") {
               return t.dueDate >= nextMonthStartIso && t.dueDate <= nextMonthEndIso;
+            }
+            if (timeScope === "last_quarter") {
+              return t.dueDate >= lastQuarterStartIso && t.dueDate <= lastQuarterEndIso;
+            }
+            if (timeScope === "quarter") {
+              return t.dueDate >= thisQuarterStartIso && t.dueDate <= thisQuarterEndIso;
+            }
+            if (timeScope === "next_quarter") {
+              return t.dueDate >= nextQuarterStartIso && t.dueDate <= nextQuarterEndIso;
+            }
+            if (timeScope === "custom") {
+              return (
+                t.dueDate >= customRangeStartNormalizedIso &&
+                t.dueDate <= customRangeEndNormalizedIso
+              );
             }
             return true;
           });
@@ -2689,7 +2864,12 @@ export function TaskBoard({ selectedProjectId, timeScope, onTimeScopeChange }: T
     };
 
     const rangeDays: Date[] = (() => {
-      if (timeScope === "all" || timeScope === "month" || timeScope === "next_month") {
+      if (
+        timeScope === "all" ||
+        timeScope === "month" ||
+        timeScope === "next_month" ||
+        timeScope === "last_month"
+      ) {
         // `calendarMonthAnchor` is already set to the correct month when switching timeframes.
         // For example, when `timeScope === "next_month"`, `calendarMonthAnchor` should point
         // to the *next* calendar month (e.g., April). So we must NOT shift it again here.
@@ -2697,13 +2877,41 @@ export function TaskBoard({ selectedProjectId, timeScope, onTimeScopeChange }: T
         const gridStart = startOfCalendarGrid(monthAnchor);
         return Array.from({ length: 42 }, (_, i) => addDaysLocal(gridStart, i));
       }
-      if (timeScope === "today" || timeScope === "tomorrow") {
+      if (timeScope === "yesterday" || timeScope === "today" || timeScope === "tomorrow") {
         const base = new Date(todayLocalNoon.getTime());
+        if (timeScope === "yesterday") base.setDate(base.getDate() - 1);
         if (timeScope === "tomorrow") base.setDate(base.getDate() + 1);
         return [base];
       }
+      if (timeScope === "quarter" || timeScope === "next_quarter" || timeScope === "last_quarter") {
+        const startIso =
+          timeScope === "quarter"
+            ? thisQuarterStartIso
+            : timeScope === "next_quarter"
+              ? nextQuarterStartIso
+              : lastQuarterStartIso;
+        const endIso =
+          timeScope === "quarter"
+            ? thisQuarterEndIso
+            : timeScope === "next_quarter"
+              ? nextQuarterEndIso
+              : lastQuarterEndIso;
+        const startLocal = new Date(`${startIso}T12:00:00`);
+        const endLocal = new Date(`${endIso}T12:00:00`);
+        const days =
+          Math.floor((endLocal.getTime() - startLocal.getTime()) / 86400000) + 1;
+        return Array.from({ length: Math.max(1, days) }, (_, i) =>
+          addDaysLocal(startLocal, i)
+        );
+      }
       const baseWeekStart =
-        timeScope === "next_week"
+        timeScope === "last_week"
+          ? (() => {
+              const d = startOfWeekMonday(todayLocalNoon);
+              d.setDate(d.getDate() - 7);
+              return d;
+            })()
+          : timeScope === "next_week"
           ? (() => {
               const d = startOfWeekMonday(todayLocalNoon);
               d.setDate(d.getDate() + 7);
@@ -2742,9 +2950,19 @@ export function TaskBoard({ selectedProjectId, timeScope, onTimeScopeChange }: T
       0
     );
     const weekStartForDisplay =
-      timeScope === "month" || timeScope === "next_month" || timeScope === "all" ? monthStart : start;
+      timeScope === "month" ||
+      timeScope === "next_month" ||
+      timeScope === "last_month" ||
+      timeScope === "all"
+        ? monthStart
+        : start;
     const weekEndForDisplay =
-      timeScope === "month" || timeScope === "next_month" || timeScope === "all" ? monthEnd : end;
+      timeScope === "month" ||
+      timeScope === "next_month" ||
+      timeScope === "last_month" ||
+      timeScope === "all"
+        ? monthEnd
+        : end;
     const isoWeekYearAndNo = (d: Date) => {
       const tmp = new Date(Date.UTC(d.getFullYear(), d.getMonth(), d.getDate()));
       const dayNum = tmp.getUTCDay() || 7; // Mon=1 ... Sun=7
@@ -2803,7 +3021,10 @@ export function TaskBoard({ selectedProjectId, timeScope, onTimeScopeChange }: T
       const fmtStart = new Intl.DateTimeFormat(undefined, {
         month: "short",
         day: "numeric",
-        year: timeScope === "today" || timeScope === "tomorrow" ? "numeric" : undefined
+        year:
+          timeScope === "yesterday" || timeScope === "today" || timeScope === "tomorrow"
+            ? "numeric"
+            : undefined
       }).format(start);
       const fmtEnd = new Intl.DateTimeFormat(undefined, {
         month: sameMonth ? undefined : "short",
@@ -2811,7 +3032,7 @@ export function TaskBoard({ selectedProjectId, timeScope, onTimeScopeChange }: T
         year: undefined
       }).format(end);
 
-      if (timeScope === "today" || timeScope === "tomorrow") {
+      if (timeScope === "yesterday" || timeScope === "today" || timeScope === "tomorrow") {
         // For "today" / "tomorrow" in calendar view, show the full calendar week context
         // e.g. "CW 12-2026 • 16–22 Mar 2026".
         const weekStartLocal = new Date(start.getTime());
@@ -2839,7 +3060,7 @@ export function TaskBoard({ selectedProjectId, timeScope, onTimeScopeChange }: T
       const endYear = end.getFullYear();
       const dateTail = sameYear ? startYear : `${startYear}–${endYear}`;
 
-      if (timeScope === "week" || timeScope === "next_week") {
+      if (timeScope === "last_week" || timeScope === "week" || timeScope === "next_week") {
         return `${fmtStart} – ${fmtEnd}, ${dateTail}`;
       }
 
@@ -2850,12 +3071,35 @@ export function TaskBoard({ selectedProjectId, timeScope, onTimeScopeChange }: T
       if (timeScope === "all") {
         return monthLabel(calendarMonthAnchor);
       }
+      if (timeScope === "last_month") {
+        return `Last month • ${monthLabel(calendarMonthAnchor)}`;
+      }
       if (timeScope === "month") {
         return `This month • ${monthLabel(calendarMonthAnchor)}`;
       }
       if (timeScope === "next_month") {
         // `calendarMonthAnchor` is already set to the start of the next month.
         return `Next month • ${monthLabel(calendarMonthAnchor)}`;
+      }
+      if (timeScope === "quarter" || timeScope === "next_quarter" || timeScope === "last_quarter") {
+        const startIso =
+          timeScope === "quarter"
+            ? thisQuarterStartIso
+            : timeScope === "next_quarter"
+              ? nextQuarterStartIso
+              : lastQuarterStartIso;
+        const startDate = new Date(`${startIso}T12:00:00`);
+        const quarterNo = Math.floor(startDate.getMonth() / 3) + 1;
+        const quarterPrefix =
+          timeScope === "quarter"
+            ? "This quarter"
+            : timeScope === "next_quarter"
+              ? "Next quarter"
+              : "Last quarter";
+        return `${quarterPrefix} • Q${quarterNo} ${startDate.getFullYear()}`;
+      }
+      if (timeScope === "custom") {
+        return `Custom range • ${customRangeStartNormalizedIso} – ${customRangeEndNormalizedIso}`;
       }
 
       return `${fmtStart} – ${fmtEnd}, ${dateTail}`;
@@ -3229,7 +3473,8 @@ export function TaskBoard({ selectedProjectId, timeScope, onTimeScopeChange }: T
                   const inAnchorMonth =
                     d.getMonth() === anchorMonth && d.getFullYear() === anchorYear;
                   const dayTasks =
-                    (timeScope === "month" || timeScope === "next_month") && !inAnchorMonth
+                    (timeScope === "month" || timeScope === "next_month" || timeScope === "last_month") &&
+                    !inAnchorMonth
                       ? []
                       : tasksByDate.get(iso) ?? [];
                   const dayLabel = new Intl.DateTimeFormat(undefined, {
@@ -3240,7 +3485,7 @@ export function TaskBoard({ selectedProjectId, timeScope, onTimeScopeChange }: T
                   }).format(d);
 
                   const todayGridStyle =
-                    timeScope === "today"
+                    timeScope === "yesterday" || timeScope === "today"
                       ? { gridColumnStart: ((d.getDay() + 6) % 7) + 1 }
                       : undefined;
 
@@ -3252,7 +3497,8 @@ export function TaskBoard({ selectedProjectId, timeScope, onTimeScopeChange }: T
                       } ${
                         (timeScope === "all" ||
                           timeScope === "month" ||
-                          timeScope === "next_month") &&
+                          timeScope === "next_month" ||
+                          timeScope === "last_month") &&
                         !inAnchorMonth
                           ? "calendar-cell-out"
                           : ""
@@ -3444,21 +3690,46 @@ export function TaskBoard({ selectedProjectId, timeScope, onTimeScopeChange }: T
                 Timeframe:{" "}
                 {timeScope === "today"
                   ? "Today"
+                  : timeScope === "yesterday"
+                    ? "Yesterday"
                   : timeScope === "tomorrow"
                     ? "Tomorrow"
+                    : timeScope === "last_week"
+                      ? "Last week"
                     : timeScope === "week"
                       ? "This week"
                       : timeScope === "next_week"
                         ? "Next week"
                         : timeScope === "sprint"
                           ? "This sprint"
+                          : timeScope === "last_month"
+                            ? "Last month"
                           : timeScope === "month"
                             ? "This month"
                             : timeScope === "next_month"
                               ? "Next month"
+                              : timeScope === "last_quarter"
+                                ? "Last quarter"
+                              : timeScope === "quarter"
+                                ? "This quarter"
+                                : timeScope === "next_quarter"
+                                  ? "Next quarter"
+                              : timeScope === "custom"
+                                ? "Custom range"
                               : "All"}
               </button>
               <div className="task-cluster-menu" role="menu" aria-label="Timeframe options">
+                <button
+                  className={`task-cluster-item ${timeScope === "yesterday" ? "is-active" : ""}`}
+                  role="menuitemradio"
+                  aria-checked={timeScope === "yesterday"}
+                  onClick={() => {
+                    onTimeScopeChange("yesterday");
+                    setOpenCluster(null);
+                  }}
+                >
+                  Yesterday
+                </button>
                 <button
                   className={`task-cluster-item ${timeScope === "today" ? "is-active" : ""}`}
                   role="menuitemradio"
@@ -3480,6 +3751,17 @@ export function TaskBoard({ selectedProjectId, timeScope, onTimeScopeChange }: T
                   }}
                 >
                   Tomorrow
+                </button>
+                <button
+                  className={`task-cluster-item ${timeScope === "last_week" ? "is-active" : ""}`}
+                  role="menuitemradio"
+                  aria-checked={timeScope === "last_week"}
+                  onClick={() => {
+                    onTimeScopeChange("last_week");
+                    setOpenCluster(null);
+                  }}
+                >
+                  Last week
                 </button>
                 <button
                   className={`task-cluster-item ${timeScope === "week" ? "is-active" : ""}`}
@@ -3515,6 +3797,17 @@ export function TaskBoard({ selectedProjectId, timeScope, onTimeScopeChange }: T
                   This sprint (2 weeks)
                 </button>
                 <button
+                  className={`task-cluster-item ${timeScope === "last_month" ? "is-active" : ""}`}
+                  role="menuitemradio"
+                  aria-checked={timeScope === "last_month"}
+                  onClick={() => {
+                    onTimeScopeChange("last_month");
+                    setOpenCluster(null);
+                  }}
+                >
+                  Last month
+                </button>
+                <button
                   className={`task-cluster-item ${timeScope === "month" ? "is-active" : ""}`}
                   role="menuitemradio"
                   aria-checked={timeScope === "month"}
@@ -3536,6 +3829,87 @@ export function TaskBoard({ selectedProjectId, timeScope, onTimeScopeChange }: T
                 >
                   Next month
                 </button>
+                <button
+                  className={`task-cluster-item ${timeScope === "last_quarter" ? "is-active" : ""}`}
+                  role="menuitemradio"
+                  aria-checked={timeScope === "last_quarter"}
+                  onClick={() => {
+                    onTimeScopeChange("last_quarter");
+                    setOpenCluster(null);
+                  }}
+                >
+                  Last quarter
+                </button>
+                <button
+                  className={`task-cluster-item ${timeScope === "quarter" ? "is-active" : ""}`}
+                  role="menuitemradio"
+                  aria-checked={timeScope === "quarter"}
+                  onClick={() => {
+                    onTimeScopeChange("quarter");
+                    setOpenCluster(null);
+                  }}
+                >
+                  This quarter
+                </button>
+                <button
+                  className={`task-cluster-item ${timeScope === "next_quarter" ? "is-active" : ""}`}
+                  role="menuitemradio"
+                  aria-checked={timeScope === "next_quarter"}
+                  onClick={() => {
+                    onTimeScopeChange("next_quarter");
+                    setOpenCluster(null);
+                  }}
+                >
+                  Next quarter
+                </button>
+                <button
+                  className={`task-cluster-item ${timeScope === "custom" ? "is-active" : ""}`}
+                  role="menuitemradio"
+                  aria-checked={timeScope === "custom"}
+                  onClick={() => {
+                    onTimeScopeChange("custom");
+                  }}
+                >
+                  Custom range
+                </button>
+                {timeScope === "custom" && (
+                  <div className="task-cluster-item" role="group" aria-label="Custom range selector">
+                    <div style={{ display: "grid", gap: "0.4rem" }}>
+                      <label style={{ display: "grid", gap: "0.2rem" }}>
+                        <span className="muted">Start date</span>
+                        <input
+                          type="date"
+                          value={customRangeDraftStartIso}
+                          onChange={(e) => setCustomRangeDraftStartIso(e.target.value)}
+                        />
+                      </label>
+                      <label style={{ display: "grid", gap: "0.2rem" }}>
+                        <span className="muted">End date</span>
+                        <input
+                          type="date"
+                          value={customRangeDraftEndIso}
+                          onChange={(e) => setCustomRangeDraftEndIso(e.target.value)}
+                        />
+                      </label>
+                      <button
+                        className="task-action-button"
+                        type="button"
+                        onClick={() => {
+                          const [start, end] = normalizeRange(
+                            customRangeDraftStartIso || todayIso,
+                            customRangeDraftEndIso || customRangeDraftStartIso || todayIso
+                          );
+                          setCustomRangeStartIso(start);
+                          setCustomRangeEndIso(end);
+                          onTimeScopeChange("custom");
+                          setOpenCluster(null);
+                        }}
+                      >
+                        Apply custom range
+                      </button>
+                    </div>
+                  </div>
+                )}
                 <button
                   className={`task-cluster-item ${timeScope === "all" ? "is-active" : ""}`}
                   role="menuitemradio"
@@ -3703,18 +4077,29 @@ export function TaskBoard({ selectedProjectId, timeScope, onTimeScopeChange }: T
 
               const inTimeScopeForList = (t: Task): boolean => {
                 if (!t.dueDate || timeScope === "all") return true;
+                if (timeScope === "yesterday") return t.dueDate === yesterdayIso;
                 if (timeScope === "today") return t.dueDate === todayIso;
                 if (timeScope === "tomorrow") return t.dueDate === tomorrowIso;
+                if (timeScope === "last_week")
+                  return t.dueDate >= lastWeekStartIso && t.dueDate <= lastWeekEndIso;
                 if (timeScope === "week")
                   return t.dueDate >= startOfWeekMondayIso && t.dueDate <= endOfWeekSundayIso;
                 if (timeScope === "next_week")
                   return t.dueDate >= nextWeekStartIso && t.dueDate <= nextWeekEndIso;
                 if (timeScope === "sprint")
                   return t.dueDate >= startOfWeekMondayIso && t.dueDate <= endOfSprintIso;
+                if (timeScope === "last_month")
+                  return t.dueDate >= lastMonthStartIso && t.dueDate <= lastMonthEndIso;
                 if (timeScope === "month")
                   return t.dueDate >= thisMonthStartIso && t.dueDate <= thisMonthEndIso;
                 if (timeScope === "next_month")
                   return t.dueDate >= nextMonthStartIso && t.dueDate <= nextMonthEndIso;
+                if (timeScope === "last_quarter")
+                  return t.dueDate >= lastQuarterStartIso && t.dueDate <= lastQuarterEndIso;
+                if (timeScope === "quarter")
+                  return t.dueDate >= thisQuarterStartIso && t.dueDate <= thisQuarterEndIso;
+                if (timeScope === "next_quarter")
+                  return t.dueDate >= nextQuarterStartIso && t.dueDate <= nextQuarterEndIso;
                 return true;
               };
 

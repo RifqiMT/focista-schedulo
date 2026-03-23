@@ -33,6 +33,9 @@ This matrix provides end-to-end traceability from customer intent to product out
 | Routine Builder | US-9 | Expand and manage recurring occurrences | `TaskBoard.tsx` (expand/collapse, virtual materialization) | `POST /api/tasks`, `PATCH /api/tasks/:id/complete` | materialization, complete/edit future occurrences | Q1, Q2 | I | Engineering |
 | Personal Planner | US-10 | Calendar month + day agenda visibility | `TaskBoard.tsx` (calendar/day agenda) | `GET /api/tasks` | timeline segmentation, overlap layout | A2, Q2 | I | Engineering + Design |
 | Personal Planner | US-6 | Mark complete / mark active | `TaskBoard.tsx`, `GamificationPanel.tsx` | `PATCH /api/tasks/:id/complete`, `GET /api/stats` | optimistic update recovery, duplicate prevention | WCST, E2, R2 | I | Engineering |
+| Routine Builder | US-8/US-9 | Deterministic recurrence normalization and dedupe | `backend/src/index.ts` | startup load normalization + task writes | same-series/date duplicate prevention, sequence stability | Q1, KR-2.x | I | Engineering |
+| Routine Builder | US-8/US-9 | Sequential completion enforcement with backfill | `backend/src/index.ts` | completion patch + series integrity rules | monotonic completion behavior across series | Q4, KR-2.x | I | Engineering |
+| Personal Planner | US-10 | Historical/current/future/custom timeframe parity | `TaskBoard.tsx`, `App.tsx` | `TimeScope` values + derived range boundaries | filter consistency across list/calendar | A2, KR-1.x | I | Engineering + Product |
 | Project Operator | US-5 | Manage projects and task associations | `ProjectSidebar.tsx`, `TaskBoard.tsx` | `GET/POST/PUT/DELETE /api/projects` | project lifecycle, cascade delete behavior | E2, KR-1.x | I | Engineering |
 | Personal Planner | US-7 | Motivation loop (streak/XP/levels/badges) | `GamificationPanel.tsx`, `backend/src/index.ts` | `GET /api/stats` | formula correctness, realtime refresh | R2, KR-3.x | I | Product + Engineering |
 | Personal Planner | US-12 | Data export (JSON/CSV) | `TaskBoard.tsx` (export) | client export from task/project datasets | export accuracy, format integrity | Q3, KR-4.x | I | Engineering |
@@ -55,9 +58,9 @@ This matrix provides end-to-end traceability from customer intent to product out
 
 ## Coverage Risks and Follow-ups
 
-1. Add automated end-to-end tests for virtual future occurrence edit/complete/delete consistency.
-2. Add telemetry event taxonomy to enable full instrumentation traceability for A1/A2/E2/E3/E4/R2/Q1/Q2/Q3.
-3. Add release gate checklist linking this matrix to QA sign-off.
+1. Add automated end-to-end tests for quarter/custom timeframe transitions across month boundaries and leap years.
+2. Add telemetry event taxonomy to enable full instrumentation traceability for A1/A2/E2/E3/E4/R2/Q1/Q2/Q3/Q4.
+3. Add release gate checklist linking this matrix to QA sign-off and recurrence integrity audit output.
 
 ---
 

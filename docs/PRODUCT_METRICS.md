@@ -1,6 +1,6 @@
 # Product Metrics — Focista Schedulo
 
-**Last updated:** 2026-03-18  
+**Last updated:** 2026-03-23  
 **Owner:** Product Analytics
 
 This document defines the product metrics used to evaluate the health and growth of Focista Schedulo. For OKRs and product-team metrics, see `METRICS_AND_OKRS.md`. For variable definitions and formulas, see `VARIABLES.md`.
@@ -96,9 +96,17 @@ This document defines the product metrics used to evaluate the health and growth
 
 | Attribute | Value |
 |-----------|--------|
-| **Definition** | Count or rate of duplicate upcoming occurrences shown for a single series. |
-| **Detection** | UI can detect multiple “virtual” entries for the same `parentId` beyond one; backend can validate `childId` uniqueness per `parentId`. |
+| **Definition** | Count or rate of duplicate persisted occurrences for the same logical series/date pair. |
+| **Detection** | Backend integrity checks detect same-series same-date duplicates; UI materialization flow prevents duplicate real tasks under concurrent actions. |
 | **Target** | Near zero. |
+
+### Q4 — Sequential completion integrity
+
+| Attribute | Value |
+|-----------|--------|
+| **Definition** | Share of recurring series where completion order and backfill rules remain consistent after toggles/edits. |
+| **Detection** | Audit recurring series for monotonic completion up to latest completed occurrence after backend enforcement. |
+| **Target** | 100% on validated datasets. |
 
 ### Q2 — Calendar correctness rate
 

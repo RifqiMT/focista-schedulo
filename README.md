@@ -23,7 +23,7 @@ Focista Schedulo helps users keep tasks **structured** (projects, priorities, re
 |------|--------------|
 | **Tasks** | Title, description, priority (low/medium/high/urgent), due date/time, duration, repeat patterns, labels, locations, links, reminder, deadline, completion state, project association. Task hovercard shows full details with grouped sections and clickable links/locations. |
 | **Projects** | Create, rename, delete projects. Stable IDs (`P1`, `P2`, …). Deleting a project removes its tasks. Filter the task list by project. |
-| **Recurrence** | None, daily, weekly, weekdays, weekends, monthly, quarterly, yearly, custom (repeat every N days/weeks/months/quarters/years). One upcoming occurrence per series; expand to see related/child occurrences in list view (Today, Tomorrow, Week, etc.). |
+| **Recurrence** | None, daily, weekly, weekdays, weekends, monthly, quarterly, yearly, custom (repeat every N days/weeks/months/quarters/years). Uses horizon-based virtual generation (multi-year) with on-demand materialization and deterministic series identity repair. |
 | **Calendar** | Month grid and day-agenda timeline (hourly). Multi-day tasks split into per-day segments. Click a day to open agenda. |
 | **Voice input** | One-button capture with auto-stop; transcript parsed to fill priority, date/time, duration, repeat, reminder, labels, location. |
 | **Export** | JSON (projects + tasks) or CSV (record type: project/task). |
@@ -119,6 +119,7 @@ Runs ESLint for backend and frontend.
 | [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | System architecture and API |
 | [docs/TRACEABILITY_MATRIX.md](docs/TRACEABILITY_MATRIX.md) | Enterprise traceability matrix across persona, story, requirement, code, test, and metrics |
 | [docs/GUARDRAILS.md](docs/GUARDRAILS.md) | Business and technical guardrails for safe, scalable product development |
+| [docs/CHANGELOG.md](docs/CHANGELOG.md) | Historical development and release log |
 
 ---
 
@@ -129,6 +130,7 @@ Runs ESLint for backend and frontend.
 - **Series** — A repeating task pattern (recurrence). Identified by a stable **Parent ID** (`YYYYMMDD-N`).
 - **Occurrence** — A single instance of a series; may have a **Child ID** (`${parentId}-${index}`). In list view, repeating tasks can be expanded to show occurrence cards.
 - **Calendar view** — Month grid plus day-agenda timeline (hourly). Multi-day tasks are segmented per day.
+- **Timeframe scopes** — `yesterday`, `today`, `tomorrow`, `last_week`, `week`, `next_week`, `sprint`, `last_month`, `month`, `next_month`, `last_quarter`, `quarter`, `next_quarter`, `custom`, `all`.
 - **Voice input** — Speech-to-form autofill in the task editor (priority, date/time, duration, repeat, reminder, labels, location).
 - **Hovercard** — Popover on task hover showing full task details (schedule, details, tags, identifiers) with clickable links and locations.
 

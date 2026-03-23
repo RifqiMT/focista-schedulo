@@ -1,6 +1,6 @@
 # Metrics and OKRs — Focista Schedulo
 
-**Last updated:** 2026-03-18  
+**Last updated:** 2026-03-23  
 **Owner:** Product
 
 This document frames quarterly OKRs and the metrics used to measure them for the product team. Product metric definitions live in `PRODUCT_METRICS.md`. Variable definitions and formulas live in `VARIABLES.md`.
@@ -46,6 +46,8 @@ This document frames quarterly OKRs and the metrics used to measure them for the
 | KR2.1 | Recurrence duplication rate ≤ 0.5% of sessions (Q1). | Q1 (PRODUCT_METRICS.md). |
 | KR2.2 | Calendar correctness rate ≥ 99% for multi-day tasks (Q2). | Q2. |
 | KR2.3 | Parent/child ID stability incidents reduced to near-zero (support/QA). | Incident tracking. |
+| KR2.4 | Sequential completion integrity remains at 100% in recurring-series audits (Q4). | Q4 + backend audit checks. |
+| KR2.5 | Virtual materialization duplicate-write incidents = 0 per release window. | UI/API mutation telemetry + QA runs. |
 
 ### Inputs / Initiatives
 

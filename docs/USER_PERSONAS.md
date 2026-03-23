@@ -1,6 +1,6 @@
 # User Personas — Focista Schedulo
 
-**Last updated:** 2026-03-18  
+**Last updated:** 2026-03-23  
 **Owner:** Product
 
 This document describes the primary user personas for Focista Schedulo. Personas inform feature prioritization, UX decisions, and messaging.
@@ -40,7 +40,7 @@ This document describes the primary user personas for Focista Schedulo. Personas
 
 ## Persona 2 — The Routine Builder
 
-**Profile:** Student or learner building habits (study, exercise, language practice). Relies on repetition and consistency; wants to deal with “the next occurrence” rather than a long list of instances.
+**Profile:** Student or learner building habits (study, exercise, language practice). Relies on repetition and consistency; wants recurring planning to stay clean while still being able to inspect upcoming horizons when needed.
 
 **Primary goals:**
 
@@ -61,7 +61,7 @@ This document describes the primary user personas for Focista Schedulo. Personas
 
 **What success looks like:**
 
-- Simple recurring setup; only one upcoming occurrence shown per series.
+- Simple recurring setup; list remains collapsed by default while upcoming horizon occurrences can be expanded and inspected.
 - Voice input reliably fills date/time, duration, and priority.
 - Progress panel and streaks provide clear, immediate feedback.
 

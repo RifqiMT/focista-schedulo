@@ -1,6 +1,6 @@
 # Variables Catalog — Focista Schedulo
 
-**Last updated:** 2026-03-18  
+**Last updated:** 2026-03-23  
 **Owner:** Product Analytics (with Engineering)
 
 This document defines the key **variables** used across the product: stored fields, derived values, and product metrics. Each variable is documented with a **variable name**, **friendly name**, **definition**, **formula** (when applicable), **location in the app**, **source of truth**, and **example** to align product, analytics, and engineering.
@@ -51,10 +51,10 @@ flowchart TB
 | From | To | Relationship |
 |------|-----|--------------|
 | `project.id` | `task.projectId` | Task belongs to a project; filter and display by project. |
-| `task.parentId` | `task.childId` | Series identity; occurrences share parentId and have unique childId. |
+| `task.parentId` | `task.childId` | Series identity; occurrences share parentId and use backend-normalized child sequence IDs. |
 | `task.dueDate` + `task.dueTime` + `task.durationMinutes` | `CalendarEntry` | Frontend segments tasks into per-day calendar blocks. |
 | `task.priority` | `stats` points | Points per completion: low=1, medium=2, high=3, urgent=4. |
-| `task.completed` + `task.dueDate` | `stats.completedToday`, `stats.pointsToday`, `stats.streakDays` | Stats derived from completed tasks and dates. |
+| `task.completed` + `task.completedAt` (+ fallback `task.dueDate`) | `stats.completedToday`, `stats.pointsToday`, `stats.streakDays` | Day-based stats use completion-date semantics. |
 | `task` (all fields) | Hovercard, Export | Full task data shown in hovercard and export output. |
 
 ---
@@ -329,10 +329,10 @@ flowchart TB
 | **Variable name** | `task.childId` |
 | **Friendly name** | Occurrence ID |
 | **Definition** | Identifier for a specific occurrence in a recurring series. |
-| **Format** | `${parentId}-${index}` (e.g. `20260318-4-2`) |
+| **Format** | Backend-normalized occurrence sequence (legacy data may include `${parentId}-${index}` style). |
 | **Location in app** | Hovercard Identifiers; list expanded occurrence cards (optional showChildId). |
 | **Source of truth** | Backend. |
-| **Example** | `20260318-4-7` |
+| **Example** | `7` (normalized) or legacy `20260318-4-7` |
 
 ---
 
@@ -390,7 +390,7 @@ flowchart TB
 
 | Variable | Friendly name | Definition | Location |
 |----------|----------------|-------------|----------|
-| `timeScope` | Timeframe filter | Current filter: today, tomorrow, week, next_week, sprint, month, next_month, all. | TaskBoard header. |
+| `timeScope` | Timeframe filter | Current filter: yesterday, today, tomorrow, last_week, week, next_week, sprint, last_month, month, next_month, last_quarter, quarter, next_quarter, custom, all. | TaskBoard header. |
 | `completionFilter` | Status filter | active, completed, or all. | TaskBoard header. |
 | `expandedGroups` | Expanded series | Set of parentId keys for which “Show occurrences” is expanded. | List view repeating task rows. |
 
@@ -404,8 +404,8 @@ flowchart TB
 |-----------|--------|
 | **Variable name** | `stats.completedToday` |
 | **Friendly name** | Tasks completed today |
-| **Definition** | Count of tasks completed on the current local date (by dueDate). |
-| **Formula** | Count of tasks where `completed === true` and `dueDate === todayIso`. |
+| **Definition** | Count of tasks completed on the current local date (completion semantics). |
+| **Formula** | Count of completed tasks where local completion date from `completedAt` (fallback `dueDate`) equals `todayIso`. |
 | **Location in app** | `GET /api/stats`; Progress panel. |
 | **Source of truth** | Backend (derived from tasks). |
 | **Example** | `5` |
@@ -464,8 +464,8 @@ flowchart TB
 |-----------|--------|
 | **Variable name** | `stats.streakDays` |
 | **Friendly name** | Streak days |
-| **Definition** | Consecutive days ending today on which the user completed at least one task (by dueDate). |
-| **Formula** | Count backward from today; increment while the day has ≥1 completed task; stop on first day with zero. |
+| **Definition** | Consecutive days ending today on which the user completed at least one task (by completion day). |
+| **Formula** | Count backward from today using local completion date (`completedAt`, fallback `dueDate`); stop on first day with zero completions. |
 | **Location in app** | `/api/stats`; Progress panel. |
 | **Source of truth** | Backend. |
 | **Example** | `7` |

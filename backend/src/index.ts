@@ -47,6 +47,7 @@ const TaskSchema = z.object({
   reminderMinutesBefore: z.number().int().nonnegative().optional(),
   projectId: z.string().nullable(),
   completed: z.boolean(),
+  completedAt: z.string().optional(),
   parentId: z.string().optional(),
   childId: z.string().optional(),
   cancelled: z.boolean().optional()
@@ -79,6 +80,20 @@ function isoDateLocal(d: Date): string {
   const m = String(d.getMonth() + 1).padStart(2, "0");
   const day = String(d.getDate()).padStart(2, "0");
   return `${y}-${m}-${day}`;
+}
+
+function parseIsoDateTimeToLocalDate(isoDateTime: string | undefined): string | null {
+  if (!isoDateTime) return null;
+  const d = new Date(isoDateTime);
+  if (Number.isNaN(d.getTime())) return null;
+  return isoDateLocal(d);
+}
+
+function completionDateIsoLocalForTask(t: Task): string | null {
+  if (!t.completed) return null;
+  const fromCompletedAt = parseIsoDateTimeToLocalDate(t.completedAt);
+  if (fromCompletedAt) return fromCompletedAt;
+  return t.dueDate ?? null;
 }
 
 function fromIsoDateLocal(iso: string): Date {
@@ -532,6 +547,7 @@ async function loadData() {
       // Keep label ordering deterministic across all UI surfaces.
       tasks = safe.data.map((t) => ({
         ...t,
+        completedAt: t.completed ? t.completedAt : undefined,
         labels: sortLabelsAsc(t.labels),
         link: t.link ? sortLinksAsc(t.link) : t.link
       }));
@@ -982,6 +998,11 @@ app.put("/api/tasks/:id", async (req, res) => {
     parentId: resolvedParentId,
     childId: resolvedChildId
   };
+  if (next.completed) {
+    next.completedAt = next.completedAt ?? existing.completedAt ?? new Date().toISOString();
+  } else {
+    next.completedAt = undefined;
+  }
   // If the client didn't send durationMinutes, inherit from existing.
   if (next.durationMinutes === undefined) {
     next.durationMinutes = existing.durationMinutes;
@@ -1036,6 +1057,7 @@ app.patch("/api/tasks/:id/complete", (req, res) => {
   const task = tasks.find((t) => t.id === id);
   if (!task) return res.sendStatus(404);
   task.completed = !task.completed;
+  task.completedAt = task.completed ? new Date().toISOString() : undefined;
   void persistTasks();
   res.json(task);
 });
@@ -1110,15 +1132,30 @@ app.get("/api/stats", (_req, res) => {
   const todayIso = toIsoLocal(now);
 
   const safeTasks = tasks.filter((t) => !t.cancelled);
-  const completedTasks = safeTasks.filter((t) => t.completed && !!t.dueDate);
+  // Lifetime completed tasks: used for totals (XP, level, milestones, points by priority).
+  const completedAllTasks = safeTasks.filter((t) => t.completed);
+  // Day-addressable completed tasks: used for daily/weekly timeline widgets.
+  const completedTasksWithDate = completedAllTasks
+    .filter((t) => t.completed)
+    .map((t) => ({ task: t, completionDateIso: completionDateIsoLocalForTask(t) }))
+    .filter(
+      (
+        row
+      ): row is {
+        task: Task;
+        completionDateIso: string;
+      } => !!row.completionDateIso
+    );
 
-  const completedToday = completedTasks.filter((t) => t.dueDate === todayIso);
-  const allCompleted = completedTasks;
+  const completedToday = completedTasksWithDate.filter((t) => t.completionDateIso === todayIso);
+  const allCompleted = completedAllTasks;
 
   const completionsByDay = new Map<string, number>();
-  for (const t of completedTasks) {
-    if (!t.dueDate) continue;
-    completionsByDay.set(t.dueDate, (completionsByDay.get(t.dueDate) ?? 0) + 1);
+  for (const t of completedTasksWithDate) {
+    completionsByDay.set(
+      t.completionDateIso,
+      (completionsByDay.get(t.completionDateIso) ?? 0) + 1
+    );
   }
 
   const scoreFor = (task: Task): number => {
@@ -1137,7 +1174,7 @@ app.get("/api/stats", (_req, res) => {
   };
 
   const pointsToday = completedToday.reduce(
-    (sum, t) => sum + scoreFor(t),
+    (sum, t) => sum + scoreFor(t.task),
     0
   );
   const totalPoints = allCompleted.reduce(
@@ -1151,13 +1188,26 @@ app.get("/api/stats", (_req, res) => {
 
   const streakDays = (() => {
     // Consecutive days ending today where the user completed >=1 task on that day.
+    const completionDates = Array.from(completionsByDay.keys()).sort();
+    if (completionDates.length === 0) return 0;
+
+    const todayCount = completionsByDay.get(todayIso) ?? 0;
+    // Streak must end on today by product definition.
+    if (todayCount <= 0) return 0;
+
+    const earliestCompletionIso = completionDates[0];
     let streak = 0;
-    for (let i = 0; i < 365; i += 1) {
-      const dayIso = toIsoLocal(addDaysLocal(now, -i));
+    let cursor = new Date(`${todayIso}T12:00:00`);
+    const earliest = new Date(`${earliestCompletionIso}T12:00:00`);
+
+    while (cursor.getTime() >= earliest.getTime()) {
+      const dayIso = toIsoLocal(cursor);
       const count = completionsByDay.get(dayIso) ?? 0;
       if (count <= 0) break;
       streak += 1;
+      cursor.setDate(cursor.getDate() - 1);
     }
+
     return streak;
   })();
 
@@ -1167,9 +1217,9 @@ app.get("/api/stats", (_req, res) => {
     for (let i = 6; i >= 0; i -= 1) {
       const iso = toIsoLocal(addDaysLocal(now, -i));
       const completed = completionsByDay.get(iso) ?? 0;
-      const points = completedTasks
-        .filter((t) => t.dueDate === iso)
-        .reduce((sum, t) => sum + scoreFor(t), 0);
+      const points = completedTasksWithDate
+        .filter((t) => t.completionDateIso === iso)
+        .reduce((sum, t) => sum + scoreFor(t.task), 0);
       days.push({ date: iso, completed, points });
     }
     return days;
@@ -1177,7 +1227,7 @@ app.get("/api/stats", (_req, res) => {
 
   const pointsByPriority = (() => {
     const out = { low: 0, medium: 0, high: 0, urgent: 0 };
-    for (const t of completedTasks) {
+    for (const t of allCompleted) {
       out[t.priority] += scoreFor(t);
     }
     return out;
@@ -1194,7 +1244,7 @@ app.get("/api/stats", (_req, res) => {
       return hh < 21 || (hh === 20 && mm >= 0);
     };
 
-    const earlyCount = completedToday.filter((t) => isBefore2100(t.dueTime)).length;
+    const earlyCount = completedToday.filter((t) => isBefore2100(t.task.dueTime)).length;
     const earlyStarter = {
       id: "early_starter",
       name: "Productive Day",
@@ -1214,9 +1264,9 @@ app.get("/api/stats", (_req, res) => {
       let count = 0;
       for (const day of last7Days) {
         const dayIso = day.date;
-        const dayTasks = completedTasks.filter((t) => t.dueDate === dayIso);
-        const productiveCount = dayTasks.filter((t) => isBefore2100(t.dueTime)).length;
-        const dayPoints = dayTasks.reduce((sum, t) => sum + scoreFor(t), 0);
+        const dayTasks = completedTasksWithDate.filter((t) => t.completionDateIso === dayIso);
+        const productiveCount = dayTasks.filter((t) => isBefore2100(t.task.dueTime)).length;
+        const dayPoints = dayTasks.reduce((sum, t) => sum + scoreFor(t.task), 0);
 
         const hasProductiveDay = productiveCount >= 3;
         const hasDailyGrinding = dayPoints >= dailyXpTarget;

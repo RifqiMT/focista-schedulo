@@ -73,6 +73,7 @@ This document defines the non-negotiable boundaries for product development, del
 
 3. **Time semantics**
    - Day-based metrics and streak logic must use local calendar semantics.
+   - Completion date precedence is `completedAt` (local-date derivation), with controlled fallback for legacy records.
    - UTC conversion must not silently shift daily outcomes.
 
 4. **Performance baseline**
@@ -81,6 +82,10 @@ This document defines the non-negotiable boundaries for product development, del
 
 5. **Observability readiness**
    - Critical flows must be testable and diagnosable with clear failure points.
+
+6. **Recurrence horizon and materialization safety**
+   - Virtual horizon expansion must remain bounded and performant.
+   - Materialization must dedupe in-flight requests to prevent duplicate persisted tasks.
 
 ---
 

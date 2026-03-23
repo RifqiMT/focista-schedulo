@@ -1,6 +1,6 @@
 # Product Documentation Standard — Focista Schedulo
 
-**Last updated:** 2026-03-18  
+**Last updated:** 2026-03-23  
 **Owner:** Product (with Design and Engineering)
 
 ---
@@ -33,6 +33,7 @@ All documentation should reflect the most up-to-date and comprehensive informati
 | `docs/VARIABLES.md` | Product, Analytics, Engineering | Product Analytics | Monthly and on model/schema changes |
 | `docs/TRACEABILITY_MATRIX.md` | Product, Design, Engineering, QA | Product Ops | Every sprint and release |
 | `docs/GUARDRAILS.md` | Product, Engineering, Security | Product + Engineering | Quarterly and on major capability changes |
+| `docs/CHANGELOG.md` | Product, Engineering, Operations | Engineering | Every release |
 | `docs/PRODUCT_DOCUMENTATION_STANDARD.md` | All | Product | When standards change |
 
 ---
@@ -124,6 +125,12 @@ For every variable (field, metric, derived value):
 - Operational guardrails (monitoring, rollback, incident response)
 - AI/voice guardrails (input quality, parsing ambiguity, fallback behavior)
 
+### Change Log (`docs/CHANGELOG.md`)
+
+- Date-based release history with version label and summary
+- Categories: Added / Changed / Fixed / Docs / Technical Debt
+- Cross-reference to major PRD, architecture, metric, and guardrail changes
+
 ### Architecture (`docs/ARCHITECTURE.md`)
 
 - Overview and repository structure
@@ -157,12 +164,19 @@ Use these canonical terms consistently:
 | **Series** | A repeating task pattern (recurrence). |
 | **Occurrence** | A specific instance of a series (may have Child ID). |
 | **Parent ID** | Stable identifier for a task or series: `YYYYMMDD-N`. |
-| **Child ID** | Identifier for an occurrence within a series: `${parentId}-${index}`. |
+| **Child ID** | Backend-normalized occurrence sequence ID (legacy formats may include `${parentId}-${index}`). |
 | **Calendar view** | Month grid plus day-agenda timeline. |
 | **Day agenda** | Hourly timeline for a single day. |
 | **Voice input** | Speech-to-form autofill in the task editor. |
 | **Hovercard** | Popover on task hover showing full task details. |
 | **List view** | Task list with optional timeframe and status filters; repeating tasks can be expanded to show occurrences. |
+
+### Required Consistency Checks for Each Release
+
+- Timeframe taxonomy in docs must match shipped values in `TimeScope` and UI selectors.
+- Recurrence docs must reflect current horizon/materialization behavior (not legacy one-upcoming-only wording).
+- Day-based metrics docs must explicitly state completion-date (`completedAt`) local-date precedence for streak/completed-today logic.
+- Traceability rows must include any new reliability controls added in backend normalization and frontend mutation dedupe.
 
 ---
 

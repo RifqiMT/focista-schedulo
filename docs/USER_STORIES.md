@@ -1,6 +1,6 @@
 # User Stories — Focista Schedulo
 
-**Last updated:** 2026-03-18  
+**Last updated:** 2026-03-23  
 **Owner:** Product
 
 User stories are written in the format: **As a [role], I want [goal] so that [benefit].** Acceptance criteria define when the story is done.
@@ -90,14 +90,15 @@ As a user, I want to see my progress so I feel motivated to continue.
 
 ## Recurrence and List View
 
-### US-8 Set a task to repeat and see the next occurrence
+### US-8 Set a task to repeat and manage upcoming occurrences
 
-As a user, I want recurring tasks to show only the next upcoming occurrence so my list stays uncluttered.
+As a user, I want recurring tasks to stay uncluttered by default while still allowing me to inspect upcoming occurrences when needed.
 
 **Acceptance criteria:**
 
-- For a recurring series, the UI shows the active instance and at most one next upcoming occurrence.
-- Upcoming occurrence can be opened, edited, and completed like a normal task.
+- For recurring series, list view stays compact by default and supports expanding occurrences for the selected timeframe.
+- Future occurrences can be materialized and then opened, edited, moved, deleted, and completed like normal tasks.
+- Recurring data remains stable under rapid interactions (no duplicate same-series/same-date persisted records).
 
 ### US-9 Expand repeating tasks to see occurrences
 
@@ -121,6 +122,7 @@ As a user, I want a calendar view so I can see when tasks happen and plan my day
 - Month grid shows tasks on their respective dates.
 - Clicking a day opens an agenda view with tasks on an hourly timeline.
 - Multi-day tasks appear on every day they span; duration is shown in human-readable form where relevant.
+- Timeframe selector supports historical/current/future/custom ranges (`yesterday`, `last_*`, `today`, `next_*`, `custom`, `all`) and reflects them in both list and calendar.
 
 ---
 

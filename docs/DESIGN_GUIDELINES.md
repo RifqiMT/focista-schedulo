@@ -1,6 +1,6 @@
 # Design Guidelines — Focista Schedulo
 
-**Last updated:** 2026-03-18  
+**Last updated:** 2026-03-23  
 **Owner:** Design (with Engineering)
 
 This document describes the visual system used in the application and how to extend it consistently. It covers theme palettes, typography, components, accessibility, and design-to-code mapping.
@@ -145,6 +145,7 @@ Priorities are visually distinct in task pills, calendar items, day agenda, and 
 - **Items:** Compact line height, priority accent, truncated title; click opens day agenda.
 - **Day agenda:** Hourly grid; events height proportional to `durationMinutes`; multi-day tasks show continuation segments.
 - **Today pill:** Distinct style (e.g. `.calendar-today-pill`).
+- **Timeframe parity:** List and calendar remain aligned for `last_*`, current, `next_*`, quarter, and custom-range scopes.
 
 ### Sidebar
 
@@ -198,6 +199,15 @@ Priorities are visually distinct in task pills, calendar items, day agenda, and 
 | Progress milestone card | default, hover tooltip, loading fallback |
 | Badge modal | closed, open, section expanded/collapsed, hovercard visible |
 | Calendar day cell | empty, has tasks, selected, today, out-of-month |
+
+---
+
+## Recurrence and Materialization UX Rules
+
+- Keep recurring series compact by default; expanded occurrences are user-triggered.
+- Future occurrence actions (edit/complete/delete/move) should materialize once, then execute mutation once.
+- Prevent duplicate visual confirmations for duplicate clicks while mutation is in-flight.
+- After success, list/calendar/progress should update quickly enough to preserve user trust in real-time behavior.
 
 ---
 

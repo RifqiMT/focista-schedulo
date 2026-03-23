@@ -1,6 +1,6 @@
 # Documentation Index — Focista Schedulo
 
-**Last updated:** 2026-03-18
+**Last updated:** 2026-03-23
 
 This folder contains product, design, and engineering documentation for Focista Schedulo. All documents are kept up to date with the current codebase and product scope.
 
@@ -23,6 +23,7 @@ This folder contains product, design, and engineering documentation for Focista 
 | [METRICS_AND_OKRS.md](METRICS_AND_OKRS.md) | OKRs and product-team metrics with key results and initiatives. |
 | [TRACEABILITY_MATRIX.md](TRACEABILITY_MATRIX.md) | Enterprise-style traceability across personas, stories, requirements, code modules, APIs, tests, and metrics/KRs. |
 | [GUARDRAILS.md](GUARDRAILS.md) | Business and technical guardrails: constraints, risk controls, data handling boundaries, and operating limits. |
+| [CHANGELOG.md](CHANGELOG.md) | Historical development log with major releases, fixes, and documentation milestones. |
 
 ---
 
@@ -63,6 +64,8 @@ This folder contains product, design, and engineering documentation for Focista 
 | Architecture and API | Complete | Current backend/frontend implementation reflected |
 | Traceability matrix | Complete | New enterprise matrix added |
 | Guardrails and constraints | Complete | New business/technical guardrails added |
+| Recurrence and timeframe parity | Complete | Horizon-based recurrence + full timeframe taxonomy documented |
+| Streak/points date semantics | Complete | Completion-date precedence and legacy fallback documented |
 
 ---
 

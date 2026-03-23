@@ -1,6 +1,6 @@
 # PRD — Focista Schedulo
 
-**Last updated:** 2026-03-18  
+**Last updated:** 2026-03-23  
 **Owner:** Product (with Engineering and Design)
 
 ---
@@ -84,8 +84,8 @@ See `USER_PERSONAS.md` for detailed personas.
 
 - **Repeat types:** none, daily, weekly, weekdays, weekends, monthly, quarterly, yearly, custom.
 - **Custom recurrence:** repeatEvery + repeatUnit (day, week, month, quarter, year).
-- **Upcoming occurrences:** Frontend generates at most one “upcoming occurrence” virtual card per series; virtual tasks are materialized on interaction.
-- **IDs:** Parent ID format `YYYYMMDD-N` (backend-enforced); Child ID `${parentId}-${index}` for occurrences.
+- **Upcoming occurrences:** Frontend uses horizon-based virtual generation (multi-year) and materializes occurrences on interaction.
+- **IDs:** Parent ID format `YYYYMMDD-N` (backend-enforced); Child ID is sequence-stable per occurrence after backend normalization.
 - **List view expand:** Repeating tasks (Today, Tomorrow, Week, etc.) show a “Show occurrences” / “Hide occurrences” control; expanding displays related/child occurrence cards. Works for both active and completed (grouped) repeating tasks, including when there is only one occurrence in the timeframe.
 
 ### Calendar and Agenda
@@ -112,7 +112,7 @@ See `USER_PERSONAS.md` for detailed personas.
 ### Empty State and Filters
 
 - “No tasks yet” only when the current view (list or calendar, timeframe, status filter, grouped-by-parent) truly has no tasks to show.
-- Filters: Timeframe (Today, Tomorrow, Week, Next week, Sprint, Month, Next month, All), View (List, Calendar), Status (Active, Completed, All).
+- Filters: Timeframe (`yesterday`, `today`, `tomorrow`, `last_week`, `week`, `next_week`, `sprint`, `last_month`, `month`, `next_month`, `last_quarter`, `quarter`, `next_quarter`, `custom`, `all`), View (List, Calendar), Status (Active, Completed, All).
 
 ---
 
@@ -141,13 +141,14 @@ See `USER_PERSONAS.md` for detailed personas.
 |----|-------------|
 | FR-1 | Task CRUD with validation (backend schema). |
 | FR-2 | Project CRUD with stable ID format `P<number>`. |
-| FR-3 | Recurrence engine with one upcoming occurrence per series; list expand for occurrences. |
+| FR-3 | Recurrence engine with virtual horizon generation, deterministic series identity repair, and list expand for occurrences. |
 | FR-4 | Calendar month view and day-agenda view; multi-day segmentation. |
 | FR-5 | Voice-to-form parsing, auto-stop, and transcript preview. |
 | FR-6 | Export all data as JSON or CSV. |
 | FR-7 | Gamification stats and real-time updates. |
 | FR-8 | Task hovercard with full details and clickable links/locations; positioning that keeps card on screen. |
 | FR-9 | Multi-link and multi-location (UI) with normalization and alias support where applicable. |
+| FR-10 | Streak/day metrics use completion-day semantics (`completedAt` local date precedence with legacy fallback). |
 
 ---
 

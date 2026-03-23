@@ -6,13 +6,20 @@ import Logo from "./assets/focista-schedulo-logo.png";
 
 type TimeScope =
   | "all"
+  | "yesterday"
   | "today"
   | "tomorrow"
+  | "last_week"
   | "week"
   | "next_week"
   | "sprint"
+  | "last_month"
   | "month"
-  | "next_month";
+  | "next_month"
+  | "custom"
+  | "last_quarter"
+  | "quarter"
+  | "next_quarter";
 
 export function App() {
   const [selectedProjectId, setSelectedProjectId] = useState<string | null>(null);

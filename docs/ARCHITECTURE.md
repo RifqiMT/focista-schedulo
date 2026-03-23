@@ -1,6 +1,6 @@
 # Architecture — Focista Schedulo
 
-**Last updated**: 2026-03-18  
+**Last updated**: 2026-03-23  
 **Owner**: Engineering  
 
 ## Overview
@@ -70,11 +70,11 @@ Recurring tasks have two key identity dimensions:
   - `parentId` (standardized `YYYYMMDD-N`)
   - `seriesKey` (derived): `projectId :: title :: repeat :: repeatEvery :: repeatUnit`
 - **Occurrence identity**:
-  - `childId` (standardized `${parentId}-${index}`)
+  - `childId` (backend-normalized sequence identity; legacy formats may exist in older records)
 
-The frontend may create a “virtual upcoming occurrence” for display. When the user interacts with it (open/edit/complete), it is materialized into a real backend task while preserving series identity.
+The frontend may create virtual occurrences across a bounded horizon for planning views. When the user interacts with a virtual occurrence (open/edit/complete), it is materialized into a real backend task while preserving series identity.
 
-Deletion of repeating items uses a **cancellation** strategy (`cancelled: true`) to prevent re-appearance from recurrence expansion logic.
+Deletion behavior is primarily persisted deletion/materialization-aware mutation, with integrity safeguards to prevent same-series same-date duplicates.
 
 ## API surface
 
@@ -98,7 +98,7 @@ Deletion of repeating items uses a **cancellation** strategy (`cancelled: true`)
 
 ### Stats
 
-- `GET /api/stats` → stats used by Progress panel (points, level, streak, last7Days, achievements, milestoneAchievements)
+- `GET /api/stats` → stats used by Progress panel (points, level, streak, last7Days, achievements, milestoneAchievements), with completion-date (`completedAt`) local-date precedence for day-based metrics and streak.
 
 ### Admin
 
@@ -129,4 +129,14 @@ This reduces “stale association” issues (e.g., project rename reflected on t
   - `npm run dev`
   - `npm run build`
   - `npm run lint`
+
+---
+
+## Related Documentation
+
+- Product scope and requirements: `docs/PRD.md`
+- Variables and formulas: `docs/VARIABLES.md`
+- Metrics and OKRs: `docs/PRODUCT_METRICS.md`, `docs/METRICS_AND_OKRS.md`
+- Guardrails and constraints: `docs/GUARDRAILS.md`
+- End-to-end traceability: `docs/TRACEABILITY_MATRIX.md`
 

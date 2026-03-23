@@ -108,6 +108,8 @@ function Icon({
 export function GamificationPanel() {
   const [stats, setStats] = useState<Stats | null>(null);
   const latestFetchIdRef = useRef(0);
+  const refreshInFlightRef = useRef(false);
+  const refreshQueuedRef = useRef(false);
   const [badgesOpen, setBadgesOpen] = useState(false);
   const [hoveredBadge, setHoveredBadge] = useState<{
     title: string;
@@ -120,62 +122,64 @@ export function GamificationPanel() {
   const [expandedBadgeSections, setExpandedBadgeSections] = useState<Record<string, boolean>>({});
 
   useEffect(() => {
-    let controller = new AbortController();
-    let timeoutId: number | undefined;
-
-    const fetchStats = async (signal: AbortSignal) => {
+    const fetchStats = async () => {
+      if (refreshInFlightRef.current) {
+        refreshQueuedRef.current = true;
+        return;
+      }
+      refreshInFlightRef.current = true;
       const fetchId = ++latestFetchIdRef.current;
       try {
-        const res = await fetch("/api/stats", { signal });
+        const res = await fetch("/api/stats");
         if (!res.ok) return;
         const data: Stats = await res.json();
         // Ignore late responses from older requests.
         if (fetchId !== latestFetchIdRef.current) return;
         setStats(data);
       } catch {
-        // ignore network/abort errors
+        // ignore transient network errors
+      } finally {
+        refreshInFlightRef.current = false;
+        if (refreshQueuedRef.current) {
+          refreshQueuedRef.current = false;
+          void fetchStats();
+        }
       }
     };
 
-    const scheduleRefresh = (delayMs: number) => {
-      if (timeoutId !== undefined) window.clearTimeout(timeoutId);
-      timeoutId = window.setTimeout(() => {
-        controller.abort();
-        controller = new AbortController();
-        void fetchStats(controller.signal);
-      }, delayMs);
-    };
-
     // Initial load
-    void fetchStats(controller.signal);
+    void fetchStats();
 
     const onDataChanged = () => {
-      // Keep stats and badges synced immediately after task/project mutations.
-      scheduleRefresh(0);
+      // Queue-safe immediate refresh after any task/project mutation.
+      void fetchStats();
     };
 
     const onVisibilityChange = () => {
       if (document.visibilityState === "visible") {
-        scheduleRefresh(0);
+        void fetchStats();
       }
+    };
+    const onFocus = () => {
+      void fetchStats();
     };
 
     window.addEventListener("pst:tasks-changed", onDataChanged);
     window.addEventListener("pst:projects-changed", onDataChanged);
     document.addEventListener("visibilitychange", onVisibilityChange);
+    window.addEventListener("focus", onFocus);
 
     // Gentle periodic refresh (e.g. if backend state changes indirectly).
     const intervalId = window.setInterval(() => {
-      scheduleRefresh(0);
+      void fetchStats();
     }, 15_000);
 
     return () => {
-      controller.abort();
-      if (timeoutId !== undefined) window.clearTimeout(timeoutId);
       window.clearInterval(intervalId);
       window.removeEventListener("pst:tasks-changed", onDataChanged);
       window.removeEventListener("pst:projects-changed", onDataChanged);
       document.removeEventListener("visibilitychange", onVisibilityChange);
+      window.removeEventListener("focus", onFocus);
     };
   }, []);
 
