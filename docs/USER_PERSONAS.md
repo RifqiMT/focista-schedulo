@@ -1,6 +1,6 @@
 # User Personas — Focista Schedulo
 
-**Last updated:** 2026-03-23  
+**Last updated:** 2026-04-01  
 **Owner:** Product
 
 This document describes the primary user personas for Focista Schedulo. Personas inform feature prioritization, UX decisions, and messaging.
@@ -21,7 +21,7 @@ This document describes the primary user personas for Focista Schedulo. Personas
 
 - Creates tasks in batches per project.
 - Uses calendar and day agenda to decide what fits today vs. tomorrow.
-- Tracks completion and streaks for motivation.
+- Tracks completion and streaks for motivation (streaks follow **due-date-aligned** progress counting when tasks have due dates); opens **Productivity Analysis** when reviewing weekly or monthly trends.
 - Uses bulk move and delete to keep lists manageable.
 
 **Pain points:**
@@ -122,4 +122,4 @@ This document describes the primary user personas for Focista Schedulo. Personas
 
 ---
 
-**Last updated:** 2026-03-23
+**Last updated:** 2026-04-01

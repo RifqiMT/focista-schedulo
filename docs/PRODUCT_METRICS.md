@@ -1,6 +1,6 @@
 # Product Metrics — Focista Schedulo
 
-**Last updated:** 2026-03-23  
+**Last updated:** 2026-04-01  
 **Owner:** Product Analytics
 
 This document defines the product metrics used to evaluate the health and growth of Focista Schedulo. For OKRs and product-team metrics, see `METRICS_AND_OKRS.md`. For variable definitions and formulas, see `VARIABLES.md`.
@@ -69,6 +69,15 @@ This document defines the product metrics used to evaluate the health and growth
 | **Definition** | Percentage of users who use voice input at least once per week (or per session). |
 | **Notes** | Requires voice-usage instrumentation (planned). |
 
+### E5 — Productivity Analysis engagement
+
+| Attribute | Value |
+|-----------|--------|
+| **Definition** | Share of sessions (or users, when telemetry exists) that open **Productivity Analysis** at least once per week. |
+| **Why it matters** | Indicates demand for historical completion, points, and streak context beyond the live stats strip. |
+| **Source (current)** | Feature is shipped; session-level counts require instrumentation. Proxy: support/feedback and optional client event `pst:open-productivity` when added. |
+| **Related API** | `GET /api/productivity-insights` (see `docs/API_CONTRACTS.md`, `VARIABLES.md`). |
+
 ---
 
 ## Retention Metrics
@@ -100,13 +109,13 @@ This document defines the product metrics used to evaluate the health and growth
 | **Detection** | Backend integrity checks detect same-series same-date duplicates; UI materialization flow prevents duplicate real tasks under concurrent actions. |
 | **Target** | Near zero. |
 
-### Q4 — Sequential completion integrity
+### Q4 — Recurring completion integrity (gap-fill + user toggles)
 
 | Attribute | Value |
 |-----------|--------|
-| **Definition** | Share of recurring series where completion order and backfill rules remain consistent after toggles/edits. |
-| **Detection** | Audit recurring series for monotonic completion up to latest completed occurrence after backend enforcement. |
-| **Target** | 100% on validated datasets. |
+| **Definition** | Recurring series behavior stays trustworthy: completing a later occurrence can **materialize missing prior dates** as completed, but **existing** occurrences are **not** forced back to completed on reload after the user marked them active. |
+| **Detection** | QA on series with partial completion + mark-active on middle occurrences; verify `loadData` / file-watch reload does not revert intentional inactive rows. |
+| **Target** | No unintended flips of saved completion state; gap-fill still creates missing persisted rows when appropriate. |
 
 ### Q2 — Calendar correctness rate
 
@@ -141,7 +150,7 @@ See `VARIABLES.md` for:
 | Metric Group | Primary Owner | Secondary Owner | Reporting Cadence |
 |--------------|---------------|-----------------|-------------------|
 | Activation (A1, A2) | Product | Engineering | Weekly |
-| Engagement (E1-E4) | Product Analytics | Product | Weekly |
+| Engagement (E1-E5) | Product Analytics | Product | Weekly |
 | Retention (R1, R2) | Product Analytics | Product | Monthly |
 | Quality (Q1-Q3) | Engineering | Product | Weekly + release gate |
 
@@ -155,6 +164,7 @@ Before metrics are consumed for decisions:
 2. Validate no duplicate recurring occurrences in the same series/date.
 3. Validate local-date correctness for daily calculations (`completedToday`, `streakDays`, `last7Days`).
 4. Validate milestone and level formulas in `/api/stats`.
+5. When validating analysis releases, confirm `/api/productivity-insights` series match the Productivity Analysis modal charts (same windows and field semantics as `VARIABLES.md`).
 
 ---
 
@@ -167,4 +177,4 @@ Before metrics are consumed for decisions:
 
 ---
 
-**Last updated:** 2026-03-23
+**Last updated:** 2026-04-01

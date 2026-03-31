@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import { ProductivityAnalysisModal } from "./ProductivityAnalysisModal";
 
 interface Stats {
   completedToday: number;
@@ -111,6 +112,7 @@ export function GamificationPanel() {
   const refreshInFlightRef = useRef(false);
   const refreshQueuedRef = useRef(false);
   const [badgesOpen, setBadgesOpen] = useState(false);
+  const [analysisOpen, setAnalysisOpen] = useState(false);
   const [hoveredBadge, setHoveredBadge] = useState<{
     title: string;
     subtitle: string;
@@ -294,9 +296,22 @@ export function GamificationPanel() {
     <section className="gamification-panel">
       <div className="panel-head">
         <h2>Progress</h2>
-        <button className="ghost-button small" onClick={() => setBadgesOpen(true)}>
-          Badges
-        </button>
+        <div className="panel-head-actions">
+          <button
+            className="ghost-button small"
+            type="button"
+            onClick={() => setAnalysisOpen(true)}
+          >
+            Productivity analysis
+          </button>
+          <button
+            className="ghost-button small"
+            type="button"
+            onClick={() => setBadgesOpen(true)}
+          >
+            Badges
+          </button>
+        </div>
       </div>
       <div className="gamification-card">
         <div className="stat-row">
@@ -319,7 +334,11 @@ export function GamificationPanel() {
             />
           </div>
           <div className="xp-caption">
-            {pointsToday} XP today · {xpToNext} XP to next level
+            <span>
+              {pointsIntoLevel}/50 XP this level ({xpToNext} to level {level + 1})
+            </span>
+            <span className="muted"> · </span>
+            <span>{pointsToday} XP from tasks completed today</span>
           </div>
         </div>
 
@@ -582,6 +601,8 @@ export function GamificationPanel() {
           )}
         </div>
       )}
+
+      <ProductivityAnalysisModal open={analysisOpen} onClose={() => setAnalysisOpen(false)} />
     </section>
   );
 }

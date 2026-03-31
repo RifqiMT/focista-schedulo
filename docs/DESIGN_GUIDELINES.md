@@ -1,6 +1,6 @@
 # Design Guidelines — Focista Schedulo
 
-**Last updated:** 2026-03-23  
+**Last updated:** 2026-04-01  
 **Owner:** Design (with Engineering)
 
 This document describes the visual system used in the application and how to extend it consistently. It covers theme palettes, typography, components, accessibility, and design-to-code mapping.
@@ -126,7 +126,11 @@ Priorities are visually distinct in task pills, calendar items, day agenda, and 
 
 ### Task Hovercard
 
-- **Position:** Fixed, cursor-driven; placement logic keeps card on screen (left/right, above/below).
+- **DOM:** Rendered with **React portal** to `document.body` so `position: fixed` aligns with **viewport** coordinates (`z-index: 120`).
+- **Position:** Follows pointer using measured card size and viewport clamping; remains usable when overlapping adjacent columns (e.g. progress panel).
+- **Interaction:** **Not shown** when hovering or focusing **inside** the row checkbox, action buttons (`Complete` / `Move` / `Delete`), or other interactive controls on the card; dismisses when pointer moves onto those targets.
+- **Hit testing:** `.task-hovercard` uses **`pointer-events: none`** on the shell so clicks pass through to task row actions when the card overlaps them; **`a[href]`** inside the card uses **`pointer-events: auto`** so map and link chips remain clickable.
+- **Dismissal:** Global pointer handler closes when the cursor leaves both the triggering task UI and the hovercard (short grace period).
 - **Size:** `min(500px, calc(100vw - 24px))`, max-height `min(82vh, 720px)`, scrollable.
 - **Style:** Rounded `1rem`, border, left border 6px by priority; soft gradient overlay; section titles (Schedule, Details, Tags, Identifiers).
 - **Content:** One row per field where applicable; links and locations as clickable chips (new tab).
@@ -151,6 +155,14 @@ Priorities are visually distinct in task pills, calendar items, day agenda, and 
 
 - **Active item:** `.sidebar-item-active` — gold gradient background, red text, red dot.
 - **Hover:** Light red-tinted background, slight lift, shadow.
+
+### Productivity Analysis (modal)
+
+- **Shell:** `.pa-pro-shell`, `.badge-modal.productivity-modal` — maps accent tokens to `:root` **red / gold** palette (`--pa-accent`, `--pa-chart-secondary` for secondary series).
+- **Charts:** `.pa-chart-*` classes; dual series use **brand red** (raw / dashed) and **gold / amber** (rolling average / solid) with distinct legend chips.
+- **Tooltips:** Portaled to `document.body` with high z-index so they are never clipped by scroll regions or modal overflow.
+- **Fullscreen chart:** Dedicated host with nav below axis; keyboard shortcuts for chart switch where implemented.
+- **Controls:** Range days, timeframe selector, windowing for long histories, pills for Latest / Peak / averages as defined in UI.
 
 ---
 
@@ -185,6 +197,7 @@ Priorities are visually distinct in task pills, calendar items, day agenda, and 
 | Task editor drawer, form fields, chips | `frontend/src/components/TaskEditorDrawer.tsx` + drawer and form classes in `styles.css` |
 | Projects sidebar | `frontend/src/components/ProjectSidebar.tsx` + `.sidebar*` in `styles.css` |
 | Progress panel | `frontend/src/components/GamificationPanel.tsx` + `.gamification-panel` in `styles.css` |
+| Productivity Analysis modal | `frontend/src/components/ProductivityAnalysisModal.tsx` + `.pa-*`, `.productivity-modal*` in `styles.css` |
 | Priority and status colors | `frontend/src/styles.css` (`.priority-*`, `.task-hovercard[data-priority]`, `.task-filter-active`, etc.) |
 
 ---
@@ -198,6 +211,7 @@ Priorities are visually distinct in task pills, calendar items, day agenda, and 
 | Project sidebar item | default, hover, active, focused |
 | Progress milestone card | default, hover tooltip, loading fallback |
 | Badge modal | closed, open, section expanded/collapsed, hovercard visible |
+| Productivity modal | closed, open, chart fullscreen, loading, error, empty insights |
 | Calendar day cell | empty, has tasks, selected, today, out-of-month |
 
 ---
@@ -229,4 +243,4 @@ Priorities are visually distinct in task pills, calendar items, day agenda, and 
 
 ---
 
-**Last updated:** 2026-03-23
+**Last updated:** 2026-04-01

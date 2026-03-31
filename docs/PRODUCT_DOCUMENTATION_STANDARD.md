@@ -1,6 +1,6 @@
 # Product Documentation Standard — Focista Schedulo
 
-**Last updated:** 2026-03-23  
+**Last updated:** 2026-04-01  
 **Owner:** Product (with Design and Engineering)
 
 ---
@@ -30,6 +30,7 @@ All documentation should reflect the most up-to-date and comprehensive informati
 | `docs/METRICS_AND_OKRS.md` | Product Leadership | Product | Quarterly |
 | `docs/DESIGN_GUIDELINES.md` | Design, Engineering | Design | Quarterly and on theme/component changes |
 | `docs/ARCHITECTURE.md` | Engineering | Engineering | On architectural or API changes |
+| `docs/API_CONTRACTS.md` | Engineering, integrators | Engineering | On any endpoint, schema, or caching-behavior change |
 | `docs/VARIABLES.md` | Product, Analytics, Engineering | Product Analytics | Monthly and on model/schema changes |
 | `docs/TRACEABILITY_MATRIX.md` | Product, Design, Engineering, QA | Product Ops | Every sprint and release |
 | `docs/GUARDRAILS.md` | Product, Engineering, Security | Product + Engineering | Quarterly and on major capability changes |
@@ -168,16 +169,19 @@ Use these canonical terms consistently:
 | **Calendar view** | Month grid plus day-agenda timeline. |
 | **Day agenda** | Hourly timeline for a single day. |
 | **Voice input** | Speech-to-form autofill in the task editor. |
-| **Hovercard** | Popover on task hover showing full task details. |
+| **Hovercard** | Portaled popover near the pointer with full task details; suppressed on row checkbox and action buttons; pointer-events passthrough so row actions stay usable when overlapped. |
+| **Productivity Analysis** | Modal with historical charts from `/api/productivity-insights`. |
+| **Progress day** | Local date (`YYYY-MM-DD`) used to bucket a completed task in stats and productivity: **`dueDate`** first, else local day from **`completedAt`**. |
 | **List view** | Task list with optional timeframe and status filters; repeating tasks can be expanded to show occurrences. |
 
 ### Required Consistency Checks for Each Release
 
 - Timeframe taxonomy in docs must match shipped values in `TimeScope` and UI selectors.
 - Recurrence docs must reflect current horizon/materialization behavior (not legacy one-upcoming-only wording).
-- Day-based metrics docs must explicitly state completion-date (`completedAt`) local-date precedence for streak/completed-today logic.
+- Day-based metrics docs must state **due-date-first** progress bucketing (`dueDate`, then `completedAt` local day) for streak, completed-today, and productivity timelines.
 - Traceability rows must include any new reliability controls added in backend normalization and frontend mutation dedupe.
+- `docs/API_CONTRACTS.md` must match Zod schemas and route list in `backend/src/index.ts`.
 
 ---
 
-**Last updated:** 2026-03-23
+**Last updated:** 2026-04-01

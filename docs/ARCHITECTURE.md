@@ -1,6 +1,6 @@
 # Architecture — Focista Schedulo
 
-**Last updated**: 2026-03-23  
+**Last updated**: 2026-04-01  
 **Owner**: Engineering  
 
 ## Overview
@@ -21,8 +21,9 @@ Focista Schedulo is a TypeScript monorepo with:
   - `src/components/TaskBoard.tsx`: list, calendar month view, day agenda view, export, task actions
   - `src/components/TaskEditorDrawer.tsx`: task edit/create + voice parsing
   - `src/components/ProjectSidebar.tsx`: project CRUD + change events
-  - `src/components/GamificationPanel.tsx`: `/api/stats` display
-  - `src/styles.css`: global theme + component styles (Indonesian palette)
+  - `src/components/GamificationPanel.tsx`: `/api/stats` display; entry to Productivity Analysis
+  - `src/components/ProductivityAnalysisModal.tsx`: productivity charts, fullscreen, `/api/productivity-insights`
+  - `src/styles.css`: global theme + component styles (Indonesian palette; productivity analysis `pa-*` classes)
 
 ## Runtime topology
 
@@ -98,7 +99,11 @@ Deletion behavior is primarily persisted deletion/materialization-aware mutation
 
 ### Stats
 
-- `GET /api/stats` → stats used by Progress panel (points, level, streak, last7Days, achievements, milestoneAchievements), with completion-date (`completedAt`) local-date precedence for day-based metrics and streak.
+- `GET /api/stats` → stats used by Progress panel (points, level, streak, last7Days, achievements, milestoneAchievements). Day-based metrics use **due date** when set, else local day from `completedAt`. Responses are cached in memory; caches are **cleared at the start of** `persistTasks` / `persistProjects` and **after** `loadData()` completes so clients never read stale aggregates while in-memory `tasks` already reflect mutations.
+
+### Productivity insights
+
+- `GET /api/productivity-insights` → `{ rows: ProductivityRow[] }` daily series for **completed** tasks only: same **progress-day** bucketing as stats (`dueDate` first, then `completedAt` local day). Includes per-day counts, cumulative completions, per-day and cumulative XP (same priority weights as stats), implied level from cumulative XP, and cumulative milestone “unlocks” along the timeline. Cached and invalidated like `/api/stats`.
 
 ### Admin
 
@@ -110,6 +115,7 @@ The UI uses a lightweight event mechanism:
 
 - `pst:tasks-changed`
 - `pst:projects-changed`
+- `pst:open-export` (header Export → task board export UI)
 
 Components dispatch these events after CRUD actions and listen to them to refetch and synchronize state.
 
@@ -139,4 +145,5 @@ This reduces “stale association” issues (e.g., project rename reflected on t
 - Metrics and OKRs: `docs/PRODUCT_METRICS.md`, `docs/METRICS_AND_OKRS.md`
 - Guardrails and constraints: `docs/GUARDRAILS.md`
 - End-to-end traceability: `docs/TRACEABILITY_MATRIX.md`
+- API contracts: `docs/API_CONTRACTS.md`
 

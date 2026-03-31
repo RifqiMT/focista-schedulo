@@ -1,6 +1,6 @@
 # Variables Catalog — Focista Schedulo
 
-**Last updated:** 2026-03-23  
+**Last updated:** 2026-04-01  
 **Owner:** Product Analytics (with Engineering)
 
 This document defines the key **variables** used across the product: stored fields, derived values, and product metrics. Each variable is documented with a **variable name**, **friendly name**, **definition**, **formula** (when applicable), **location in the app**, **source of truth**, and **example** to align product, analytics, and engineering.
@@ -22,28 +22,32 @@ The following diagram shows how main entities and variables connect and flow thr
 
 ```mermaid
 flowchart TB
-  subgraph Backend["Backend (Source of Truth)"]
+  subgraph Backend["Backend (Source of Truth & Aggregates)"]
     P[Project<br/>id, name]
-    T[Task<br/>id, title, priority, dueDate, dueTime, durationMinutes,<br/>repeat, parentId, childId, projectId, completed,<br/>labels, location, link[], ...]
-    S[Stats API /api/stats<br/>completedToday, pointsToday, totalPoints,<br/>level, xpToNext, streakDays]
+    T[Task<br/>id, title, priority, dueDate, completedAt,<br/>completed, labels, link, ...]
+    S[GET /api/stats<br/>today totals, streak, level, milestones]
+    PI[GET /api/productivity-insights<br/>daily rows: tasks, XP, level, badges]
   end
 
   subgraph Frontend["Frontend (Derived & UI)"]
-    TB[TaskBoard<br/>filteredTasks, tasksWithRepeats, groupedByParent]
-    CE[CalendarEntry<br/>dateIso, startMin, endMin, isAllDay]
-    TE[TaskEditorDrawer<br/>draft fields, voice transcript]
-    HC[Hovercard<br/>formatDurationMinutesForOverview]
-    EX[Export<br/>CSV/JSON rows]
+    TB[TaskBoard<br/>list, calendar, agenda, export, hovercard]
+    CE[CalendarEntry<br/>per-day segments]
+    TE[TaskEditorDrawer]
+    HC[Task hovercard<br/>portaled]
+    GP[GamificationPanel<br/>stats + modal trigger]
+    PAM[ProductivityAnalysisModal<br/>charts, fullscreen]
   end
 
   P -->|projectId| T
-  T -->|aggregate by completed + dueDate| S
-  T -->|segment by dueDate + durationMinutes| CE
-  T -->|filter by timeScope, projectId, search| TB
-  TB -->|render list/calendar| CE
-  TB -->|generate| EX
-  TE -->|save/update| T
-  T -->|display details| HC
+  T -->|priority + progress-day bucketing| S
+  T -->|completed series simulation| PI
+  S --> GP
+  PI --> PAM
+  T -->|filter, materialize| TB
+  T -->|segment| CE
+  TB --> CE
+  TE --> T
+  T --> HC
 ```
 
 ### Relationship Summary
@@ -54,8 +58,10 @@ flowchart TB
 | `task.parentId` | `task.childId` | Series identity; occurrences share parentId and use backend-normalized child sequence IDs. |
 | `task.dueDate` + `task.dueTime` + `task.durationMinutes` | `CalendarEntry` | Frontend segments tasks into per-day calendar blocks. |
 | `task.priority` | `stats` points | Points per completion: low=1, medium=2, high=3, urgent=4. |
-| `task.completed` + `task.completedAt` (+ fallback `task.dueDate`) | `stats.completedToday`, `stats.pointsToday`, `stats.streakDays` | Day-based stats use completion-date semantics. |
+| `task.completed` + **`task.dueDate`** (else `task.completedAt` → local day) | `stats.completedToday`, `stats.pointsToday`, `stats.streakDays` | Day buckets use **due date** for progress when set; undated completions use completion timestamp. |
 | `task` (all fields) | Hovercard, Export | Full task data shown in hovercard and export output. |
+| `task` (completed, due date / completion day, priority) | `productivity-insights.rows[]` | Backend expands completions into a daily timeline with cumulative XP, level, and badge-milestone totals. |
+| `productivity-insights.rows[]` | Productivity Analysis charts | Frontend aggregates by timeframe (daily / weekly / …) for display. |
 
 ---
 
@@ -299,6 +305,29 @@ flowchart TB
 | **Source of truth** | Backend. |
 | **Example** | `true` |
 
+#### `task.completedAt`
+
+| Attribute | Value |
+|-----------|--------|
+| **Variable name** | `task.completedAt` |
+| **Friendly name** | Completion timestamp |
+| **Definition** | ISO-8601 datetime when the task was marked completed (set on toggle/valid save paths). Used for audit and for **progress-day** fallback when **`dueDate`** is absent. |
+| **Location in app** | Backend store; optional display in exports; drives local calendar day when no due date. |
+| **Source of truth** | Backend. |
+| **Example** | `2026-04-01T14:22:10.123Z` |
+
+#### `completionDateIsoLocalForTask` (backend derived)
+
+| Attribute | Value |
+|-----------|--------|
+| **Variable name** | `completionDateIsoLocalForTask(task)` |
+| **Friendly name** | Progress day (local) |
+| **Definition** | The local calendar date (`YYYY-MM-DD`) on which a **completed** task contributes to daily stats, streaks, last-seven-days charts, and productivity rows. |
+| **Formula** | If `task.dueDate` is set → use `task.dueDate`. Else → local date parsed from `task.completedAt`. If neither yields a date → excluded from day buckets (still counts toward lifetime `totalPoints` / level). |
+| **Location in app** | Implemented in `backend/src/index.ts`; consumed by `GET /api/stats`, `GET /api/productivity-insights`, and `GET /api/tasks` optional `since` filter. |
+| **Source of truth** | Backend (derived at request time; not stored). |
+| **Example** | Task due `2026-04-05`, completed early → progress day `2026-04-05`. |
+
 #### `task.cancelled`
 
 | Attribute | Value |
@@ -404,8 +433,8 @@ flowchart TB
 |-----------|--------|
 | **Variable name** | `stats.completedToday` |
 | **Friendly name** | Tasks completed today |
-| **Definition** | Count of tasks completed on the current local date (completion semantics). |
-| **Formula** | Count of completed tasks where local completion date from `completedAt` (fallback `dueDate`) equals `todayIso`. |
+| **Definition** | Count of completed tasks whose **progress day** is today (local): `dueDate` when set, otherwise local day from `completedAt`. |
+| **Formula** | Count of completed tasks where `completionDateIsoLocalForTask(task) === todayIso` (backend: due date first, then `completedAt`). |
 | **Location in app** | `GET /api/stats`; Progress panel. |
 | **Source of truth** | Backend (derived from tasks). |
 | **Example** | `5` |
@@ -464,8 +493,8 @@ flowchart TB
 |-----------|--------|
 | **Variable name** | `stats.streakDays` |
 | **Friendly name** | Streak days |
-| **Definition** | Consecutive days ending today on which the user completed at least one task (by completion day). |
-| **Formula** | Count backward from today using local completion date (`completedAt`, fallback `dueDate`); stop on first day with zero completions. |
+| **Definition** | Consecutive days ending today on which at least one completed task **counts** on that day (progress day = `dueDate` if set, else `completedAt` local date). |
+| **Formula** | Count backward from today using `completionDateIsoLocalForTask`; stop on first day with zero attributed completions. |
 | **Location in app** | `/api/stats`; Progress panel. |
 | **Source of truth** | Backend. |
 | **Example** | `7` |
@@ -481,7 +510,7 @@ flowchart TB
 | **Variable name** | `stats.last7Days[]` |
 | **Friendly name** | Last 7 days completion series |
 | **Definition** | Rolling seven-day array containing date, completed count, and points for each day. |
-| **Formula** | For each day `d` in `[today-6, today]`: `{date, completed=count(tasks completed on d), points=sum(priorityPoints for d)}` |
+| **Formula** | For each day `d` in `[today-6, today]`: bucket by **progress day** (`dueDate` if set, else `completedAt` local day): `completed` count and `points` sum. |
 | **Location in app** | Progress panel -> Last 7 days mini-chart |
 | **Source of truth** | Backend (`GET /api/stats`) |
 | **Example** | `[{date:"2026-03-23", completed:5, points:9}, ...]` |
@@ -500,13 +529,98 @@ flowchart TB
 
 ---
 
+## Productivity insights (`GET /api/productivity-insights`)
+
+Each **row** corresponds to a **local calendar day** from the first to the last day with at least one **completed** task in the persisted dataset (gaps may still appear as days with zero completions in the series builder). Only tasks with `completed === true` and `cancelled !== true` participate. Tasks are attributed to a day using **`dueDate` when set**, otherwise the local calendar day of **`completedAt`**.
+
+### `row.date`
+
+| Attribute | Value |
+|-----------|--------|
+| **Variable name** | `row.date` |
+| **Friendly name** | Insight date |
+| **Definition** | Local calendar date for the daily bucket. |
+| **Format** | `YYYY-MM-DD` |
+| **Location in app** | Productivity Analysis charts (x-axis / tooltips). |
+| **Source of truth** | Backend (`/api/productivity-insights`). |
+| **Example** | `2026-03-30` |
+
+### `row.tasksCompleted`
+
+| Attribute | Value |
+|-----------|--------|
+| **Variable name** | `row.tasksCompleted` |
+| **Friendly name** | Tasks completed (day) |
+| **Definition** | Count of completed tasks attributed to this date (**due date** if set, else local day from `completedAt`). |
+| **Formula** | Count of qualifying tasks where `completionDateIsoLocalForTask(task) === row.date`. |
+| **Location in app** | “Tasks completed” chart (per period). |
+| **Example** | `4` |
+
+### `row.tasksCompletedCumulative`
+
+| Attribute | Value |
+|-----------|--------|
+| **Variable name** | `row.tasksCompletedCumulative` |
+| **Friendly name** | Cumulative tasks completed |
+| **Definition** | Running sum of `tasksCompleted` from the first row through this day. |
+| **Formula** | `sum(tasksCompleted)` over dates ≤ `row.date` in the generated series. |
+| **Location in app** | Cumulative tasks chart. |
+| **Example** | `128` |
+
+### `row.xpGained`
+
+| Attribute | Value |
+|-----------|--------|
+| **Variable name** | `row.xpGained` |
+| **Friendly name** | Experience points (day) |
+| **Definition** | Sum of priority-based points for tasks completed on this date. |
+| **Formula** | Same weights as `/api/stats`: low=1, medium=2, high=3, urgent=4. |
+| **Location in app** | XP chart. |
+| **Example** | `9` |
+
+### `row.xpGainedCumulative`
+
+| Attribute | Value |
+|-----------|--------|
+| **Variable name** | `row.xpGainedCumulative` |
+| **Friendly name** | Cumulative experience points |
+| **Definition** | Running sum of `xpGained` through this date. |
+| **Formula** | `sum(xpGained)` over dates ≤ `row.date`. |
+| **Location in app** | Cumulative XP / growth charts. |
+| **Example** | `542` |
+
+### `row.level`
+
+| Attribute | Value |
+|-----------|--------|
+| **Variable name** | `row.level` |
+| **Friendly name** | Implied level (as of day end) |
+| **Definition** | Gamification level implied by **cumulative XP** on this date. |
+| **Formula** | `1 + floor(xpGainedCumulative / 50)` |
+| **Location in app** | Level chart. |
+| **Example** | `12` |
+
+### `row.badgesEarnedCumulative`
+
+| Attribute | Value |
+|-----------|--------|
+| **Variable name** | `row.badgesEarnedCumulative` |
+| **Friendly name** | Cumulative milestone unlock count |
+| **Definition** | Total count of distinct milestone thresholds reached across four families (streak, tasks completed, XP total, level), simulated day-by-day along the timeline (see backend `unlockedStreak`, `unlockedTasks`, `unlockedXp`, `unlockedLevels`). |
+| **Formula** | Sum of set sizes of unlocked milestone IDs at end of day `row.date` (implementation in `backend/src/index.ts`). |
+| **Location in app** | Badges / milestones cumulative chart. |
+| **Example** | `47` |
+
+---
+
 ## Data Lineage (Operational)
 
 1. User action in UI (`TaskBoard.tsx` / `TaskEditorDrawer.tsx`)
 2. API mutation (`POST/PUT/PATCH/DELETE /api/tasks`, project endpoints)
-3. Persistence update (`backend/data/tasks.json`, `backend/data/projects.json`)
-4. Stats recomputation (`GET /api/stats`)
-5. Progress/Badges render (`GamificationPanel.tsx`)
+3. In-memory task state updates; **`persistTasks` / `persistProjects`** clear stats/productivity caches **before** writing JSON
+4. Persistence (`backend/data/tasks.json`, `backend/data/projects.json`); `loadData()` clears caches again after reload
+5. Stats recomputation on next `GET /api/stats` or `GET /api/productivity-insights`
+6. Progress UI (`GamificationPanel.tsx`) and productivity modal (`ProductivityAnalysisModal.tsx`)
 
 This lineage is the canonical path for debugging variable drift or stale values.
 
@@ -523,4 +637,4 @@ This lineage is the canonical path for debugging variable drift or stale values.
 
 ---
 
-**Last updated:** 2026-03-23
+**Last updated:** 2026-04-01

@@ -1,6 +1,6 @@
 # User Stories — Focista Schedulo
 
-**Last updated:** 2026-03-23  
+**Last updated:** 2026-04-01  
 **Owner:** Product
 
 User stories are written in the format: **As a [role], I want [goal] so that [benefit].** Acceptance criteria define when the story is done.
@@ -44,10 +44,11 @@ As a user, I want to see full task details on hover so I can quickly check sched
 
 **Acceptance criteria:**
 
-- Hovering (or focusing) a task shows a hovercard with grouped sections: Schedule, Details, Tags, Identifiers.
+- Hovering a task (or focusing the card **outside** interactive controls) shows a hovercard with grouped sections: Schedule, Details, Tags, Identifiers.
+- The hovercard is **portaled** to the document body, follows the pointer, and clamps within the viewport.
+- The hovercard **does not open** when the pointer enters directly on the row **checkbox** or **Complete / Move / Delete**; if already open, moving onto those controls **closes** it for that task.
 - All relevant fields are shown (duration in human-readable form, e.g. “1 hour & 15 mins”).
 - Links and locations are clickable and open in a new tab; alias shown when present.
-- Hovercard position adapts so it stays on screen (e.g. left/right, above/below).
 
 ---
 
@@ -82,9 +83,9 @@ As a user, I want to see my progress so I feel motivated to continue.
 
 **Acceptance criteria:**
 
-- Progress panel shows tasks completed today, streak, level, and XP to next level.
-- Points per completed task: low=1, medium=2, high=3, urgent=4.
-- Stats update when tasks change (no manual refresh required).
+- Progress panel shows tasks **counted today** (by **progress day**: `dueDate` when set, else completion day from `completedAt`), streak, level, and XP toward the next level.
+- Points per completed task: low=1, medium=2, high=3, urgent=4. Lifetime **level** / **totalPoints** reflect all completed tasks.
+- Stats update when tasks change (events + cache invalidation on persist; no manual refresh required for typical flows).
 
 ---
 
@@ -157,15 +158,27 @@ As a user, I want bulk actions so I can clean up and reorganize quickly.
 - User can move selected tasks to another project.
 - User can bulk delete selected tasks.
 
+### US-14 Review productivity trends
+
+As a user, I want to see how my completions, experience, level, and milestones evolve over time so I can reflect on consistency and progress.
+
+**Acceptance criteria:**
+
+- User can open **Productivity Analysis** from the progress panel.
+- Modal loads data from `GET /api/productivity-insights` and supports choosing a historical window and timeframe aggregation.
+- Charts cover tasks completed (per period and cumulative), XP, level, and cumulative milestone-style badge counts as implemented.
+- User can expand a chart to fullscreen where provided; chart tooltips are fully readable (not clipped by scroll containers).
+- Rolling-average overlays appear where the UI defines a second series.
+
 ---
 
 ## Story-to-Requirement Mapping (Summary)
 
 | Story IDs | Requirement Group | Primary Components / APIs |
 |-----------|-------------------|----------------------------|
-| US-1, US-2, US-4 | Core task lifecycle and details visibility | `TaskEditorDrawer.tsx`, `TaskBoard.tsx`, `POST/PUT /api/tasks` |
+| US-1, US-2, US-4 | Core task lifecycle and details visibility (incl. portaled hover) | `TaskEditorDrawer.tsx`, `TaskBoard.tsx`, `POST/PUT /api/tasks` |
 | US-5 | Project lifecycle and task grouping | `ProjectSidebar.tsx`, `/api/projects` |
-| US-6, US-7 | Completion and motivation loop | `TaskBoard.tsx`, `GamificationPanel.tsx`, `/api/tasks/:id/complete`, `/api/stats` |
+| US-6, US-7, US-14 | Completion, motivation loop, productivity trends | `TaskBoard.tsx`, `GamificationPanel.tsx`, `ProductivityAnalysisModal.tsx`, `/api/tasks/:id/complete`, `/api/stats`, `/api/productivity-insights` |
 | US-8, US-9 | Recurrence and occurrence management | `TaskBoard.tsx`, `backend/src/index.ts` recurrence logic |
 | US-10 | Calendar and day-agenda planning | `TaskBoard.tsx` calendar/day agenda rendering |
 | US-11, US-12 | Context and data ownership | links/locations UI, export workflow |
@@ -175,14 +188,15 @@ As a user, I want bulk actions so I can clean up and reorganize quickly.
 
 ## Coverage Status
 
-- Implemented: US-1 through US-13
+- Implemented: US-1 through US-14
 - Highest regression sensitivity: US-6, US-8, US-9, US-10
 - Verification priority per release:
   1. Complete/reactivate (including future recurring occurrences)
   2. Recurrence identity and expansion behavior
   3. Calendar rendering and day-agenda segmentation
   4. Export integrity (JSON/CSV)
+  5. Productivity insights parity with stats priority weights and due-date-first progress bucketing
 
 ---
 
-**Last updated:** 2026-03-23
+**Last updated:** 2026-04-01

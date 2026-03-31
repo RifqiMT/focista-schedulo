@@ -1,6 +1,6 @@
 # PRD — Focista Schedulo
 
-**Last updated:** 2026-03-23  
+**Last updated:** 2026-04-01  
 **Owner:** Product (with Engineering and Design)
 
 ---
@@ -70,7 +70,7 @@ See `USER_PERSONAS.md` for detailed personas.
   - Reminder offset (minutes before)
   - Completion state
   - Project association
-- **Task hovercard:** On hover (or focus), a popover shows full task details: schedule, details, tags, and identifiers. Links and locations are clickable (open in new tab). Position adapts (left/right, above/below) to stay on screen.
+- **Task hovercard:** On hover (or non-interactive focus), a **portaled** popover shows full task details: schedule, details, tags, and identifiers. Links and locations are clickable (open in new tab). Position follows the pointer and clamps to the viewport. The hovercard **does not appear** when the pointer or focus is on the row **checkbox** or **action buttons** (Complete / Move / Delete); moving onto those controls dismisses an open hovercard for that row.
 - **Task cards (list view):** Show title, date, time, duration, priority, project, Parent ID, and labels (no description, repeat, link, or virtual pill on the card itself).
 - **Bulk selection:** Bulk delete and move tasks to another project.
 
@@ -105,9 +105,17 @@ See `USER_PERSONAS.md` for detailed personas.
 
 ### Gamification
 
-- `/api/stats` provides: completedToday, pointsToday, totalPoints, level, xpToNext, streakDays, last7Days, optional achievements and milestoneAchievements.
+- `/api/stats` provides: completedToday, pointsToday, totalPoints, level, xpToNext, streakDays, last7Days, achievements and milestoneAchievements (streak, tasks completed, XP, levels).
 - Points per priority: low=1, medium=2, high=3, urgent=4.
-- UI updates via `pst:tasks-changed` events.
+- **Progress day:** Day-scoped fields (e.g. completedToday, streak, last7Days, achievement thresholds tied to “today”) bucket each **completed** task by **`dueDate`** when set; if there is no due date, by the **local calendar day** of **`completedAt`**. **totalPoints** and **level** remain lifetime aggregates over all completed tasks.
+- Responses are cached in memory and invalidated when task/project data is persisted or reloaded from disk.
+- UI updates via `pst:tasks-changed` events and focus/visibility refresh patterns.
+
+### Productivity Analysis
+
+- **Entry:** Progress panel (gamification) opens a modal for deeper **historical** trends.
+- **Data:** `GET /api/productivity-insights` returns a daily time series of completed-task counts, cumulative completions, XP (per day and cumulative), implied **level** from cumulative XP, and **cumulative badge-milestone unlocks** derived from the same milestone families as stats (server-side simulation across the user’s completion history).
+- **UX:** Configurable day window and timeframe aggregation (daily, weekly, monthly, quarterly, annual where applicable); multiple charts (tasks, XP, level, badges); optional fullscreen per chart with keyboard navigation; dual series (raw + rolling average) on supported charts; chart tooltips portaled to avoid clipping.
 
 ### Empty State and Filters
 
@@ -124,7 +132,7 @@ See `USER_PERSONAS.md` for detailed personas.
 - **Organize** — Group tasks into projects; add labels, priority, locations, and links.
 - **Plan** — Use calendar month and day agenda to see time distribution.
 - **Execute** — Complete tasks; review progress, streak, and XP in the progress panel.
-- **Review** — Hover tasks for full details; expand repeating tasks in list view to see occurrences.
+- **Review** — Hover tasks for full details (without obstructing row actions); expand repeating tasks in list view to see occurrences; open Productivity Analysis for long-range trends.
 
 ### Key UX Principles
 
@@ -146,9 +154,10 @@ See `USER_PERSONAS.md` for detailed personas.
 | FR-5 | Voice-to-form parsing, auto-stop, and transcript preview. |
 | FR-6 | Export all data as JSON or CSV. |
 | FR-7 | Gamification stats and real-time updates. |
-| FR-8 | Task hovercard with full details and clickable links/locations; positioning that keeps card on screen. |
+| FR-8 | Task hovercard with full details and clickable links/locations; portaled rendering; pointer-aligned placement with viewport clamping; suppressed for row checkbox and action buttons. |
 | FR-9 | Multi-link and multi-location (UI) with normalization and alias support where applicable. |
-| FR-10 | Streak/day metrics use completion-day semantics (`completedAt` local date precedence with legacy fallback). |
+| FR-10 | Streak/day metrics and progress charts attribute completions to **`dueDate`** when set; undated tasks use **`completedAt`** (local day). |
+| FR-11 | Productivity Analysis modal consuming `/api/productivity-insights` with range controls, aggregations, fullscreen charts, and non-clipped chart tooltips. |
 
 ---
 
@@ -181,7 +190,7 @@ See `PRODUCT_METRICS.md` and `METRICS_AND_OKRS.md`.
 - Week view calendar with drag-to-reschedule
 - Task duration blocks with resize handles
 - Search and advanced filters (already partially present; refine and document)
-- Dedicated “Completed insights” view (patterns, completion time)
+- Deeper “completion patterns” analytics (time-of-day, project breakdown) beyond current productivity series
 - Cloud sync and authentication
 
 ---
@@ -204,8 +213,9 @@ A release is considered ready only when:
 1. Scope requirements are verified in both UI and API behavior.
 2. Data integrity checks pass (schema validity, recurrence consistency, no duplicate IDs).
 3. Core metrics remain correct (`completedToday`, `streakDays`, `level`, `xpToNext`, milestone progress).
-4. Export paths (JSON/CSV) remain reliable.
-5. Related product documentation is updated in the same release train.
+4. Productivity insights rows stay consistent with **due-date-first** progress bucketing and priority-point rules.
+5. Export paths (JSON/CSV) remain reliable.
+6. Related product documentation is updated in the same release train.
 
 ---
 
@@ -220,4 +230,4 @@ A release is considered ready only when:
 
 ---
 
-**Last updated:** 2026-03-23
+**Last updated:** 2026-04-01

@@ -1,5 +1,6 @@
 import express from "express";
 import cors from "cors";
+import compression from "compression";
 import { z } from "zod";
 import { promises as fs } from "fs";
 import { watch as fsWatch } from "fs";
@@ -7,6 +8,7 @@ import path from "path";
 
 const app = express();
 app.use(cors());
+app.use(compression());
 app.use(express.json());
 
 const PORT = process.env.PORT || 4000;
@@ -64,6 +66,39 @@ type Project = z.infer<typeof ProjectSchema>;
 let tasks: Task[] = [];
 let projects: Project[] = [];
 
+// Lightweight in-memory caching for expensive aggregate endpoints.
+type CachedValue<T> = {
+  version: number;
+  value: T;
+  at: number;
+};
+
+let dataVersion = 0;
+
+function bumpDataVersion(): void {
+  dataVersion += 1;
+}
+
+function makeCache<T>() {
+  let cache: CachedValue<T> | null = null;
+  return {
+    get(): T | null {
+      if (!cache) return null;
+      if (cache.version !== dataVersion) return null;
+      return cache.value;
+    },
+    set(value: T) {
+      cache = { version: dataVersion, value, at: Date.now() };
+    },
+    clear() {
+      cache = null;
+    }
+  };
+}
+
+const statsCache = makeCache<unknown>();
+const productivityCache = makeCache<unknown>();
+
 function makeTaskId(): string {
   return `${Date.now()}-${Math.random().toString(16).slice(2, 10)}`;
 }
@@ -89,11 +124,11 @@ function parseIsoDateTimeToLocalDate(isoDateTime: string | undefined): string | 
   return isoDateLocal(d);
 }
 
+/** Calendar day used for progress (/api/stats, productivity, streaks): due date when set, else completion timestamp. */
 function completionDateIsoLocalForTask(t: Task): string | null {
   if (!t.completed) return null;
-  const fromCompletedAt = parseIsoDateTimeToLocalDate(t.completedAt);
-  if (fromCompletedAt) return fromCompletedAt;
-  return t.dueDate ?? null;
+  if (t.dueDate) return t.dueDate;
+  return parseIsoDateTimeToLocalDate(t.completedAt);
 }
 
 function fromIsoDateLocal(iso: string): Date {
@@ -464,7 +499,10 @@ async function enforceSequentialCompletionForRepeatingSeries(): Promise<boolean>
       continue;
     }
 
-    // Mark all occurrences from earliest until the latest completed as completed.
+    // Fill *missing* persisted occurrences up to latestCompletedDueDate as completed
+    // (so completing a later day still materializes earlier gap dates).
+    // Do **not** force completed=true on rows that already exist: that overwrote
+    // explicit "mark active" toggles after persist + file reload.
     let current = fromIsoDateLocal(template.dueDate!);
     let safety = 0;
     while (safety < 2000) {
@@ -480,12 +518,7 @@ async function enforceSequentialCompletionForRepeatingSeries(): Promise<boolean>
           t.dueDate === dueIso
       );
 
-      if (exists) {
-        if (!exists.completed) {
-          exists.completed = true;
-          changed = true;
-        }
-      } else {
+      if (!exists) {
         const newTask: Task = {
           id: `${Date.now()}-${Math.random().toString(16).slice(2)}`,
           title: template.title,
@@ -503,6 +536,7 @@ async function enforceSequentialCompletionForRepeatingSeries(): Promise<boolean>
           reminderMinutesBefore: template.reminderMinutesBefore,
           projectId: template.projectId ?? null,
           completed: true,
+          completedAt: new Date().toISOString(),
           parentId: template.parentId,
           childId: undefined,
           cancelled: false
@@ -767,6 +801,9 @@ async function loadData() {
   if (completionMutated) {
     await persistTasks();
   }
+
+  statsCache.clear();
+  productivityCache.clear();
 }
 
 function startDataAutoSync() {
@@ -803,13 +840,21 @@ function startDataAutoSync() {
 }
 
 async function persistTasks() {
+  // Invalidate before awaiting I/O so /api/stats cannot return pre-mutation cache
+  // while in-memory `tasks` is already updated.
+  statsCache.clear();
+  productivityCache.clear();
   await ensureDataDir();
   await fs.writeFile(TASKS_FILE, JSON.stringify(tasks, null, 2), "utf8");
+  bumpDataVersion();
 }
 
 async function persistProjects() {
+  statsCache.clear();
+  productivityCache.clear();
   await ensureDataDir();
   await fs.writeFile(PROJECTS_FILE, JSON.stringify(projects, null, 2), "utf8");
+  bumpDataVersion();
 }
 
 app.get("/health", (_req, res) => {
@@ -856,11 +901,27 @@ app.delete("/api/projects/:id", (req, res) => {
 });
 
 app.get("/api/tasks", (req, res) => {
-  const { projectId } = req.query;
-  const filtered =
-    typeof projectId === "string"
-      ? tasks.filter((t) => t.projectId === projectId)
-      : tasks;
+  const { projectId, since } = req.query;
+
+  let filtered = tasks;
+
+  if (typeof projectId === "string" && projectId.trim() !== "") {
+    filtered = filtered.filter((t) => t.projectId === projectId);
+  }
+
+  if (typeof since === "string" && since.trim() !== "") {
+    const sinceDate = new Date(`${since}T00:00:00`);
+    if (!Number.isNaN(sinceDate.getTime())) {
+      const sinceIso = isoDateLocal(sinceDate);
+      filtered = filtered.filter((t) => {
+        // Include tasks whose due date or completion date is on/after `since`.
+        const dateIso = completionDateIsoLocalForTask(t) ?? t.dueDate ?? null;
+        if (!dateIso) return true;
+        return dateIso >= sinceIso;
+      });
+    }
+  }
+
   res.json(filtered);
 });
 
@@ -1074,6 +1135,11 @@ app.delete("/api/tasks/:id", async (req, res) => {
 });
 
 app.get("/api/stats", (_req, res) => {
+  const cached = statsCache.get();
+  if (cached) {
+    res.json(cached);
+    return;
+  }
   // Use local calendar dates so "today/streak/last7" match the UI date inputs
   // and update correctly in real time for the user's timezone.
   const toIsoLocal = (d: Date) => {
@@ -1236,12 +1302,12 @@ app.get("/api/stats", (_req, res) => {
   const achievements = (() => {
     // Productive Day: complete 3 tasks due before 21:00 today
     const isBefore2100 = (time: string | undefined): boolean => {
-      if (!time) return false;
+      // All-day / no specific time counts toward “before 21:00” productivity.
+      if (time == null || String(time).trim() === "") return true;
       const m = time.match(/^(\d{1,2}):(\d{2})$/);
       if (!m) return false;
       const hh = Number(m[1]);
-      const mm = Number(m[2]);
-      return hh < 21 || (hh === 20 && mm >= 0);
+      return hh < 21;
     };
 
     const earlyCount = completedToday.filter((t) => isBefore2100(t.task.dueTime)).length;
@@ -1410,7 +1476,7 @@ app.get("/api/stats", (_req, res) => {
     };
   })();
 
-  res.json({
+  const payload = {
     completedToday: completedToday.length,
     streakDays,
     level,
@@ -1421,7 +1487,225 @@ app.get("/api/stats", (_req, res) => {
     pointsByPriority,
     achievements,
     milestoneAchievements
+  };
+
+  statsCache.set(payload);
+  res.json(payload);
+});
+
+app.get("/api/productivity-insights", (_req, res) => {
+  const cached = productivityCache.get();
+  if (cached) {
+    res.json(cached);
+    return;
+  }
+  const toIsoLocal = (d: Date) => {
+    const y = d.getFullYear();
+    const m = String(d.getMonth() + 1).padStart(2, "0");
+    const day = String(d.getDate()).padStart(2, "0");
+    return `${y}-${m}-${day}`;
+  };
+
+  const addDaysLocal = (d: Date, days: number) => {
+    const x = new Date(d.getTime());
+    x.setDate(x.getDate() + days);
+    return x;
+  };
+
+  const safeTasks = tasks.filter((t) => !t.cancelled && t.completed);
+  const completedTasksWithDate = safeTasks
+    .map((t) => ({ task: t, completionDateIso: completionDateIsoLocalForTask(t) }))
+    .filter(
+      (
+        row
+      ): row is {
+        task: Task;
+        completionDateIso: string;
+      } => !!row.completionDateIso
+    );
+
+  if (completedTasksWithDate.length === 0) {
+    res.json({ rows: [] });
+    return;
+  }
+
+  const scoreFor = (task: Task): number => {
+    switch (task.priority) {
+      case "low":
+        return 1;
+      case "medium":
+        return 2;
+      case "high":
+        return 3;
+      case "urgent":
+        return 4;
+      default:
+        return 0;
+    }
+  };
+
+  const completionsByDay = new Map<string, { completed: number; points: number }>();
+  for (const row of completedTasksWithDate) {
+    const prev = completionsByDay.get(row.completionDateIso) ?? { completed: 0, points: 0 };
+    completionsByDay.set(row.completionDateIso, {
+      completed: prev.completed + 1,
+      points: prev.points + scoreFor(row.task)
+    });
+  }
+
+  const allDates = Array.from(completionsByDay.keys()).sort();
+  const firstDateIso = allDates[0];
+  const lastDateIso = allDates[allDates.length - 1];
+  const firstDate = new Date(`${firstDateIso}T12:00:00`);
+  const lastDate = new Date(`${lastDateIso}T12:00:00`);
+
+  // Precompute milestone thresholds so we can approximate "badges earned" over time
+  // using the same progression model as the main stats endpoint.
+  const streakBase = [1, 3, 5, 7, 30, 60, 90, 180, 365, 730, 1095, 1460, 1825, 3650];
+  const countBase = [1, 5, 10, 25, 100, 150, 250, 500, 750, 1000];
+  const levelBase = [1, 2, 3, 4, 5, 10];
+
+  const uniqSorted = (arr: number[]) =>
+    Array.from(new Set(arr)).sort((a, b) => a - b);
+
+  const buildMilestones = (opts: {
+    base: number[];
+    current: number;
+    extendFrom: number;
+    extendStep: number;
+    minCount?: number;
+    maxCount?: number;
+  }) => {
+    const { base, current, extendFrom, extendStep, minCount = 20, maxCount } = opts;
+    const out: number[] = [...base];
+    const maxBase = base.length ? Math.max(...base) : extendFrom;
+    const cap = Math.max(
+      current + extendStep,
+      extendFrom + extendStep * (minCount + 2),
+      maxBase
+    );
+    for (let v = extendFrom; v <= cap; v += extendStep) out.push(v);
+    let milestones = uniqSorted(out);
+    if (typeof maxCount === "number" && maxCount > 0) {
+      milestones = milestones.slice(0, maxCount);
+    }
+    return milestones;
+  };
+
+  const lifetimeCompletedCount = completedTasksWithDate.length;
+  const lifetimeTotalPoints = completedTasksWithDate.reduce(
+    (sum, row) => sum + scoreFor(row.task),
+    0
+  );
+  const lifetimeLevel = 1 + Math.floor(lifetimeTotalPoints / 50);
+
+  const streakMilestones = buildMilestones({
+    base: streakBase,
+    current: allDates.length,
+    extendFrom: 1825,
+    extendStep: 365,
+    minCount: 150,
+    maxCount: 150
   });
+  const tasksMilestones = buildMilestones({
+    base: countBase,
+    current: lifetimeCompletedCount,
+    extendFrom: 1000,
+    extendStep: 250,
+    minCount: 150,
+    maxCount: 150
+  });
+  const xpMilestones = buildMilestones({
+    base: countBase,
+    current: lifetimeTotalPoints,
+    extendFrom: 1000,
+    extendStep: 500,
+    minCount: 150,
+    maxCount: 150
+  });
+  const levelMilestones = buildMilestones({
+    base: levelBase,
+    current: lifetimeLevel,
+    extendFrom: 10,
+    extendStep: 5,
+    minCount: 150,
+    maxCount: 150
+  });
+
+  const unlockedStreak = new Set<number>();
+  const unlockedTasks = new Set<number>();
+  const unlockedXp = new Set<number>();
+  const unlockedLevels = new Set<number>();
+
+  const rows: {
+    date: string;
+    tasksCompleted: number;
+    tasksCompletedCumulative: number;
+    xpGained: number;
+    xpGainedCumulative: number;
+    level: number;
+    badgesEarnedCumulative: number;
+  }[] = [];
+
+  let cursor = new Date(firstDate.getTime());
+  let cumulativeTasks = 0;
+  let cumulativeXp = 0;
+  let currentStreak = 0;
+
+  while (cursor.getTime() <= lastDate.getTime()) {
+    const iso = toIsoLocal(cursor);
+    const day = completionsByDay.get(iso) ?? { completed: 0, points: 0 };
+
+    if (day.completed > 0) {
+      currentStreak += 1;
+    } else {
+      currentStreak = 0;
+    }
+
+    cumulativeTasks += day.completed;
+    cumulativeXp += day.points;
+    const levelValue = 1 + Math.floor(cumulativeXp / 50);
+
+    for (const m of streakMilestones) {
+      if (currentStreak >= m && !unlockedStreak.has(m)) {
+        unlockedStreak.add(m);
+      }
+    }
+    for (const m of tasksMilestones) {
+      if (cumulativeTasks >= m && !unlockedTasks.has(m)) {
+        unlockedTasks.add(m);
+      }
+    }
+    for (const m of xpMilestones) {
+      if (cumulativeXp >= m && !unlockedXp.has(m)) {
+        unlockedXp.add(m);
+      }
+    }
+    for (const m of levelMilestones) {
+      if (levelValue >= m && !unlockedLevels.has(m)) {
+        unlockedLevels.add(m);
+      }
+    }
+
+    const badgesEarnedCumulative =
+      unlockedStreak.size + unlockedTasks.size + unlockedXp.size + unlockedLevels.size;
+
+    rows.push({
+      date: iso,
+      tasksCompleted: day.completed,
+      tasksCompletedCumulative: cumulativeTasks,
+      xpGained: day.points,
+      xpGainedCumulative: cumulativeXp,
+      level: levelValue,
+      badgesEarnedCumulative
+    });
+
+    cursor = addDaysLocal(cursor, 1);
+  }
+
+  const payload = { rows };
+  productivityCache.set(payload);
+  res.json(payload);
 });
 
 app.post("/api/admin/reload-data", async (_req, res) => {

@@ -1,6 +1,6 @@
 # Product and Technical Guardrails — Focista Schedulo
 
-**Last updated:** 2026-03-23  
+**Last updated:** 2026-04-01  
 **Owner:** Product + Engineering
 
 ---
@@ -73,7 +73,7 @@ This document defines the non-negotiable boundaries for product development, del
 
 3. **Time semantics**
    - Day-based metrics and streak logic must use local calendar semantics.
-   - Completion date precedence is `completedAt` (local-date derivation), with controlled fallback for legacy records.
+   - Progress-day bucketing for stats uses **`dueDate`** when set; otherwise local date from **`completedAt`** (tasks without both are excluded from day buckets).
    - UTC conversion must not silently shift daily outcomes.
 
 4. **Performance baseline**
@@ -103,6 +103,11 @@ This document defines the non-negotiable boundaries for product development, del
    - Failed writes should not appear as successful actions.
    - UI should recover to consistent state after transient failure.
 
+4. **Overlays and popovers**
+   - Task hovercards must use a portal root so they stack above the grid and avoid clipping.
+   - Hovercards must not block checkbox toggles or row actions: suppress open behavior on those controls **and** use CSS passthrough (`pointer-events`) so overlapping card chrome does not eat clicks meant for row buttons.
+   - Productivity Analysis and other modals must trap focus and restore focus on close.
+
 ---
 
 ## Release Guardrails
@@ -112,7 +117,8 @@ This document defines the non-negotiable boundaries for product development, del
   2. Future occurrence complete/edit/delete verification complete
   3. `GET /api/stats` checked for streak/XP/level consistency
   4. Export JSON/CSV sanity check complete
-  5. Documentation updated (`PRD`, `VARIABLES`, metrics, and if relevant this file)
+  5. `/api/productivity-insights` parity with modal charts verified when analysis ships
+  6. Documentation updated (`PRD`, `VARIABLES`, `API_CONTRACTS`, metrics, and if relevant this file)
 
 ---
 
@@ -127,4 +133,4 @@ Escalate to Product + Engineering lead when any proposal:
 
 ---
 
-**Last updated:** 2026-03-23
+**Last updated:** 2026-04-01

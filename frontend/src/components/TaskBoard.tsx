@@ -1,4 +1,5 @@
-import React, { useEffect, useMemo, useRef, useState } from "react";
+import React, { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { TaskEditorDrawer } from "./TaskEditorDrawer";
 
 export interface Task {
@@ -34,6 +35,62 @@ export interface Task {
   virtual?: boolean;
   parentId?: string;
   childId?: string;
+}
+
+function clampHover(n: number, min: number, max: number) {
+  return Math.max(min, Math.min(max, n));
+}
+
+/** Top-left of a fixed hovercard in viewport pixels, biased below/right of the pointer. */
+function computeTaskHoverCardCoords(
+  clientX: number,
+  clientY: number,
+  cardW: number,
+  cardH: number,
+  vw: number,
+  vh: number
+): { x: number; y: number } {
+  const padding = 12;
+  const offset = 12;
+  const desiredX = clientX + offset;
+  const desiredY = clientY + offset;
+  const xRight = desiredX;
+  const xLeft = clientX - cardW - offset;
+  const yBelow = desiredY;
+  const yAbove = clientY - cardH - offset;
+
+  const canFitRight = vw - xRight >= cardW + padding;
+  const canFitLeft = xLeft >= padding;
+
+  const x = canFitRight
+    ? clampHover(xRight, padding, vw - cardW - padding)
+    : canFitLeft
+      ? clampHover(xLeft, padding, vw - cardW - padding)
+      : clampHover(desiredX, padding, vw - cardW - padding);
+
+  const canFitBelow = vh - yBelow >= cardH + padding;
+  const canFitAbove = yAbove >= padding;
+
+  const y = canFitBelow
+    ? clampHover(yBelow, padding, vh - cardH - padding)
+    : canFitAbove
+      ? clampHover(yAbove, padding, vh - cardH - padding)
+      : clampHover(yBelow, padding, vh - cardH - padding);
+
+  return { x, y };
+}
+
+/** True when the event is on controls inside a task/subtask card (no details hover for those). */
+function isTaskCardInteractiveHoverTarget(ev: { target: EventTarget | null }): boolean {
+  const el = ev.target as HTMLElement | null;
+  if (!el?.closest) return false;
+  const card = el.closest(".task-card");
+  if (!card) return false;
+  if (el.closest(".task-actions") || el.closest(".task-checkbox")) return true;
+  const ctl = el.closest(
+    "button, a[href], input:not([type='hidden']), select, textarea, [role='button']"
+  );
+  return Boolean(ctl && card.contains(ctl));
 }
 
 function isRepeating(task: Task): boolean {
@@ -586,6 +643,8 @@ export function TaskBoard({ selectedProjectId, timeScope, onTimeScopeChange }: T
     isAllDay: boolean;
     startMin: number | null;
     endMin: number | null;
+    pointerX: number;
+    pointerY: number;
     x: number;
     y: number;
   } | null>(null);
@@ -593,6 +652,7 @@ export function TaskBoard({ selectedProjectId, timeScope, onTimeScopeChange }: T
   const tasksFetchInFlight = useRef(false);
   const virtualMaterializeInFlightRef = useRef<Map<string, Promise<Task | null>>>(new Map());
   const taskMutationInFlightRef = useRef<Set<string>>(new Set());
+  const taskHoverCardRef = useRef<HTMLDivElement | null>(null);
   const hoverAutoCloseTimerRef = useRef<ReturnType<typeof window.setTimeout> | null>(
     null
   );
@@ -716,6 +776,7 @@ export function TaskBoard({ selectedProjectId, timeScope, onTimeScopeChange }: T
       if (target.closest(".task-card")) return;
       if (target.closest(".calendar-item")) return;
       if (target.closest(".calendar-day")) return;
+      if (target.closest(".day-agenda")) return;
 
       setHoveredTask(null);
     };
@@ -758,7 +819,10 @@ export function TaskBoard({ selectedProjectId, timeScope, onTimeScopeChange }: T
         !!target.closest(".task-hovercard") ||
         !!target.closest(".task-card") ||
         !!target.closest(".calendar-item") ||
-        !!target.closest(".calendar-day");
+        !!target.closest(".calendar-day") ||
+        !!target.closest(".day-agenda") ||
+        !!target.closest(".day-agenda-chip") ||
+        !!target.closest(".day-agenda-event");
 
       // If pointer is still inside, cancel pending auto-close.
       if (isInsideInteractive) {
@@ -783,6 +847,33 @@ export function TaskBoard({ selectedProjectId, timeScope, onTimeScopeChange }: T
     window.addEventListener("pointermove", onPointerMove, { capture: true });
     return () => window.removeEventListener("pointermove", onPointerMove, { capture: true } as any);
   }, [hoveredTaskId]);
+
+  useLayoutEffect(() => {
+    if (!hoveredTask) return;
+    const el = taskHoverCardRef.current;
+    if (!el) return;
+    const rect = el.getBoundingClientRect();
+    const w = Math.round(rect.width);
+    const h = Math.round(rect.height);
+    if (w < 32 || h < 32) return;
+
+    const vw = window.innerWidth;
+    const vh = window.innerHeight;
+    const { x: nx, y: ny } = computeTaskHoverCardCoords(
+      hoveredTask.pointerX,
+      hoveredTask.pointerY,
+      w,
+      h,
+      vw,
+      vh
+    );
+
+    setHoveredTask((prev) => {
+      if (!prev) return prev;
+      if (Math.abs(prev.x - nx) < 0.5 && Math.abs(prev.y - ny) < 0.5) return prev;
+      return { ...prev, x: nx, y: ny };
+    });
+  }, [hoveredTask]);
 
   // Close the "completed group details" expanded section on outside click.
   useEffect(() => {
@@ -811,10 +902,16 @@ export function TaskBoard({ selectedProjectId, timeScope, onTimeScopeChange }: T
     setLoading(true);
     const controller = new AbortController();
     try {
-      const params = selectedProjectId
-        ? `?projectId=${encodeURIComponent(selectedProjectId)}`
-        : "";
-      const res = await fetch(`/api/tasks${params}`, { signal: controller.signal });
+      const base = new URL("/api/tasks", window.location.origin);
+      if (selectedProjectId) {
+        base.searchParams.set("projectId", selectedProjectId);
+      }
+      // Default window: last 90 days from today for performance.
+      const since = new Date();
+      since.setDate(since.getDate() - 90);
+      base.searchParams.set("since", since.toISOString().slice(0, 10));
+
+      const res = await fetch(base.toString(), { signal: controller.signal });
       if (!res.ok) return;
       const data: Task[] = await res.json();
       setTasks(data);
@@ -1495,10 +1592,15 @@ export function TaskBoard({ selectedProjectId, timeScope, onTimeScopeChange }: T
             t.id === target.id ? { ...t, completed: !t.completed } : t
           )
         );
-        const res = await fetch(`/api/tasks/${target.id}/complete`, { method: "PATCH" });
+        const res = await fetch(
+          `/api/tasks/${encodeURIComponent(target.id)}/complete`,
+          { method: "PATCH" }
+        );
         if (!res.ok) {
           void refreshTasks();
         } else {
+          const updated: Task = await res.json();
+          setTasks((prev) => prev.map((t) => (t.id === updated.id ? updated : t)));
           notifyTasksChanged();
         }
       } catch {
@@ -1772,15 +1874,29 @@ export function TaskBoard({ selectedProjectId, timeScope, onTimeScopeChange }: T
     <article
       key={task.id}
       className={`task-card ${task.completed ? "task-card-completed" : ""}`}
-      onMouseEnter={(ev) =>
-        showTaskHoverCard({ task, clientX: ev.clientX, clientY: ev.clientY })
-      }
-      onMouseMove={(ev) => {
-        if (!hoveredTask) return;
+      onMouseEnter={(ev) => {
+        if (isTaskCardInteractiveHoverTarget(ev)) return;
         showTaskHoverCard({ task, clientX: ev.clientX, clientY: ev.clientY });
       }}
-      onMouseLeave={() => setHoveredTask(null)}
+      onMouseMove={(ev) => {
+        if (isTaskCardInteractiveHoverTarget(ev)) {
+          setHoveredTask((prev) => (prev?.task.id === task.id ? null : prev));
+          return;
+        }
+        showTaskHoverCard({ task, clientX: ev.clientX, clientY: ev.clientY });
+      }}
+      onPointerDownCapture={(ev) => {
+        if (isTaskCardInteractiveHoverTarget(ev)) {
+          setHoveredTask((prev) => (prev?.task.id === task.id ? null : prev));
+        }
+      }}
+      onFocusCapture={(ev) => {
+        if (isTaskCardInteractiveHoverTarget(ev)) {
+          setHoveredTask((prev) => (prev?.task.id === task.id ? null : prev));
+        }
+      }}
       onFocus={(ev) => {
+        if (isTaskCardInteractiveHoverTarget(ev)) return;
         const rect = (ev.currentTarget as HTMLElement).getBoundingClientRect();
         showTaskHoverCard({
           task,
@@ -1966,8 +2082,6 @@ export function TaskBoard({ selectedProjectId, timeScope, onTimeScopeChange }: T
     task: Task;
   };
 
-  const clamp = (n: number, min: number, max: number) => Math.max(min, Math.min(max, n));
-
   const parseTimeToMinutes = (time: string | undefined): number | null => {
     if (!time) return null;
     const m = time.match(/^(\d{1,2}):(\d{2})$/);
@@ -1992,38 +2106,18 @@ export function TaskBoard({ selectedProjectId, timeScope, onTimeScopeChange }: T
 
     const vw = typeof window !== "undefined" ? window.innerWidth : 1024;
     const vh = typeof window !== "undefined" ? window.innerHeight : 768;
-    // Approx card size; keeps tooltip from spilling off-screen.
-    // Keep this in sync with `.task-hovercard` CSS sizing.
-    const cardW = 500;
-    const cardH = 680;
-    const padding = 12;
+    // Initial guess; useLayoutEffect refines using measured `.task-hovercard` size.
+    const cardW = Math.min(500, vw - 24);
+    const cardH = Math.min(520, Math.max(200, Math.round(vh * 0.42)));
 
-    const offset = 14;
-    const desiredX = opts.clientX + offset; // show to right by default
-    const desiredY = opts.clientY + offset; // show below by default
-
-    const xRight = desiredX;
-    const xLeft = opts.clientX - cardW - offset;
-    const yBelow = desiredY;
-    const yAbove = opts.clientY - cardH - offset;
-
-    const canFitRight = vw - xRight >= cardW + padding;
-    const canFitLeft = xLeft >= padding;
-
-    const x = canFitRight
-      ? clamp(xRight, padding, vw - cardW - padding)
-      : canFitLeft
-        ? clamp(xLeft, padding, vw - cardW - padding)
-        : clamp(xRight, padding, vw - cardW - padding);
-
-    const canFitBelow = vh - yBelow >= cardH + padding;
-    const canFitAbove = yAbove >= padding;
-
-    const y = canFitBelow
-      ? clamp(yBelow, padding, vh - cardH - padding)
-      : canFitAbove
-        ? clamp(yAbove, padding, vh - cardH - padding)
-        : clamp(yBelow, padding, vh - cardH - padding);
+    const { x, y } = computeTaskHoverCardCoords(
+      opts.clientX,
+      opts.clientY,
+      cardW,
+      cardH,
+      vw,
+      vh
+    );
 
     const anchorIso =
       opts.anchorIso ??
@@ -2053,15 +2147,18 @@ export function TaskBoard({ selectedProjectId, timeScope, onTimeScopeChange }: T
       isAllDay,
       startMin,
       endMin,
+      pointerX: opts.clientX,
+      pointerY: opts.clientY,
       x,
       y
     });
   };
 
   const renderTaskHoverCard = () => {
-    if (!hoveredTask) return null;
-    return (
+    if (!hoveredTask || typeof document === "undefined") return null;
+    const card = (
       <div
+        ref={taskHoverCardRef}
         className={`task-hovercard ${hoveredTask.task.completed ? "is-completed" : ""}`}
         data-priority={hoveredTask.task.priority}
         data-status={hoveredTask.task.completed ? "completed" : "active"}
@@ -2371,6 +2468,7 @@ export function TaskBoard({ selectedProjectId, timeScope, onTimeScopeChange }: T
         })()}
       </div>
     );
+    return createPortal(card, document.body);
   };
 
   const tasksByDate = (() => {
@@ -2646,7 +2744,6 @@ export function TaskBoard({ selectedProjectId, timeScope, onTimeScopeChange }: T
                     })
                   }
                   onMouseMove={(ev) => {
-                    if (!hoveredTask) return;
                     showTaskHoverCard({
                       task: e.task,
                       anchorIso: e.dateIso,
@@ -2657,7 +2754,6 @@ export function TaskBoard({ selectedProjectId, timeScope, onTimeScopeChange }: T
                       clientY: ev.clientY
                     });
                   }}
-                  onMouseLeave={() => setHoveredTask(null)}
                   onFocus={(ev) => {
                     const rect = (ev.currentTarget as HTMLButtonElement).getBoundingClientRect();
                     showTaskHoverCard({
@@ -2793,7 +2889,6 @@ export function TaskBoard({ selectedProjectId, timeScope, onTimeScopeChange }: T
                     })
                   }
                   onMouseMove={(ev) => {
-                    if (!hoveredTask) return;
                     showTaskHoverCard({
                       task: e.task,
                       anchorIso: e.dateIso,
@@ -2804,7 +2899,6 @@ export function TaskBoard({ selectedProjectId, timeScope, onTimeScopeChange }: T
                       clientY: ev.clientY
                     });
                   }}
-                  onMouseLeave={() => setHoveredTask(null)}
                   onFocus={(ev) => {
                     const rect = (ev.currentTarget as HTMLButtonElement).getBoundingClientRect();
                     showTaskHoverCard({
@@ -3559,7 +3653,6 @@ export function TaskBoard({ selectedProjectId, timeScope, onTimeScopeChange }: T
                               })
                             }
                             onMouseMove={(ev) => {
-                              if (!hoveredTask) return;
                               showTaskHoverCard({
                                 task: e.task,
                                 anchorIso: iso,
@@ -3570,7 +3663,6 @@ export function TaskBoard({ selectedProjectId, timeScope, onTimeScopeChange }: T
                                 clientY: ev.clientY
                               });
                             }}
-                            onMouseLeave={() => setHoveredTask(null)}
                             onFocus={(ev) => {
                               const rect = (ev.currentTarget as HTMLButtonElement).getBoundingClientRect();
                               showTaskHoverCard({

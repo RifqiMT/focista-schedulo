@@ -27,7 +27,9 @@ Focista Schedulo helps users keep tasks **structured** (projects, priorities, re
 | **Calendar** | Month grid and day-agenda timeline (hourly). Multi-day tasks split into per-day segments. Click a day to open agenda. |
 | **Voice input** | One-button capture with auto-stop; transcript parsed to fill priority, date/time, duration, repeat, reminder, labels, location. |
 | **Export** | JSON (projects + tasks) or CSV (record type: project/task). |
-| **Gamification** | Points per completed task (low=1, medium=2, high=3, urgent=4), level and XP-to-next, streak days, optional achievements and milestones. |
+| **Gamification** | Points per completed task (low=1, medium=2, high=3, urgent=4), level and XP-to-next (lifetime `totalPoints`), streak days, achievements, and milestone tiers. **Day buckets** (today, streak, last 7 days, productivity charts) attribute each completion to its **`dueDate`** when set, otherwise to the local day of **`completedAt`**. |
+| **Productivity Analysis** | Modal from the progress panel: time-range controls, daily/weekly/monthly/quarterly/annual views, multi-chart insights (`/api/productivity-insights`), fullscreen charts with keyboard navigation, rolling-average overlays where applicable. |
+| **Task details hover** | Large hovercard portaled to `document.body`, follows pointer with on-screen clamping; **does not open** over row checkbox or action buttons (Complete / Move / Delete); closes via global pointer logic when leaving task UI + hovercard. |
 
 ---
 
@@ -36,7 +38,7 @@ Focista Schedulo helps users keep tasks **structured** (projects, priorities, re
 | Layer | Technologies |
 |-------|----------------|
 | **Backend** | Node.js, Express, TypeScript, Zod (validation), JSON-file persistence |
-| **Frontend** | React 18, Vite, TypeScript, React Router, Zod |
+| **Frontend** | React 18, Vite 6, TypeScript, React Router, Zod |
 | **Workspaces** | npm workspaces: `backend`, `frontend`, optional `shared` |
 
 ---
@@ -54,10 +56,11 @@ focista-schedulo/
 │   │   ├── main.tsx
 │   │   ├── styles.css
 │   │   └── components/
-│   │       ├── TaskBoard.tsx      # List, calendar, day agenda, export, hovercard
-│   │       ├── TaskEditorDrawer.tsx
+│   │       ├── TaskBoard.tsx           # List, calendar, day agenda, export, hovercard
+│   │       ├── TaskEditorDrawer.tsx   # Create/edit, voice, labels, links
 │   │       ├── ProjectSidebar.tsx
-│   │       └── GamificationPanel.tsx
+│   │       ├── GamificationPanel.tsx  # Stats, milestones, opens Productivity Analysis
+│   │       └── ProductivityAnalysisModal.tsx  # Insights charts + fullscreen
 │   └── index.html
 ├── docs/             # Product and engineering documentation
 └── package.json      # Root scripts (dev, build, lint)
@@ -117,6 +120,7 @@ Runs ESLint for backend and frontend.
 | [docs/METRICS_AND_OKRS.md](docs/METRICS_AND_OKRS.md) | OKRs and product team metrics |
 | [docs/DESIGN_GUIDELINES.md](docs/DESIGN_GUIDELINES.md) | Design system, themes, components |
 | [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | System architecture and API |
+| [docs/API_CONTRACTS.md](docs/API_CONTRACTS.md) | REST contracts, schemas, caching, integration events |
 | [docs/TRACEABILITY_MATRIX.md](docs/TRACEABILITY_MATRIX.md) | Enterprise traceability matrix across persona, story, requirement, code, test, and metrics |
 | [docs/GUARDRAILS.md](docs/GUARDRAILS.md) | Business and technical guardrails for safe, scalable product development |
 | [docs/CHANGELOG.md](docs/CHANGELOG.md) | Historical development and release log |
@@ -132,10 +136,16 @@ Runs ESLint for backend and frontend.
 - **Calendar view** — Month grid plus day-agenda timeline (hourly). Multi-day tasks are segmented per day.
 - **Timeframe scopes** — `yesterday`, `today`, `tomorrow`, `last_week`, `week`, `next_week`, `sprint`, `last_month`, `month`, `next_month`, `last_quarter`, `quarter`, `next_quarter`, `custom`, `all`.
 - **Voice input** — Speech-to-form autofill in the task editor (priority, date/time, duration, repeat, reminder, labels, location).
-- **Hovercard** — Popover on task hover showing full task details (schedule, details, tags, identifiers) with clickable links and locations.
+- **Hovercard** — Portaled popover near the pointer with full task details (schedule, details, tags, identifiers) and clickable links/locations. Suppressed while using the row checkbox or action buttons (Complete / Move / Delete). The card uses non-blocking hit-testing so row actions remain clickable when the card overlaps them (links inside the card stay clickable).
+- **Productivity Analysis** — Charts over historical completion rows from `/api/productivity-insights` (tasks, XP, level, badge milestones), opened from the progress panel.
+- **Progress day** — For stats and productivity timelines, a completed task is counted on **`dueDate`** if present; if there is no due date, on the **local calendar day** derived from **`completedAt`**. Lifetime **level** and **totalPoints** still sum all completed tasks regardless of which day they fall into.
+
+**Header:** **Sync data** calls `POST /api/admin/reload-data`. **Export** dispatches `pst:open-export` for the task board export flow.
+
+**API caching:** `GET /api/stats` and `GET /api/productivity-insights` use in-memory caches cleared when tasks/projects persist or when data is reloaded from disk, so the Progress panel stays aligned with the latest task state.
 
 Data is persisted to JSON files under `backend/data/`, so data survives restarts and the stack remains easy to read and extend.
 
 ---
 
-**Last updated:** 2026-03-23
+**Last updated:** 2026-04-01

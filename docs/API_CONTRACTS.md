@@ -1,0 +1,153 @@
+# API Contracts — Focista Schedulo
+
+**Last updated:** 2026-04-01  
+**Owner:** Engineering  
+**Base URL (development):** `http://localhost:4000` (frontend dev server proxies `/api` from port `5173`)
+
+This document summarizes REST endpoints, request and response shapes, and validation rules. Canonical schemas are implemented with **Zod** in `backend/src/index.ts`.
+
+---
+
+## Conventions
+
+- **Content-Type:** `application/json` for bodies; JSON responses unless noted.
+- **Errors:** `4xx` / `5xx` with JSON `{ ok?: boolean, error?: string }` where applicable; some deletes return `204 No Content`.
+- **Caching:** `GET /api/stats` and `GET /api/productivity-insights` use in-memory caches. Caches are cleared **before** awaited file writes in `persistTasks` / `persistProjects`, and again at the **end** of `loadData()`, so responses never lag behind in-memory task state after mutations or disk reload.
+
+---
+
+## Health
+
+| Method | Path | Response |
+|--------|------|----------|
+| `GET` | `/health` | `{ status: "ok", service: "focista-schedulo-backend" }` |
+
+---
+
+## Projects
+
+| Method | Path | Body | Response |
+|--------|------|------|----------|
+| `GET` | `/api/projects` | — | `Project[]` |
+| `POST` | `/api/projects` | `{ name: string }` | Created `Project` |
+| `PUT` | `/api/projects/:id` | `{ name: string }` | Updated `Project` |
+| `DELETE` | `/api/projects/:id` | — | `204`; deletes project and all tasks with `projectId` |
+
+### Project schema
+
+| Field | Type | Notes |
+|-------|------|--------|
+| `id` | `string` | Normalized to `P1`, `P2`, … on load and create |
+| `name` | `string` | Min length 1 |
+
+---
+
+## Tasks
+
+| Method | Path | Query / Body | Response |
+|--------|------|--------------|----------|
+| `GET` | `/api/tasks` | `?projectId=<id>` optional | `Task[]` |
+| `POST` | `/api/tasks` | Task payload (see schema) | Created `Task` |
+| `PUT` | `/api/tasks/:id` | Partial/full task | Updated `Task` |
+| `PATCH` | `/api/tasks/:id/complete` | — | Toggles `completed`; may materialize recurring instances |
+| `DELETE` | `/api/tasks/:id` | — | `204` or cancellation for series rules |
+
+### Task schema (summary)
+
+| Field | Type | Notes |
+|-------|------|--------|
+| `id` | `string` | Required |
+| `title` | `string` | Min length 1 |
+| `description` | `string` | Optional |
+| `priority` | `"low" \| "medium" \| "high" \| "urgent"` | |
+| `dueDate` | `string` | Optional ISO date `YYYY-MM-DD` |
+| `dueTime` | `string` | Optional `HH:mm` |
+| `durationMinutes` | `number` | Optional positive integer |
+| `deadlineDate` / `deadlineTime` | `string` | Optional |
+| `repeat` | enum | `none`, `daily`, `weekly`, `weekdays`, `weekends`, `monthly`, `quarterly`, `yearly`, `custom` |
+| `repeatEvery` / `repeatUnit` | `number` / enum | For `custom` |
+| `labels` | `string[]` | |
+| `location` | `string` | Optional |
+| `link` | `string[]` | Optional list of URLs |
+| `reminderMinutesBefore` | `number` | Optional non-negative |
+| `projectId` | `string \| null` | |
+| `completed` | `boolean` | |
+| `completedAt` | `string` | Optional ISO datetime |
+| `parentId` / `childId` | `string` | Optional series identity |
+| `cancelled` | `boolean` | Optional |
+
+Full validation: `TaskSchema` in `backend/src/index.ts`.
+
+---
+
+## Stats (gamification)
+
+| Method | Path | Response |
+|--------|------|----------|
+| `GET` | `/api/stats` | See below |
+
+### Response shape (`GET /api/stats`)
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `completedToday` | `number` | Completed tasks whose **progress day** is local today (`dueDate` if set, else local day from `completedAt`) |
+| `streakDays` | `number` | Consecutive days ending today with ≥1 task counting on that day (same progress-day rule) |
+| `level` | `number` | `1 + floor(totalPoints / 50)` |
+| `pointsToday` | `number` | Sum of priority points for tasks whose progress day is today |
+| `totalPoints` | `number` | Lifetime sum of priority points |
+| `xpToNext` | `number` | Points until next level boundary |
+| `last7Days` | `{ date, completed, points }[]` | Rolling seven-day series |
+| `pointsByPriority` | `{ low, medium, high, urgent }` | Lifetime points by priority weight |
+| `achievements` | `{ id, name, description, progress, goal, achieved }[]` | Challenge-style achievements |
+| `milestoneAchievements` | object | `streakDays`, `tasksCompleted`, `xpGained`, `levelsUp` blocks with milestones and progress |
+
+**Priority points:** low=1, medium=2, high=3, urgent=4.
+
+**Progress day (stats & productivity buckets):** Use **`dueDate`** when present; if the task has no due date, use local calendar day from **`completedAt`**.
+
+---
+
+## Productivity insights
+
+| Method | Path | Response |
+|--------|------|----------|
+| `GET` | `/api/productivity-insights` | `{ rows: ProductivityRow[] }` |
+
+### `ProductivityRow`
+
+Daily aggregates used by **Productivity Analysis** (`ProductivityAnalysisModal.tsx`). Built from **completed** tasks only (`!cancelled && completed`).
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `date` | `string` | Local ISO date `YYYY-MM-DD` |
+| `tasksCompleted` | `number` | Count completed that day |
+| `tasksCompletedCumulative` | `number` | Running sum of completions from first to this day |
+| `xpGained` | `number` | Sum of priority points that day |
+| `xpGainedCumulative` | `number` | Running sum of XP |
+| `level` | `number` | Level implied by cumulative XP on that day |
+| `badgesEarnedCumulative` | `number` | Count of unique milestone thresholds crossed (streak, tasks, XP, level families) |
+
+If there are no qualifying completions, `rows` is `[]`.
+
+---
+
+## Admin
+
+| Method | Path | Response |
+|--------|------|----------|
+| `POST` | `/api/admin/reload-data` | `{ ok: true, counts: { projects, tasks } }` or `{ ok: false, error }` |
+
+Reloads JSON from disk without extra persistence. Used by header **Sync data** after external file edits.
+
+---
+
+## Frontend integration
+
+- **Task / project refresh:** Custom events `pst:tasks-changed`, `pst:projects-changed`.
+- **Export:** `pst:open-export` (handled in `TaskBoard`).
+
+---
+
+## Versioning
+
+- Breaking changes to field names or enum values require a **major** bump in release notes, `CHANGELOG.md`, and updates to `VARIABLES.md` and this file.

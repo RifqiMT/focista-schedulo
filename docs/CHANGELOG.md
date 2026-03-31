@@ -1,9 +1,50 @@
 # Changelog — Focista Schedulo
 
-**Last updated:** 2026-03-23  
+**Last updated:** 2026-04-01  
 **Owner:** Engineering (with Product)
 
 This changelog tracks meaningful product, engineering, and documentation changes.
+
+---
+
+## [2026-04-01] Comprehensive documentation audit (product + engineering)
+
+### Changed
+
+- Refreshed **README.md**, **docs/README.md** (coverage table), **PRODUCT_DOCUMENTATION_STANDARD.md** (glossary: hovercard, **Progress day**), **PRD.md** (gamification: progress-day + cache invalidation), **ARCHITECTURE.md** (stats/productivity cache lifecycle; productivity row bucketing), **API_CONTRACTS.md** (cache + field descriptions for `completedToday` / streak / `pointsToday`), **VARIABLES.md** (mermaid edge label; new **`task.completedAt`** and **`completionDateIsoLocalForTask`** entries), **DESIGN_GUIDELINES.md** (hovercard pointer-events), **GUARDRAILS.md** (overlay hit-testing), **TRACEABILITY_MATRIX.md** (Q4 recurring integrity row aligns with gap-fill + no forced re-complete), **USER_PERSONAS.md**, **USER_STORIES.md** (US-7), **PRODUCT_METRICS.md** (Q4 definition), **METRICS_AND_OKRS.md** (metadata date).
+- All “**Last updated**” stamps in this audit set normalized to **2026-04-01** where files were touched.
+
+### Docs
+
+- Single narrative across the doc pack: **due-date-first** progress bucketing for day-scoped analytics; **lifetime** points/level semantics unchanged; **API** cache cleared on persist start and after `loadData()`.
+
+---
+
+## [2026-03-31] Progress attribution — due date first
+
+### Changed
+
+- **Backend:** `completionDateIsoLocalForTask` (used by `GET /api/stats`, `GET /api/productivity-insights`, and task list `since` filtering) now attributes completed tasks to **`dueDate`** when set; if there is no due date, it uses the local calendar day from **`completedAt`**.
+- **Docs:** Updated `VARIABLES.md`, `API_CONTRACTS.md`, `PRD.md` (FR-10), `GUARDRAILS.md`, `ARCHITECTURE.md`, `PRODUCT_DOCUMENTATION_STANDARD.md` to match.
+
+---
+
+## [2026-03-31] Documentation — Productivity Analysis, API contracts, and UX alignment
+
+### Added
+
+- `docs/API_CONTRACTS.md` — canonical route and schema references for health, projects, tasks, stats, productivity-insights, admin reload, caching, and client integration events (e.g. `pst:open-export`).
+
+### Changed
+
+- Documentation suite aligned with **Productivity Analysis** (`GET /api/productivity-insights`, modal charts) and **portaled task hovercards** (pointer positioning, suppression on row checkbox and action controls):
+  - `README.md`, `docs/README.md`, `docs/PRD.md`, `docs/ARCHITECTURE.md`, `docs/VARIABLES.md` (relationship diagrams and productivity variable tables), `docs/DESIGN_GUIDELINES.md`, `docs/USER_STORIES.md` (including US-14), `docs/TRACEABILITY_MATRIX.md`, `docs/PRODUCT_DOCUMENTATION_STANDARD.md`.
+- Product metrics and OKRs extended for analysis engagement (**E5**, **KR3.3**): `docs/PRODUCT_METRICS.md`, `docs/METRICS_AND_OKRS.md`.
+- Guardrails updated for overlays/popovers and release checks: `docs/GUARDRAILS.md`.
+
+### Docs
+
+- Central index and traceability rows updated so persona and story coverage reference productivity insights parity with `/api/stats` caching semantics where applicable.
 
 ---
 
@@ -85,4 +126,4 @@ This changelog tracks meaningful product, engineering, and documentation changes
 
 ---
 
-**Last updated:** 2026-03-23
+**Last updated:** 2026-04-01

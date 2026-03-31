@@ -1,6 +1,6 @@
 # Metrics and OKRs — Focista Schedulo
 
-**Last updated:** 2026-03-23  
+**Last updated:** 2026-04-01  
 **Owner:** Product
 
 This document frames quarterly OKRs and the metrics used to measure them for the product team. Product metric definitions live in `PRODUCT_METRICS.md`. Variable definitions and formulas live in `VARIABLES.md`.
@@ -46,7 +46,7 @@ This document frames quarterly OKRs and the metrics used to measure them for the
 | KR2.1 | Recurrence duplication rate ≤ 0.5% of sessions (Q1). | Q1 (PRODUCT_METRICS.md). |
 | KR2.2 | Calendar correctness rate ≥ 99% for multi-day tasks (Q2). | Q2. |
 | KR2.3 | Parent/child ID stability incidents reduced to near-zero (support/QA). | Incident tracking. |
-| KR2.4 | Sequential completion integrity remains at 100% in recurring-series audits (Q4). | Q4 + backend audit checks. |
+| KR2.4 | Recurring completion integrity meets Q4 targets (gap-fill materialization; no unintended revert of mark-active on reload). | Q4 + QA on partial-series completion. |
 | KR2.5 | Virtual materialization duplicate-write incidents = 0 per release window. | UI/API mutation telemetry + QA runs. |
 
 ### Inputs / Initiatives
@@ -67,10 +67,12 @@ This document frames quarterly OKRs and the metrics used to measure them for the
 |----|-------------|-------------|
 | KR3.1 | Increase average streakDays distribution median by 1 day. | stats.streakDays (VARIABLES.md). |
 | KR3.2 | Increase pointsToday median by 20% among weekly active users. | stats.pointsToday. |
+| KR3.3 | Increase weekly open rate of Productivity Analysis to a defined target once E5 baselining is available (e.g. ≥ 25% of WAU). | E5 (PRODUCT_METRICS.md); backed by `GET /api/productivity-insights`. |
 
 ### Inputs / Initiatives
 
 - Improve progress panel clarity and immediacy.
+- Keep productivity charts aligned with server-computed series so insights match live stats semantics.
 - Add meaningful badges or milestones (optional), based on consistent behavior patterns.
 
 ---
@@ -99,7 +101,7 @@ This document frames quarterly OKRs and the metrics used to measure them for the
 |-------------|----------|
 | **North Star** | WCST (Weekly Completed, Scheduled Tasks). |
 | **Activation** | A1 (first structured task), A2 (calendar usage). |
-| **Engagement** | Recurrence adoption, voice adoption, tasks per active day. |
+| **Engagement** | Recurrence adoption, voice adoption, tasks per active day, Productivity Analysis (E5). |
 | **Retention** | 7-day return (planned), streak distribution. |
 | **Quality** | Recurrence duplication rate, calendar correctness, export success. |
 | **Motivation** | streakDays, pointsToday, level/XP. |
@@ -131,7 +133,8 @@ Escalate when one or more conditions hold for two consecutive reporting cycles:
 - Q2 calendar correctness drops below target
 - R2 streak continuation trend declines with no corresponding scope change
 - E3 recurrence adoption declines after recurrence-related releases
+- E5 Productivity Analysis engagement drops after analytics or chart changes without a corresponding drop in WAU
 
 ---
 
-**Last updated:** 2026-03-23
+**Last updated:** 2026-04-01
