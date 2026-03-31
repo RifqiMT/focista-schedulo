@@ -37,6 +37,41 @@ export interface Task {
   childId?: string;
 }
 
+function hasProject(t: Pick<Task, "projectId">): boolean {
+  return typeof t.projectId === "string" && t.projectId.trim() !== "";
+}
+
+function normalizeProjectAssociation(tasks: Task[]): Task[] {
+  // Enforce invariant in the UI too: all tasks sharing a parentId share the same projectId.
+  // Canonical projectId = first non-empty projectId seen for that parentId; otherwise null.
+  const canonicalByParentId = new Map<string, string | null>();
+
+  for (const t of tasks) {
+    if (!t.parentId) continue;
+    if (canonicalByParentId.has(t.parentId)) continue;
+    canonicalByParentId.set(t.parentId, hasProject(t) ? t.projectId : null);
+  }
+  for (const t of tasks) {
+    if (!t.parentId) continue;
+    if (!hasProject(t)) continue;
+    const existing = canonicalByParentId.get(t.parentId);
+    if (!existing) canonicalByParentId.set(t.parentId, t.projectId);
+  }
+
+  let changed = false;
+  const next = tasks.map((t) => {
+    if (!t.parentId) return t;
+    const canonical = canonicalByParentId.get(t.parentId);
+    if (canonical === undefined) return t;
+    const current = hasProject(t) ? t.projectId : null;
+    if (current === canonical) return t;
+    changed = true;
+    return { ...t, projectId: canonical };
+  });
+
+  return changed ? next : tasks;
+}
+
 function clampHover(n: number, min: number, max: number) {
   return Math.max(min, Math.min(max, n));
 }
@@ -397,14 +432,19 @@ function nextOccurrenceDate(current: Date, task: Task): Date | null {
   }
 }
 
-function expandRepeatingTasks(base: Task[]): Task[] {
+function expandRepeatingTasks(base: Task[], horizonEndIso?: string | null): Task[] {
   const result: Task[] = [...base];
   const today = new Date();
-  // Generate upcoming occurrences for repeats well into the future so the
-  // calendar view can show all future (upcoming and concurrent) tasks.
-  // Use a 5-year horizon, which is still safe for performance with the
-  // current task volume but ensures long-running series are visible.
-  const horizon = addDays(today, 365 * 5);
+  // Generate occurrences only up to the visible calendar horizon (plus buffer).
+  // This avoids expensive multi-year expansion on every refresh.
+  const horizon = (() => {
+    const raw = (horizonEndIso ?? "").trim();
+    if (raw) {
+      const d = new Date(raw + "T12:00:00");
+      if (!Number.isNaN(d.getTime())) return d;
+    }
+    return addDays(today, 365); // safe fallback
+  })();
 
   type SeriesKey = string;
   const seriesMap = new Map<SeriesKey, Task[]>();
@@ -626,9 +666,10 @@ function collapseSeriesForList(tasks: Task[], rangeStartIso: string): Task[] {
 
 export function TaskBoard({ selectedProjectId, timeScope, onTimeScopeChange }: TaskBoardProps) {
   const [tasks, setTasks] = useState<Task[]>([]);
-  const [editingTask, setEditingTask] = useState<Task | null>(null);
+  const [editingTask, setEditingTask] = useState<Task | Task[] | null>(null);
   const [loading, setLoading] = useState(false);
   const [completionFilter, setCompletionFilter] = useState<"all" | "active" | "completed">("all");
+  const [projectAssocFilter, setProjectAssocFilter] = useState<"all" | "with" | "none">("all");
   const [selectedTaskIds, setSelectedTaskIds] = useState<Set<string>>(new Set());
   const [projects, setProjects] = useState<{ id: string; name: string }[]>([]);
   const [moveDialogTasks, setMoveDialogTasks] = useState<Task[] | null>(null);
@@ -669,10 +710,24 @@ export function TaskBoard({ selectedProjectId, timeScope, onTimeScopeChange }: T
   const hoveredTaskId = hoveredTask?.task.id;
 
   const activeBaseTasks = useMemo(() => tasks.filter((t) => !t.cancelled), [tasks]);
-  const tasksWithRepeats = useMemo(
-    () => expandRepeatingTasks(activeBaseTasks),
-    [activeBaseTasks]
-  );
+
+  const calendarHorizonIso = useMemo(() => {
+    // Expand repeats only a bit past the visible month for smooth navigation.
+    const end = new Date(calendarMonthAnchor.getTime());
+    end.setMonth(end.getMonth() + 4);
+    end.setDate(1);
+    end.setHours(12, 0, 0, 0);
+    const y = end.getFullYear();
+    const m = String(end.getMonth() + 1).padStart(2, "0");
+    const d = String(end.getDate()).padStart(2, "0");
+    return `${y}-${m}-${d}`;
+  }, [calendarMonthAnchor]);
+
+  // Performance: only expand repeating tasks when needed (calendar view).
+  const tasksWithRepeats = useMemo(() => {
+    if (viewMode !== "calendar") return activeBaseTasks;
+    return expandRepeatingTasks(activeBaseTasks, calendarHorizonIso);
+  }, [activeBaseTasks, viewMode, calendarHorizonIso]);
 
   // If hovercard is closed, cancel any pending auto-close.
   useEffect(() => {
@@ -683,7 +738,7 @@ export function TaskBoard({ selectedProjectId, timeScope, onTimeScopeChange }: T
     }
   }, [hoveredTaskId]);
 
-  type ClusterKey = "timeframe" | "view" | "status";
+  type ClusterKey = "timeframe" | "view" | "status" | "project-assoc";
 
   const closeHoverAndCompletedDetails = () => {
     setHoveredTask(null);
@@ -714,6 +769,20 @@ export function TaskBoard({ selectedProjectId, timeScope, onTimeScopeChange }: T
     setEditingTask(task);
   };
 
+  const openMultiEditor = (tasksToEdit: Task[]) => {
+    setOpenCluster(null);
+    closeHoverAndCompletedDetails();
+    const compareDueDateDesc = (a: Task, b: Task) => {
+      // Match list/table sorting: missing dueDate goes last, otherwise ISO desc.
+      if (!a.dueDate && !b.dueDate) return 0;
+      if (!a.dueDate) return 1;
+      if (!b.dueDate) return -1;
+      return b.dueDate.localeCompare(a.dueDate);
+    };
+    const sorted = tasksToEdit.slice().sort(compareDueDateDesc);
+    setEditingTask(sorted);
+  };
+
   const toggleSingleExpandedGroup = (key: string) => {
     setExpandedGroups((prev) => {
       const next = new Set<string>();
@@ -727,6 +796,16 @@ export function TaskBoard({ selectedProjectId, timeScope, onTimeScopeChange }: T
     if (typeof window !== "undefined" && "dispatchEvent" in window) {
       window.dispatchEvent(new Event("pst:tasks-changed"));
     }
+  };
+
+  const toast = (opts: {
+    kind: "success" | "error" | "info";
+    title: string;
+    message?: string;
+    durationMs?: number;
+  }) => {
+    if (typeof window === "undefined" || !("dispatchEvent" in window)) return;
+    window.dispatchEvent(new CustomEvent("pst:toast", { detail: opts }));
   };
 
   useEffect(() => {
@@ -815,14 +894,44 @@ export function TaskBoard({ selectedProjectId, timeScope, onTimeScopeChange }: T
       const target = e.target as HTMLElement | null;
       if (!target) return;
 
+      if (target.closest(".task-hovercard")) {
+        if (hoverAutoCloseTimerRef.current) {
+          window.clearTimeout(hoverAutoCloseTimerRef.current);
+          hoverAutoCloseTimerRef.current = null;
+        }
+        return;
+      }
+
+      const closestTaskish = target.closest<HTMLElement>(
+        ".task-card[data-task-id], .calendar-item[data-task-id], .day-agenda-chip[data-task-id], .day-agenda-event[data-task-id]"
+      );
+
+      // If pointer is over a different task than the one currently shown,
+      // close immediately so the next task's hover can take over.
+      if (closestTaskish) {
+        const tid = closestTaskish.dataset.taskId;
+        if (tid && tid !== hoveredTaskId) {
+          if (hoverAutoCloseTimerRef.current) {
+            window.clearTimeout(hoverAutoCloseTimerRef.current);
+            hoverAutoCloseTimerRef.current = null;
+          }
+          setHoveredTask(null);
+          return;
+        }
+
+        // Pointer is still over the same task (or missing tid): keep open.
+        if (hoverAutoCloseTimerRef.current) {
+          window.clearTimeout(hoverAutoCloseTimerRef.current);
+          hoverAutoCloseTimerRef.current = null;
+        }
+        return;
+      }
+
       const isInsideInteractive =
-        !!target.closest(".task-hovercard") ||
-        !!target.closest(".task-card") ||
-        !!target.closest(".calendar-item") ||
         !!target.closest(".calendar-day") ||
         !!target.closest(".day-agenda") ||
-        !!target.closest(".day-agenda-chip") ||
-        !!target.closest(".day-agenda-event");
+        !!target.closest(".day-agenda-event") ||
+        !!target.closest(".day-agenda-chip");
 
       // If pointer is still inside, cancel pending auto-close.
       if (isInsideInteractive) {
@@ -844,8 +953,33 @@ export function TaskBoard({ selectedProjectId, timeScope, onTimeScopeChange }: T
       }, 120);
     };
 
+    const closeNow = () => {
+      if (hoverAutoCloseTimerRef.current) {
+        window.clearTimeout(hoverAutoCloseTimerRef.current);
+        hoverAutoCloseTimerRef.current = null;
+      }
+      setHoveredTask(null);
+    };
+
+    // Extra safety: close when the pointer leaves the document/window or when the user scrolls
+    // without moving the pointer (pointermove won't fire in that case).
+    const onScroll = () => closeNow();
+    const onWindowBlur = () => closeNow();
+    const onDocLeave = (e: MouseEvent) => {
+      // When leaving the document, relatedTarget is often null.
+      if ((e.relatedTarget as any) == null) closeNow();
+    };
+
     window.addEventListener("pointermove", onPointerMove, { capture: true });
-    return () => window.removeEventListener("pointermove", onPointerMove, { capture: true } as any);
+    window.addEventListener("scroll", onScroll, { capture: true, passive: true } as any);
+    window.addEventListener("blur", onWindowBlur);
+    document.addEventListener("mouseleave", onDocLeave, { capture: true });
+    return () => {
+      window.removeEventListener("pointermove", onPointerMove, { capture: true } as any);
+      window.removeEventListener("scroll", onScroll, { capture: true } as any);
+      window.removeEventListener("blur", onWindowBlur);
+      document.removeEventListener("mouseleave", onDocLeave, { capture: true } as any);
+    };
   }, [hoveredTaskId]);
 
   useLayoutEffect(() => {
@@ -901,6 +1035,7 @@ export function TaskBoard({ selectedProjectId, timeScope, onTimeScopeChange }: T
     tasksFetchInFlight.current = true;
     setLoading(true);
     const controller = new AbortController();
+    const started = performance.now();
     try {
       const base = new URL("/api/tasks", window.location.origin);
       if (selectedProjectId) {
@@ -912,9 +1047,27 @@ export function TaskBoard({ selectedProjectId, timeScope, onTimeScopeChange }: T
       base.searchParams.set("since", since.toISOString().slice(0, 10));
 
       const res = await fetch(base.toString(), { signal: controller.signal });
-      if (!res.ok) return;
+      const elapsed = performance.now() - started;
+      if (!res.ok) {
+        toast({
+          kind: "error",
+          title: "Task list load failed",
+          message: `Request failed (${res.status})`,
+          durationMs: elapsed
+        });
+        return;
+      }
       const data: Task[] = await res.json();
-      setTasks(data);
+      setTasks(normalizeProjectAssociation(data));
+      // Avoid noise: only toast when it took long enough to be noticeable.
+      if (elapsed >= 900) {
+        toast({
+          kind: "info",
+          title: "Task list loaded",
+          message: `${data.length} task(s).`,
+          durationMs: elapsed
+        });
+      }
     } catch {
       // ignore
     } finally {
@@ -953,11 +1106,29 @@ export function TaskBoard({ selectedProjectId, timeScope, onTimeScopeChange }: T
     if (projectsFetchInFlight.current) return;
     projectsFetchInFlight.current = true;
     const controller = new AbortController();
+    const started = performance.now();
     try {
       const res = await fetch("/api/projects", { signal: controller.signal });
-      if (!res.ok) return;
+      const elapsed = performance.now() - started;
+      if (!res.ok) {
+        toast({
+          kind: "error",
+          title: "Projects load failed",
+          message: `Request failed (${res.status})`,
+          durationMs: elapsed
+        });
+        return;
+      }
       const data: { id: string; name: string }[] = await res.json();
       setProjects(data);
+      if (elapsed >= 900) {
+        toast({
+          kind: "info",
+          title: "Projects loaded",
+          message: `${data.length} project(s).`,
+          durationMs: elapsed
+        });
+      }
     } catch {
       // ignore
     } finally {
@@ -1026,11 +1197,18 @@ export function TaskBoard({ selectedProjectId, timeScope, onTimeScopeChange }: T
   };
 
   const exportAllData = async (format: "json" | "csv") => {
-    const [tasksRes, projectsRes] = await Promise.all([
-      fetch("/api/tasks"),
-      fetch("/api/projects")
-    ]);
-    if (!tasksRes.ok || !projectsRes.ok) return;
+    const started = performance.now();
+    const [tasksRes, projectsRes] = await Promise.all([fetch("/api/tasks"), fetch("/api/projects")]);
+    const elapsedFetch = performance.now() - started;
+    if (!tasksRes.ok || !projectsRes.ok) {
+      toast({
+        kind: "error",
+        title: "Export failed",
+        message: `Request failed (${!tasksRes.ok ? tasksRes.status : projectsRes.status})`,
+        durationMs: elapsedFetch
+      });
+      return;
+    }
     const allTasks: Task[] = await tasksRes.json();
     const allProjects: { id: string; name: string }[] = await projectsRes.json();
 
@@ -1058,6 +1236,12 @@ export function TaskBoard({ selectedProjectId, timeScope, onTimeScopeChange }: T
         `pst-export-${stamp}.json`,
         new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" })
       );
+      toast({
+        kind: "success",
+        title: "Exported",
+        message: `Exported JSON (${allTasks.length} tasks, ${allProjects.length} projects).`,
+        durationMs: performance.now() - started
+      });
       return;
     }
 
@@ -1136,6 +1320,12 @@ export function TaskBoard({ selectedProjectId, timeScope, onTimeScopeChange }: T
       `pst-export-${stamp}.csv`,
       new Blob([rows.join("\n")], { type: "text/csv;charset=utf-8" })
     );
+    toast({
+      kind: "success",
+      title: "Exported",
+      message: `Exported CSV (${allTasks.length} tasks, ${allProjects.length} projects).`,
+      durationMs: performance.now() - started
+    });
   };
 
   const todayIso = new Date().toISOString().slice(0, 10);
@@ -1381,7 +1571,14 @@ export function TaskBoard({ selectedProjectId, timeScope, onTimeScopeChange }: T
     .filter((t) => {
       if (completionFilter === "active" && t.completed) return false;
       if (completionFilter === "completed" && !t.completed) return false;
-      if (selectedProjectId && t.projectId !== selectedProjectId) return false;
+      // Project association filter has priority over a specific selected project.
+      // "No project" should still work even if the user previously selected a project.
+      if (projectAssocFilter === "none") {
+        if (hasProject(t)) return false;
+      } else {
+        if (selectedProjectId && t.projectId !== selectedProjectId) return false;
+        if (projectAssocFilter === "with" && !hasProject(t)) return false;
+      }
 
       if (!t.dueDate || timeScope === "all") {
         return matchesTaskSearch(t);
@@ -1441,7 +1638,12 @@ export function TaskBoard({ selectedProjectId, timeScope, onTimeScopeChange }: T
     const withinScope = (t: Task): boolean => {
       if (completionFilter === "active" && t.completed) return false;
       if (completionFilter === "completed" && !t.completed) return false;
-      if (selectedProjectId && t.projectId !== selectedProjectId) return false;
+      if (projectAssocFilter === "none") {
+        if (hasProject(t)) return false;
+      } else {
+        if (selectedProjectId && t.projectId !== selectedProjectId) return false;
+        if (projectAssocFilter === "with" && !hasProject(t)) return false;
+      }
 
       if (!t.dueDate || timeScope === "all") return true;
       if (timeScope === "yesterday") return t.dueDate === yesterdayIso;
@@ -1537,6 +1739,7 @@ export function TaskBoard({ selectedProjectId, timeScope, onTimeScopeChange }: T
     if (existingReal) return existingReal;
 
     const promise = (async () => {
+      const started = performance.now();
       const res = await fetch("/api/tasks", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -1564,6 +1767,12 @@ export function TaskBoard({ selectedProjectId, timeScope, onTimeScopeChange }: T
       setTasks((prev) => {
         if (prev.some((t) => t.id === created.id)) return prev;
         return [...prev, created];
+      });
+      toast({
+        kind: "success",
+        title: "Task created",
+        message: `Created: ${created.title}`,
+        durationMs: performance.now() - started
       });
       return created;
     })();
@@ -1614,6 +1823,7 @@ export function TaskBoard({ selectedProjectId, timeScope, onTimeScopeChange }: T
 
   const deleteTask = (task: Task) => {
     const run = async () => {
+      const started = performance.now();
       let target = task;
       if (task.virtual) {
         const created = await materializeVirtualTask(task);
@@ -1637,12 +1847,24 @@ export function TaskBoard({ selectedProjectId, timeScope, onTimeScopeChange }: T
         );
 
         setTasks((prev) => prev.filter((t) => !seriesKey(t)));
+        toast({
+          kind: "success",
+          title: "Tasks deleted",
+          message: `Deleted repeating series: ${target.title}`,
+          durationMs: performance.now() - started
+        });
       } else {
         const res = await fetch(`/api/tasks/${target.id}`, {
           method: "DELETE"
         });
         if (!res.ok && res.status !== 204) return;
         setTasks((prev) => prev.filter((t) => t.id !== target.id));
+        toast({
+          kind: "success",
+          title: "Task deleted",
+          message: `Deleted: ${target.title}`,
+          durationMs: performance.now() - started
+        });
       }
       notifyTasksChanged();
     };
@@ -1661,8 +1883,11 @@ export function TaskBoard({ selectedProjectId, timeScope, onTimeScopeChange }: T
     });
   };
 
+  const clearSelection = () => setSelectedTaskIds(new Set());
+
   const deleteSelected = () => {
     const run = async () => {
+      const started = performance.now();
       const ids = Array.from(selectedTaskIds);
       if (!ids.length) return;
       const ok = window.confirm(
@@ -1674,6 +1899,12 @@ export function TaskBoard({ selectedProjectId, timeScope, onTimeScopeChange }: T
       );
       await Promise.all(tasksToDelete.map((t) => deleteTask(t)));
       setSelectedTaskIds(new Set());
+      toast({
+        kind: "success",
+        title: "Selected tasks deleted",
+        message: `Deleted ${tasksToDelete.length} task(s).`,
+        durationMs: performance.now() - started
+      });
     };
     void run();
   };
@@ -1686,6 +1917,7 @@ export function TaskBoard({ selectedProjectId, timeScope, onTimeScopeChange }: T
   const confirmMove = () => {
     if (!moveDialogTasks) return;
     const run = async () => {
+      const started = performance.now();
       let targetProjectId: string | null = null;
       if (moveDialogProjectId === "same") {
         targetProjectId = moveDialogTasks[0]?.projectId ?? null;
@@ -1745,6 +1977,12 @@ export function TaskBoard({ selectedProjectId, timeScope, onTimeScopeChange }: T
       setSelectedTaskIds(new Set());
       setMoveDialogTasks(null);
       notifyTasksChanged();
+      toast({
+        kind: "success",
+        title: "Tasks moved",
+        message: `Moved ${uniqueSeriesMembers.length} task(s).`,
+        durationMs: performance.now() - started
+      });
     };
     void run();
   };
@@ -1786,58 +2024,7 @@ export function TaskBoard({ selectedProjectId, timeScope, onTimeScopeChange }: T
     const baseForGrouping =
       completionFilter === "completed"
         ? filteredTasks
-        : tasksWithRepeats.filter((t) => {
-            if (!t.completed) return false;
-            if (selectedProjectId && t.projectId !== selectedProjectId) return false;
-            if (!matchesTaskSearch(t)) return false;
-            if (!t.dueDate || timeScope === "all") return true;
-            if (timeScope === "yesterday") {
-              return t.dueDate === yesterdayIso;
-            }
-            if (timeScope === "today") {
-              return t.dueDate === todayIso;
-            }
-            if (timeScope === "tomorrow") {
-              return t.dueDate === tomorrowIso;
-            }
-            if (timeScope === "last_week") {
-              return t.dueDate >= lastWeekStartIso && t.dueDate <= lastWeekEndIso;
-            }
-            if (timeScope === "week") {
-              return t.dueDate >= startOfWeekMondayIso && t.dueDate <= endOfWeekSundayIso;
-            }
-            if (timeScope === "next_week") {
-              return t.dueDate >= nextWeekStartIso && t.dueDate <= nextWeekEndIso;
-            }
-            if (timeScope === "sprint") {
-              return t.dueDate >= startOfWeekMondayIso && t.dueDate <= endOfSprintIso;
-            }
-            if (timeScope === "last_month") {
-              return t.dueDate >= lastMonthStartIso && t.dueDate <= lastMonthEndIso;
-            }
-            if (timeScope === "month") {
-              return t.dueDate >= thisMonthStartIso && t.dueDate <= thisMonthEndIso;
-            }
-            if (timeScope === "next_month") {
-              return t.dueDate >= nextMonthStartIso && t.dueDate <= nextMonthEndIso;
-            }
-            if (timeScope === "last_quarter") {
-              return t.dueDate >= lastQuarterStartIso && t.dueDate <= lastQuarterEndIso;
-            }
-            if (timeScope === "quarter") {
-              return t.dueDate >= thisQuarterStartIso && t.dueDate <= thisQuarterEndIso;
-            }
-            if (timeScope === "next_quarter") {
-              return t.dueDate >= nextQuarterStartIso && t.dueDate <= nextQuarterEndIso;
-            }
-            if (timeScope === "custom") {
-              return (
-                t.dueDate >= customRangeStartNormalizedIso &&
-                t.dueDate <= customRangeEndNormalizedIso
-              );
-            }
-            return true;
-          });
+        : filteredTasks.filter((t) => t.completed);
 
     for (const task of baseForGrouping) {
       // Only repeating series should be grouped by their Parent ID.
@@ -1874,6 +2061,8 @@ export function TaskBoard({ selectedProjectId, timeScope, onTimeScopeChange }: T
     <article
       key={task.id}
       className={`task-card ${task.completed ? "task-card-completed" : ""}`}
+      data-task-id={task.id}
+      title="Open task details (virtual occurrences will be materialized on interaction)."
       onMouseEnter={(ev) => {
         if (isTaskCardInteractiveHoverTarget(ev)) return;
         showTaskHoverCard({ task, clientX: ev.clientX, clientY: ev.clientY });
@@ -1927,11 +2116,13 @@ export function TaskBoard({ selectedProjectId, timeScope, onTimeScopeChange }: T
             e.stopPropagation();
             toggleSelect(task.id);
           }}
+          title="Select this task for bulk actions."
         >
           <input
             type="checkbox"
             checked={selectedTaskIds.has(task.id)}
             onChange={() => toggleSelect(task.id)}
+            title="Select this task for bulk actions."
           />
           <span />
         </label>
@@ -2001,6 +2192,7 @@ export function TaskBoard({ selectedProjectId, timeScope, onTimeScopeChange }: T
                 e.stopPropagation();
                 toggleComplete(task);
               }}
+              title={task.completed ? "Mark this task active again." : "Mark this task completed."}
             >
               {task.completed ? "Mark active" : "Complete"}
             </button>
@@ -2011,6 +2203,7 @@ export function TaskBoard({ selectedProjectId, timeScope, onTimeScopeChange }: T
                 e.stopPropagation();
                 moveTasks([task]);
               }}
+              title="Move this task to a different project."
             >
               Move
             </button>
@@ -2021,6 +2214,7 @@ export function TaskBoard({ selectedProjectId, timeScope, onTimeScopeChange }: T
                 e.stopPropagation();
                 deleteTask(task);
               }}
+              title="Delete this task."
             >
               Delete
             </button>
@@ -2069,7 +2263,12 @@ export function TaskBoard({ selectedProjectId, timeScope, onTimeScopeChange }: T
   const tasksForCalendar = tasksWithRepeats.filter((t) => {
     if (completionFilter === "completed") return t.completed;
     if (completionFilter === "active") return !t.completed;
-    if (selectedProjectId && t.projectId !== selectedProjectId) return false;
+    if (projectAssocFilter === "none") {
+      if (hasProject(t)) return false;
+    } else {
+      if (selectedProjectId && t.projectId !== selectedProjectId) return false;
+      if (projectAssocFilter === "with" && !hasProject(t)) return false;
+    }
     return matchesTaskSearch(t);
   });
 
@@ -2731,6 +2930,7 @@ export function TaskBoard({ selectedProjectId, timeScope, onTimeScopeChange }: T
                 <button
                   key={`${e.task.id}::${e.dateIso}::allday`}
                   className={`day-agenda-chip priority-${e.task.priority}`}
+                  data-task-id={e.task.id}
                   onClick={() => openTask(e.task)}
                   onMouseEnter={(ev) =>
                     showTaskHoverCard({
@@ -2866,6 +3066,7 @@ export function TaskBoard({ selectedProjectId, timeScope, onTimeScopeChange }: T
                 <button
                   key={`${e.task.id}::${e.dateIso}::${startM}-${endM}`}
                   className={`day-agenda-event priority-${e.task.priority}`}
+                  data-task-id={e.task.id}
                   style={{
                     top: `${top}px`,
                     height: `${height}px`,
@@ -3447,6 +3648,7 @@ export function TaskBoard({ selectedProjectId, timeScope, onTimeScopeChange }: T
                   d.setMonth(d.getMonth() - 1);
                   setCalendarMonthAnchor(d);
                 }}
+                title="Go to previous month."
               >
                 ←
               </button>
@@ -3462,6 +3664,7 @@ export function TaskBoard({ selectedProjectId, timeScope, onTimeScopeChange }: T
                   d.setMonth(d.getMonth() + 1);
                   setCalendarMonthAnchor(d);
                 }}
+                title="Go to next month."
               >
                 →
               </button>
@@ -3479,6 +3682,7 @@ export function TaskBoard({ selectedProjectId, timeScope, onTimeScopeChange }: T
               setSelectedCalendarDayIso(toISODateLocal(day));
               setDayAgendaOpen(true);
             }}
+            title="Jump to the current month and open today's agenda."
           >
             Today
           </button>
@@ -3486,6 +3690,7 @@ export function TaskBoard({ selectedProjectId, timeScope, onTimeScopeChange }: T
             <button
               className="ghost-button"
               onClick={() => setDayAgendaOpen((v) => !v)}
+              title={dayAgendaOpen ? "Hide the day agenda timeline." : "Open the day agenda timeline."}
             >
               {dayAgendaOpen ? "Hide agenda" : "Open agenda"}
             </button>
@@ -3637,6 +3842,7 @@ export function TaskBoard({ selectedProjectId, timeScope, onTimeScopeChange }: T
                             className={`calendar-item priority-${e.task.priority} ${
                               e.task.completed ? "calendar-item-completed" : "calendar-item-active"
                             }`}
+                            data-task-id={e.task.id}
                             onClick={(ev) => {
                               ev.stopPropagation();
                               openTask(e.task);
@@ -3961,6 +4167,7 @@ export function TaskBoard({ selectedProjectId, timeScope, onTimeScopeChange }: T
                   onClick={() => {
                     onTimeScopeChange("custom");
                   }}
+                  title="Pick a custom start and end date range."
                 >
                   Custom range
                 </button>
@@ -3973,6 +4180,7 @@ export function TaskBoard({ selectedProjectId, timeScope, onTimeScopeChange }: T
                           type="date"
                           value={customRangeDraftStartIso}
                           onChange={(e) => setCustomRangeDraftStartIso(e.target.value)}
+                          title="Custom range start date."
                         />
                       </label>
                       <label style={{ display: "grid", gap: "0.2rem" }}>
@@ -3981,6 +4189,7 @@ export function TaskBoard({ selectedProjectId, timeScope, onTimeScopeChange }: T
                           type="date"
                           value={customRangeDraftEndIso}
                           onChange={(e) => setCustomRangeDraftEndIso(e.target.value)}
+                          title="Custom range end date."
                         />
                       </label>
                       <button
@@ -3996,6 +4205,7 @@ export function TaskBoard({ selectedProjectId, timeScope, onTimeScopeChange }: T
                           onTimeScopeChange("custom");
                           setOpenCluster(null);
                         }}
+                        title="Apply the selected custom range."
                       >
                         Apply custom range
                       </button>
@@ -4030,6 +4240,7 @@ export function TaskBoard({ selectedProjectId, timeScope, onTimeScopeChange }: T
                 aria-expanded={openCluster === "view"}
                 aria-label="View"
                 onClick={() => toggleExclusiveCluster("view")}
+                title="Choose between list view and calendar view."
               >
                 View: {viewMode === "list" ? "List" : "Calendar"}
               </button>
@@ -4042,6 +4253,7 @@ export function TaskBoard({ selectedProjectId, timeScope, onTimeScopeChange }: T
                     setViewMode("list");
                     setOpenCluster(null);
                   }}
+                  title="Show tasks as a list."
                 >
                   List
                 </button>
@@ -4056,6 +4268,7 @@ export function TaskBoard({ selectedProjectId, timeScope, onTimeScopeChange }: T
                     setCompletionFilter("all");
                     setOpenCluster(null);
                   }}
+                  title="Show tasks on a month calendar with a day agenda timeline."
                 >
                   Calendar
                 </button>
@@ -4076,6 +4289,7 @@ export function TaskBoard({ selectedProjectId, timeScope, onTimeScopeChange }: T
                 aria-expanded={openCluster === "status"}
                 aria-label="Status"
                 onClick={() => toggleExclusiveCluster("status")}
+                title="Filter tasks by status: Active, Completed, or All."
               >
                 Status:{" "}
                 {completionFilter === "all"
@@ -4093,6 +4307,7 @@ export function TaskBoard({ selectedProjectId, timeScope, onTimeScopeChange }: T
                     setCompletionFilter("all");
                     setOpenCluster(null);
                   }}
+                  title="Show active and completed tasks."
                 >
                   All
                 </button>
@@ -4104,6 +4319,7 @@ export function TaskBoard({ selectedProjectId, timeScope, onTimeScopeChange }: T
                     setCompletionFilter("active");
                     setOpenCluster(null);
                   }}
+                  title="Show only active (not completed) tasks."
                 >
                   Active
                 </button>
@@ -4115,18 +4331,107 @@ export function TaskBoard({ selectedProjectId, timeScope, onTimeScopeChange }: T
                     setCompletionFilter("completed");
                     setOpenCluster(null);
                   }}
+                  title="Show only completed tasks."
                 >
                   Completed
                 </button>
               </div>
             </div>
 
+            <div
+              className={`task-cluster ${openCluster === "project-assoc" ? "is-open" : ""}`}
+              data-cluster="project-assoc"
+              onMouseEnter={() => {
+                if (openCluster !== "project-assoc") openExclusiveCluster("project-assoc");
+              }}
+            >
+              <button
+                className="task-cluster-trigger"
+                type="button"
+                aria-haspopup="menu"
+                aria-expanded={openCluster === "project-assoc"}
+                aria-label="Project association"
+                onClick={() => toggleExclusiveCluster("project-assoc")}
+                title="Filter tasks by project association."
+              >
+                Project:{" "}
+                {projectAssocFilter === "all"
+                  ? "All"
+                  : projectAssocFilter === "with"
+                    ? "With"
+                    : "None"}
+              </button>
+              <div className="task-cluster-menu" role="menu" aria-label="Project association options">
+                <button
+                  className={`task-cluster-item ${projectAssocFilter === "all" ? "is-active" : ""}`}
+                  role="menuitemradio"
+                  aria-checked={projectAssocFilter === "all"}
+                  onClick={() => {
+                    setProjectAssocFilter("all");
+                    setOpenCluster(null);
+                  }}
+                >
+                  All
+                </button>
+                <button
+                  className={`task-cluster-item ${projectAssocFilter === "with" ? "is-active" : ""}`}
+                  role="menuitemradio"
+                  aria-checked={projectAssocFilter === "with"}
+                  onClick={() => {
+                    setProjectAssocFilter("with");
+                    setOpenCluster(null);
+                  }}
+                  title="Show only tasks that belong to a project."
+                >
+                  With project
+                </button>
+                <button
+                  className={`task-cluster-item ${projectAssocFilter === "none" ? "is-active" : ""}`}
+                  role="menuitemradio"
+                  aria-checked={projectAssocFilter === "none"}
+                  onClick={() => {
+                    setProjectAssocFilter("none");
+                    setOpenCluster(null);
+                  }}
+                  title="Show only tasks that have no project."
+                >
+                  No project
+                </button>
+              </div>
+            </div>
+
             {selectedTaskIds.size > 0 && (
               <div className="task-toolbar-cluster" role="group" aria-label="Bulk actions">
-                <button className="ghost-button small" onClick={moveSelected}>
+                <button
+                  className="ghost-button small"
+                  onClick={clearSelection}
+                  title="Unselect all selected tasks."
+                >
+                  Unselect all
+                </button>
+                <button
+                  className="ghost-button small"
+                  onClick={() => {
+                    const tasksToEdit = tasksWithRepeats.filter((t) => selectedTaskIds.has(t.id));
+                    if (!tasksToEdit.length) return;
+                    openMultiEditor(tasksToEdit);
+                  }}
+                  title="Edit all selected tasks (latest due date first)."
+                >
+                  Edit selected
+                </button>
+                <button
+                  className="ghost-button small"
+                  onClick={moveSelected}
+                  title="Move all selected tasks to another project."
+                >
                   Move selected
                 </button>
-                <button className="ghost-button small" onClick={deleteSelected}>
+                <button
+                  className="ghost-button small"
+                  onClick={deleteSelected}
+                  title="Delete all selected tasks."
+                >
                   Delete selected
                 </button>
               </div>
@@ -4145,6 +4450,7 @@ export function TaskBoard({ selectedProjectId, timeScope, onTimeScopeChange }: T
                 completed: false
               } as Task)
             }
+            title="Create a new task."
           >
             Add task
           </button>
@@ -4204,7 +4510,12 @@ export function TaskBoard({ selectedProjectId, timeScope, onTimeScopeChange }: T
                 .filter((t) => isRepeating(t) && getParentId(t) === parentKey)
                 .filter((t) => !t.cancelled)
                 .filter((t) => (showActiveOnly ? !t.completed : t.completed))
-                .filter((t) => (selectedProjectId ? t.projectId === selectedProjectId : true))
+                .filter((t) => {
+                  if (projectAssocFilter === "none") return !hasProject(t);
+                  if (selectedProjectId) return t.projectId === selectedProjectId;
+                  if (projectAssocFilter === "with") return hasProject(t);
+                  return true;
+                })
                 .filter((t) => inTimeScopeForList(t))
                 .filter((t) => matchesTaskSearch(t))
                 .slice()
@@ -4380,7 +4691,7 @@ export function TaskBoard({ selectedProjectId, timeScope, onTimeScopeChange }: T
         task={editingTask}
         onClose={() => setEditingTask(null)}
         onLabelsDraftChange={(nextLabels) => {
-          if (!editingTask || editingTask.id === "new") return;
+          if (!editingTask || Array.isArray(editingTask) || editingTask.id === "new") return;
 
           const updateSeries =
             isRepeating(editingTask) && typeof editingTask.parentId === "string";
@@ -4408,7 +4719,7 @@ export function TaskBoard({ selectedProjectId, timeScope, onTimeScopeChange }: T
           });
         }}
         onLinksDraftChange={(nextLinks) => {
-          if (!editingTask || editingTask.id === "new") return;
+          if (!editingTask || Array.isArray(editingTask) || editingTask.id === "new") return;
 
           const updateSeries =
             isRepeating(editingTask) && typeof editingTask.parentId === "string";
@@ -4437,9 +4748,10 @@ export function TaskBoard({ selectedProjectId, timeScope, onTimeScopeChange }: T
             return { ...prev, task: { ...prev.task, link: nextLinks } };
           });
         }}
-        onSave={(updated) => {
+        onSave={(updatedOrMany) => {
           const save = async () => {
-            if (updated.id === "new") {
+            const createOne = async (updated: Task) => {
+              const started = performance.now();
               const res = await fetch("/api/tasks", {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
@@ -4466,10 +4778,87 @@ export function TaskBoard({ selectedProjectId, timeScope, onTimeScopeChange }: T
                 const created: Task = await res.json();
                 setTasks((prev) => [...prev, created]);
                 notifyTasksChanged();
-              } else {
-                void refreshTasks();
+                toast({
+                  kind: "success",
+                  title: "Task created",
+                  message: `Created: ${created.title}`,
+                  durationMs: performance.now() - started
+                });
+                return true;
               }
+              toast({
+                kind: "error",
+                title: "Create failed",
+                message: `Request failed (${res.status})`,
+                durationMs: performance.now() - started
+              });
+              return false;
+            };
+
+            if (Array.isArray(updatedOrMany)) {
+              const allNew = updatedOrMany.every((t) => t.id === "new");
+              if (allNew) {
+                // Batch create.
+                const started = performance.now();
+                let okCount = 0;
+                for (const t of updatedOrMany) {
+                  if (!t.title.trim()) continue;
+                  const ok = await createOne(t);
+                  if (ok) okCount += 1;
+                }
+                if (okCount === 0) void refreshTasks();
+                toast({
+                  kind: okCount > 0 ? "success" : "error",
+                  title: okCount > 0 ? "Tasks created" : "Create failed",
+                  message: `Created ${okCount} task(s).`,
+                  durationMs: performance.now() - started
+                });
+                setEditingTask(null);
+                return;
+              }
+
+              // Batch edit: update each task.
+              const started = performance.now();
+              let okCount = 0;
+              for (const updated of updatedOrMany) {
+                if (!updated.title.trim()) continue;
+                let target = updated;
+                if (updated.virtual) {
+                  const created = await materializeVirtualTask(updated);
+                  if (!created) continue;
+                  target = { ...updated, ...created, id: created.id, virtual: false };
+                }
+                const { deadlineDate: _deadlineDate, deadlineTime: _deadlineTime, virtual: _virtual, ...rest } =
+                  target;
+                const res = await fetch(`/api/tasks/${target.id}`, {
+                  method: "PUT",
+                  headers: { "Content-Type": "application/json" },
+                  body: JSON.stringify(rest)
+                });
+                if (res.ok) {
+                  const saved: Task = await res.json();
+                  setTasks((prev) => prev.map((t) => (t.id === saved.id ? saved : t)));
+                  notifyTasksChanged();
+                  okCount += 1;
+                }
+              }
+              if (okCount === 0) void refreshTasks();
+              toast({
+                kind: okCount > 0 ? "success" : "error",
+                title: okCount > 0 ? "Tasks updated" : "Update failed",
+                message: `Updated ${okCount} task(s).`,
+                durationMs: performance.now() - started
+              });
+              setEditingTask(null);
+              return;
+            }
+
+            const updated = updatedOrMany;
+            if (updated.id === "new") {
+              const ok = await createOne(updated);
+              if (!ok) void refreshTasks();
             } else {
+              const started = performance.now();
               let target = updated;
               if (updated.virtual) {
                 const created = await materializeVirtualTask(updated);
@@ -4492,8 +4881,20 @@ export function TaskBoard({ selectedProjectId, timeScope, onTimeScopeChange }: T
                   prev.map((t) => (t.id === saved.id ? saved : t))
                 );
                 notifyTasksChanged();
+                toast({
+                  kind: "success",
+                  title: "Task updated",
+                  message: `Updated: ${saved.title}`,
+                  durationMs: performance.now() - started
+                });
               } else {
                 void refreshTasks();
+                toast({
+                  kind: "error",
+                  title: "Update failed",
+                  message: `Request failed (${res.status})`,
+                  durationMs: performance.now() - started
+                });
               }
             }
             setEditingTask(null);
@@ -4524,6 +4925,7 @@ export function TaskBoard({ selectedProjectId, timeScope, onTimeScopeChange }: T
                           : e.target.value
                     )
                   }
+                  title="Choose a destination project for the selected task(s)."
                 >
                   <option value="same">Keep current project</option>
                   <option value="none">(none) – All tasks</option>
@@ -4539,12 +4941,14 @@ export function TaskBoard({ selectedProjectId, timeScope, onTimeScopeChange }: T
               <button
                 className="ghost-button"
                 onClick={() => setMoveDialogTasks(null)}
+                title="Close without moving tasks."
               >
                 Cancel
               </button>
               <button
                 className="primary-button"
                 onClick={confirmMove}
+                title="Confirm moving tasks to the chosen project."
               >
                 Move
               </button>
@@ -4566,6 +4970,7 @@ export function TaskBoard({ selectedProjectId, timeScope, onTimeScopeChange }: T
                   onChange={(e) =>
                     setExportFormat(e.target.value as "json" | "csv")
                   }
+                  title="Choose export format."
                 >
                   <option value="json">JSON (recommended)</option>
                   <option value="csv">CSV</option>
@@ -4576,7 +4981,11 @@ export function TaskBoard({ selectedProjectId, timeScope, onTimeScopeChange }: T
               </p>
             </div>
             <footer className="drawer-footer">
-              <button className="ghost-button" onClick={() => setExportDialogOpen(false)}>
+              <button
+                className="ghost-button"
+                onClick={() => setExportDialogOpen(false)}
+                title="Close without exporting."
+              >
                 Cancel
               </button>
               <button
@@ -4588,6 +4997,7 @@ export function TaskBoard({ selectedProjectId, timeScope, onTimeScopeChange }: T
                   };
                   void run();
                 }}
+                title="Download an export file containing all projects and tasks."
               >
                 Download
               </button>

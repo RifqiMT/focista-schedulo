@@ -134,7 +134,11 @@ export function ProjectSidebar({
     <aside className="sidebar">
       <div className="sidebar-header">
         <h2>Projects</h2>
-        <button className="ghost-button small" onClick={startNew}>
+        <button
+          className="ghost-button small"
+          onClick={startNew}
+          title="Create a new project (group tasks by context)."
+        >
           New
         </button>
       </div>
@@ -144,6 +148,7 @@ export function ProjectSidebar({
             selectedProjectId === null ? "sidebar-item-active" : ""
           }`}
           onClick={() => onSelectProject(null)}
+          title="Show tasks from all projects."
         >
           <span>All tasks</span>
         </button>
@@ -154,6 +159,7 @@ export function ProjectSidebar({
                 selectedProjectId === project.id ? "sidebar-item-active" : ""
               }`}
               onClick={() => onSelectProject(project.id)}
+              title={`Filter tasks to project: ${project.name}`}
             >
               <span>{project.name}</span>
             </button>
@@ -162,6 +168,7 @@ export function ProjectSidebar({
                 className="icon-button"
                 aria-label="Edit project"
                 onClick={() => startEdit(project)}
+                title="Rename this project."
               >
                 ✎
               </button>
@@ -169,6 +176,7 @@ export function ProjectSidebar({
                 className="icon-button"
                 aria-label="Delete project"
                 onClick={() => deleteProject(project)}
+                title="Delete this project and all tasks in it."
               >
                 ×
               </button>
@@ -184,15 +192,21 @@ export function ProjectSidebar({
             value={draftName}
             onChange={(e) => setDraftName(e.target.value)}
             placeholder="Project name"
+            title="Project name (required)."
           />
           <div className="project-editor-actions">
-            <button className="ghost-button small" onClick={() => setEditing(null)}>
+            <button
+              className="ghost-button small"
+              onClick={() => setEditing(null)}
+              title="Discard changes."
+            >
               Cancel
             </button>
             <button
               className="primary-button small"
               onClick={saveProject}
               disabled={!draftName.trim()}
+              title="Save the project."
             >
               Save
             </button>

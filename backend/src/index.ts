@@ -9,7 +9,8 @@ import path from "path";
 const app = express();
 app.use(cors());
 app.use(compression());
-app.use(express.json());
+// Accept larger JSON bodies for import workflows.
+app.use(express.json({ limit: "10mb" }));
 
 const PORT = process.env.PORT || 4000;
 const DATA_DIR = path.join(__dirname, "..", "data");
@@ -65,6 +66,138 @@ type Project = z.infer<typeof ProjectSchema>;
 
 let tasks: Task[] = [];
 let projects: Project[] = [];
+
+type ImportFormat = "json" | "csv";
+
+function parseCsv(content: string): { headers: string[]; rows: Record<string, string>[] } {
+  const s = content.replace(/\r\n/g, "\n").replace(/\r/g, "\n");
+  const rows: string[][] = [];
+  let row: string[] = [];
+  let cell = "";
+  let i = 0;
+  let inQuotes = false;
+
+  const pushCell = () => {
+    row.push(cell);
+    cell = "";
+  };
+  const pushRow = () => {
+    // Skip empty trailing lines
+    if (row.length === 1 && row[0] === "") {
+      row = [];
+      return;
+    }
+    rows.push(row);
+    row = [];
+  };
+
+  while (i < s.length) {
+    const ch = s[i];
+    if (inQuotes) {
+      if (ch === '"') {
+        const next = s[i + 1];
+        if (next === '"') {
+          cell += '"';
+          i += 2;
+          continue;
+        }
+        inQuotes = false;
+        i += 1;
+        continue;
+      }
+      cell += ch;
+      i += 1;
+      continue;
+    }
+
+    if (ch === '"') {
+      inQuotes = true;
+      i += 1;
+      continue;
+    }
+    if (ch === ",") {
+      pushCell();
+      i += 1;
+      continue;
+    }
+    if (ch === "\n") {
+      pushCell();
+      pushRow();
+      i += 1;
+      continue;
+    }
+    cell += ch;
+    i += 1;
+  }
+  pushCell();
+  pushRow();
+
+  if (rows.length === 0) return { headers: [], rows: [] };
+  const headers = rows[0].map((h) => (h ?? "").trim());
+  const out: Record<string, string>[] = [];
+  for (const r of rows.slice(1)) {
+    const obj: Record<string, string> = {};
+    headers.forEach((h, idx) => {
+      obj[h] = (r[idx] ?? "").trim();
+    });
+    out.push(obj);
+  }
+  return { headers, rows: out };
+}
+
+function parseBool(v: string | undefined): boolean | undefined {
+  if (v == null) return undefined;
+  const s = v.trim().toLowerCase();
+  if (s === "") return undefined;
+  if (s === "true" || s === "1" || s === "yes") return true;
+  if (s === "false" || s === "0" || s === "no") return false;
+  return undefined;
+}
+
+function parseIntOpt(v: string | undefined): number | undefined {
+  if (v == null) return undefined;
+  const s = v.trim();
+  if (s === "") return undefined;
+  const n = Number(s);
+  if (!Number.isFinite(n)) return undefined;
+  return Math.trunc(n);
+}
+
+function parsePipeArray(v: string | undefined): string[] {
+  const s = (v ?? "").trim();
+  if (!s) return [];
+  return s.split("|").map((x) => x.trim()).filter(Boolean);
+}
+
+function mergeProjects(existing: Project[], incoming: Project[]): Project[] {
+  const byId = new Map<string, Project>();
+  for (const p of existing) byId.set(p.id, p);
+  for (const p of incoming) {
+    const prev = byId.get(p.id);
+    if (!prev) byId.set(p.id, p);
+    else byId.set(p.id, { ...prev, ...p });
+  }
+  return Array.from(byId.values());
+}
+
+function mergeTasks(existing: Task[], incoming: Task[]): Task[] {
+  const byId = new Map<string, Task>();
+  for (const t of existing) byId.set(t.id, t);
+  for (const t of incoming) {
+    const prev = byId.get(t.id);
+    if (!prev) byId.set(t.id, t);
+    else {
+      // Prefer incoming values but preserve cancellation/completion intent if either is true.
+      byId.set(t.id, {
+        ...prev,
+        ...t,
+        completed: prev.completed || t.completed,
+        cancelled: (prev.cancelled ?? false) || (t.cancelled ?? false)
+      });
+    }
+  }
+  return Array.from(byId.values());
+}
 
 // Lightweight in-memory caching for expensive aggregate endpoints.
 type CachedValue<T> = {
@@ -304,6 +437,18 @@ function syncDurationMinutesForParent(parentId: string, durationMinutes: number)
   tasks = tasks.map((t) =>
     t.parentId === parentId ? { ...t, durationMinutes } : t
   );
+}
+
+function hasProjectId(projectId: string | null | undefined): projectId is string {
+  return typeof projectId === "string" && projectId.trim() !== "";
+}
+
+function syncProjectIdForParent(parentId: string) {
+  // Enforce invariant: all tasks sharing a parentId share the same projectId.
+  // Pick the first non-empty projectId in that parent group; otherwise null.
+  const canonical =
+    tasks.find((t) => t.parentId === parentId && hasProjectId(t.projectId))?.projectId ?? null;
+  tasks = tasks.map((t) => (t.parentId === parentId ? { ...t, projectId: canonical } : t));
 }
 
 function isRepeatingTask(t: Task): boolean {
@@ -731,6 +876,19 @@ async function loadData() {
     await persistTasks();
   }
 
+  // Ensure all children/occurrences share the same projectId as their parent group.
+  const parentIds = new Set(tasks.map((t) => t.parentId).filter((v): v is string => !!v));
+  if (parentIds.size > 0) {
+    let projMutated = false;
+    for (const pid of parentIds) {
+      const before = tasks.find((t) => t.parentId === pid)?.projectId ?? null;
+      syncProjectIdForParent(pid);
+      const after = tasks.find((t) => t.parentId === pid)?.projectId ?? null;
+      if (before !== after) projMutated = true;
+    }
+    if (projMutated) await persistTasks();
+  }
+
   // Standardize Parent IDs for ALL tasks (one-time + repeating):
   // - enforce format YYYYMMDD-N
   // - ensure each repeating series shares the same parentId
@@ -1011,6 +1169,10 @@ app.post("/api/tasks", async (req, res) => {
   await persistTasks();
   // Ensure parentId prefix always matches the earliest dueDate in the series.
   await rebuildParentAndChildIdsDeterministic();
+  if (task.parentId) {
+    syncProjectIdForParent(task.parentId);
+    await persistTasks();
+  }
   const saved = tasks.find((t) => t.id === task.id) ?? task;
   res.status(201).json(saved);
 });
@@ -1109,6 +1271,10 @@ app.put("/api/tasks/:id", async (req, res) => {
   await persistTasks();
   // Ensure parentId/childId determinism even when dueDate changes series prefix.
   await rebuildParentAndChildIdsDeterministic();
+  if (tasks[index].parentId) {
+    syncProjectIdForParent(tasks[index].parentId!);
+    await persistTasks();
+  }
   const updated = tasks.find((t) => t.id === id) ?? tasks[index];
   res.json(updated);
 });
@@ -1370,18 +1536,44 @@ app.get("/api/stats", (_req, res) => {
     const levelValue = level;
     const levelProgressValue = level + pointsIntoLevel / 50;
 
-    const streakBase = [1, 3, 5, 7, 30, 60, 90, 180, 365, 730, 1095, 1460, 1825, 3650];
+    // Day streak milestones:
+    // - early habit formation: 1/3/5/7 days
+    // - monthly cadence: every ~30 days
+    // - annual recognition: every 365 days (1y, 2y, 3y, ...)
+    const streakBase = (() => {
+      const base: number[] = [1, 3, 5, 7, 30, 60, 90, 180, 365];
+      // Annual streaks (1y..50y)
+      for (let y = 1; y <= 50; y += 1) base.push(365 * y);
+      return base;
+    })();
     const countBase = [1, 5, 10, 25, 100, 150, 250, 500, 750, 1000];
     const levelBase = [1, 2, 3, 4, 5, 10];
 
     const streak = buildMilestones({
       base: streakBase,
       current: streakDays,
-      extendFrom: 1825,
-      extendStep: 365,
+      // Continue adding monthly targets beyond 1 year.
+      extendFrom: 365,
+      extendStep: 30,
       minCount: 150,
       maxCount: 150
     });
+    const streakMilestonesFiltered = (() => {
+      // Avoid redundant "almost annual" streak badges (e.g. 725 next to 730).
+      // Keep annual milestones (365*n) and drop non-annual milestones that fall too close.
+      const annualSet = new Set<number>();
+      for (let y = 1; y <= 200; y += 1) annualSet.add(365 * y);
+      const NEAR_DAYS = 20;
+      const isAnnual = (n: number) => annualSet.has(n);
+      const nearestAnnualDelta = (n: number) => {
+        const y = Math.max(1, Math.round(n / 365));
+        const candidates = [365 * (y - 1), 365 * y, 365 * (y + 1)].filter((v) => v > 0);
+        let best = Number.POSITIVE_INFINITY;
+        for (const a of candidates) best = Math.min(best, Math.abs(a - n));
+        return best;
+      };
+      return (streak.milestones ?? []).filter((m) => isAnnual(m) || nearestAnnualDelta(m) > NEAR_DAYS);
+    })();
     const tasksCompleted = buildMilestones({
       base: countBase,
       current: completedCount,
@@ -1434,7 +1626,7 @@ app.get("/api/stats", (_req, res) => {
         progressToNext: streak.progressToNext,
         achievedCount: streak.achievedCount,
         recentUnlocked: compact(streak.achieved),
-        milestones: streak.milestones,
+        milestones: streakMilestonesFiltered,
         achieved: streak.achieved
       },
       tasksCompleted: {
@@ -1545,12 +1737,26 @@ app.get("/api/productivity-insights", (_req, res) => {
   };
 
   const completionsByDay = new Map<string, { completed: number; points: number }>();
+  const completionsByDayProject = new Map<
+    string,
+    Map<string, { completed: number; points: number }>
+  >();
   for (const row of completedTasksWithDate) {
     const prev = completionsByDay.get(row.completionDateIso) ?? { completed: 0, points: 0 };
     completionsByDay.set(row.completionDateIso, {
       completed: prev.completed + 1,
       points: prev.points + scoreFor(row.task)
     });
+
+    // Per-project breakdown (only tasks associated with a project).
+    if (row.task.projectId) {
+      const perDay =
+        completionsByDayProject.get(row.completionDateIso) ?? new Map<string, { completed: number; points: number }>();
+      const pid = row.task.projectId;
+      const prevP = perDay.get(pid) ?? { completed: 0, points: 0 };
+      perDay.set(pid, { completed: prevP.completed + 1, points: prevP.points + scoreFor(row.task) });
+      completionsByDayProject.set(row.completionDateIso, perDay);
+    }
   }
 
   const allDates = Array.from(completionsByDay.keys()).sort();
@@ -1561,7 +1767,13 @@ app.get("/api/productivity-insights", (_req, res) => {
 
   // Precompute milestone thresholds so we can approximate "badges earned" over time
   // using the same progression model as the main stats endpoint.
-  const streakBase = [1, 3, 5, 7, 30, 60, 90, 180, 365, 730, 1095, 1460, 1825, 3650];
+  // Mirror the /api/stats streak milestone ladder so badge simulation stays consistent:
+  // monthly (~30 days) plus explicit annual targets (365*n).
+  const streakBase = (() => {
+    const base: number[] = [1, 3, 5, 7, 30, 60, 90, 180, 365];
+    for (let y = 1; y <= 50; y += 1) base.push(365 * y);
+    return base;
+  })();
   const countBase = [1, 5, 10, 25, 100, 150, 250, 500, 750, 1000];
   const levelBase = [1, 2, 3, 4, 5, 10];
 
@@ -1599,14 +1811,28 @@ app.get("/api/productivity-insights", (_req, res) => {
   );
   const lifetimeLevel = 1 + Math.floor(lifetimeTotalPoints / 50);
 
-  const streakMilestones = buildMilestones({
+  const streakMilestonesRaw = buildMilestones({
     base: streakBase,
     current: allDates.length,
-    extendFrom: 1825,
-    extendStep: 365,
+    extendFrom: 365,
+    extendStep: 30,
     minCount: 150,
     maxCount: 150
   });
+  const streakMilestones = (() => {
+    const annualSet = new Set<number>();
+    for (let y = 1; y <= 200; y += 1) annualSet.add(365 * y);
+    const NEAR_DAYS = 20;
+    const isAnnual = (n: number) => annualSet.has(n);
+    const nearestAnnualDelta = (n: number) => {
+      const y = Math.max(1, Math.round(n / 365));
+      const candidates = [365 * (y - 1), 365 * y, 365 * (y + 1)].filter((v) => v > 0);
+      let best = Number.POSITIVE_INFINITY;
+      for (const a of candidates) best = Math.min(best, Math.abs(a - n));
+      return best;
+    };
+    return streakMilestonesRaw.filter((m) => isAnnual(m) || nearestAnnualDelta(m) > NEAR_DAYS);
+  })();
   const tasksMilestones = buildMilestones({
     base: countBase,
     current: lifetimeCompletedCount,
@@ -1647,6 +1873,23 @@ app.get("/api/productivity-insights", (_req, res) => {
     badgesEarnedCumulative: number;
   }[] = [];
 
+  const projectsById = new Map<string, string>();
+  for (const p of projects) projectsById.set(p.id, p.name);
+  const projectIdsSeen = new Set<string>();
+  for (const dayMap of completionsByDayProject.values()) {
+    for (const pid of dayMap.keys()) projectIdsSeen.add(pid);
+  }
+  const projectBreakdown = {
+    projects: Array.from(projectIdsSeen)
+      .sort((a, b) => (projectsById.get(a) ?? a).localeCompare(projectsById.get(b) ?? b))
+      .map((id) => ({ id, name: projectsById.get(id) ?? "Unknown project" })),
+    rows: [] as {
+      date: string;
+      tasksCompletedByProject: Record<string, number>;
+      xpGainedByProject: Record<string, number>;
+    }[]
+  };
+
   let cursor = new Date(firstDate.getTime());
   let cumulativeTasks = 0;
   let cumulativeXp = 0;
@@ -1655,6 +1898,7 @@ app.get("/api/productivity-insights", (_req, res) => {
   while (cursor.getTime() <= lastDate.getTime()) {
     const iso = toIsoLocal(cursor);
     const day = completionsByDay.get(iso) ?? { completed: 0, points: 0 };
+    const perProject = completionsByDayProject.get(iso) ?? new Map<string, { completed: number; points: number }>();
 
     if (day.completed > 0) {
       currentStreak += 1;
@@ -1700,10 +1944,22 @@ app.get("/api/productivity-insights", (_req, res) => {
       badgesEarnedCumulative
     });
 
+    if (projectBreakdown.projects.length > 0) {
+      const tasksCompletedByProject: Record<string, number> = {};
+      const xpGainedByProject: Record<string, number> = {};
+      for (const { id } of projectBreakdown.projects) {
+        const v = perProject.get(id);
+        if (!v) continue;
+        tasksCompletedByProject[id] = v.completed;
+        xpGainedByProject[id] = v.points;
+      }
+      projectBreakdown.rows.push({ date: iso, tasksCompletedByProject, xpGainedByProject });
+    }
+
     cursor = addDaysLocal(cursor, 1);
   }
 
-  const payload = { rows };
+  const payload = { rows, projectBreakdown };
   productivityCache.set(payload);
   res.json(payload);
 });
@@ -1713,6 +1969,138 @@ app.post("/api/admin/reload-data", async (_req, res) => {
     await loadData();
     res.json({
       ok: true,
+      counts: { projects: projects.length, tasks: tasks.length }
+    });
+  } catch (error) {
+    res.status(500).json({
+      ok: false,
+      error: error instanceof Error ? error.message : String(error)
+    });
+  }
+});
+
+app.post("/api/admin/save-data", async (_req, res) => {
+  try {
+    // Defensive: if any duplicates exist in memory, keep the latest instance by id.
+    projects = mergeProjects([], projects);
+    tasks = mergeTasks([], tasks);
+    await persistProjects();
+    await persistTasks();
+    // Run standard normalization/dedupe to keep deterministic ids/series.
+    await loadData();
+    res.json({
+      ok: true,
+      counts: { projects: projects.length, tasks: tasks.length }
+    });
+  } catch (error) {
+    res.status(500).json({
+      ok: false,
+      error: error instanceof Error ? error.message : String(error)
+    });
+  }
+});
+
+app.post("/api/admin/import", async (req, res) => {
+  const schema = z.object({
+    format: z.enum(["json", "csv"]),
+    content: z.string().min(1)
+  });
+  const parsed = schema.safeParse(req.body);
+  if (!parsed.success) {
+    return res.status(400).json({ ok: false, error: parsed.error.flatten() });
+  }
+
+  const { format, content } = parsed.data as { format: ImportFormat; content: string };
+
+  try {
+    let incomingProjects: Project[] = [];
+    let incomingTasks: Task[] = [];
+
+    if (format === "json") {
+      const raw = JSON.parse(content);
+      // Accept export payload { app, exportedAt, projects, tasks } or raw arrays.
+      const projectsRaw = Array.isArray(raw?.projects) ? raw.projects : Array.isArray(raw) ? raw : [];
+      const tasksRaw = Array.isArray(raw?.tasks) ? raw.tasks : [];
+
+      const pSafe = z.array(ProjectSchema).safeParse(projectsRaw);
+      const tSafe = z.array(TaskSchema).safeParse(tasksRaw);
+      if (!pSafe.success && !tSafe.success) {
+        return res.status(400).json({
+          ok: false,
+          error: "Invalid JSON import payload: expected {projects: Project[], tasks: Task[]} or a Project[]"
+        });
+      }
+      incomingProjects = pSafe.success ? pSafe.data : [];
+      incomingTasks = tSafe.success ? tSafe.data : [];
+    } else {
+      const parsedCsv = parseCsv(content);
+      if (parsedCsv.headers.length === 0) {
+        return res.status(400).json({ ok: false, error: "CSV import failed: empty file" });
+      }
+      for (const r of parsedCsv.rows) {
+        const recordType = (r["recordType"] ?? "").trim().toLowerCase();
+        if (recordType === "project") {
+          const id = (r["id"] ?? r["projectId"] ?? "").trim();
+          const name = (r["projectNameOnly"] ?? r["projectName"] ?? r["name"] ?? "").trim();
+          if (!id || !name) continue;
+          incomingProjects.push({ id, name });
+          continue;
+        }
+        if (recordType === "task") {
+          const id = (r["id"] ?? "").trim();
+          const title = (r["title"] ?? "").trim();
+          const priority = (r["priority"] ?? "medium").trim() as Task["priority"];
+          if (!id || !title) continue;
+          incomingTasks.push({
+            id,
+            title,
+            description: (r["description"] ?? "").trim() || undefined,
+            priority: ["low", "medium", "high", "urgent"].includes(priority) ? priority : "medium",
+            dueDate: (r["dueDate"] ?? "").trim() || undefined,
+            dueTime: (r["dueTime"] ?? "").trim() || undefined,
+            durationMinutes: parseIntOpt(r["durationMinutes"]),
+            deadlineDate: (r["deadlineDate"] ?? "").trim() || undefined,
+            deadlineTime: (r["deadlineTime"] ?? "").trim() || undefined,
+            repeat: ((r["repeat"] ?? "none").trim() as any) || "none",
+            repeatEvery: parseIntOpt(r["repeatEvery"]),
+            repeatUnit: (r["repeatUnit"] ?? "").trim() ? ((r["repeatUnit"] ?? "").trim() as any) : undefined,
+            labels: parsePipeArray(r["labels"]),
+            location: (r["location"] ?? "").trim() || undefined,
+            link: (() => {
+              const arr = parsePipeArray(r["link"]);
+              return arr.length ? arr : undefined;
+            })(),
+            reminderMinutesBefore: parseIntOpt(r["reminderMinutesBefore"]),
+            projectId: (() => {
+              const pid = (r["projectId"] ?? "").trim();
+              return pid ? pid : null;
+            })(),
+            completed: parseBool(r["completed"]) ?? false,
+            completedAt: (r["completedAt"] ?? "").trim() || undefined,
+            parentId: (r["parentId"] ?? "").trim() || undefined,
+            childId: (r["childId"] ?? "").trim() || undefined,
+            cancelled: parseBool(r["cancelled"])
+          });
+          continue;
+        }
+      }
+
+      // Validate what we built (drop invalid rows)
+      incomingProjects = z.array(ProjectSchema).safeParse(incomingProjects).success ? incomingProjects : [];
+      const safeTasks = z.array(TaskSchema).safeParse(incomingTasks);
+      incomingTasks = safeTasks.success ? safeTasks.data : [];
+    }
+
+    // Merge into in-memory state, then persist and run the standard load normalization/dedupe.
+    projects = mergeProjects(projects, incomingProjects);
+    tasks = mergeTasks(tasks, incomingTasks);
+    await persistProjects();
+    await persistTasks();
+    await loadData();
+
+    res.json({
+      ok: true,
+      imported: { projects: incomingProjects.length, tasks: incomingTasks.length },
       counts: { projects: projects.length, tasks: tasks.length }
     });
   } catch (error) {

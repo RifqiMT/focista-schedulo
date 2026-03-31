@@ -1,6 +1,6 @@
 # Design Guidelines — Focista Schedulo
 
-**Last updated:** 2026-04-01  
+**Last updated:** 2026-03-31  
 **Owner:** Design (with Engineering)
 
 This document describes the visual system used in the application and how to extend it consistently. It covers theme palettes, typography, components, accessibility, and design-to-code mapping.
@@ -156,12 +156,23 @@ Priorities are visually distinct in task pills, calendar items, day agenda, and 
 - **Active item:** `.sidebar-item-active` — gold gradient background, red text, red dot.
 - **Hover:** Light red-tinted background, slight lift, shadow.
 
+### Toasts (notifications)
+
+- **Purpose:** Provide lightweight success/error/info feedback without blocking the user.
+- **Placement:** Top-right, stacked, capped to a small count to avoid clutter.
+- **Behavior:** Auto-dismiss after a short TTL (errors stay longer); user can dismiss manually.
+- **Accessibility:** Live region (`aria-live="polite"`) and clear dismiss button label.
+- **Design tokens:** Should follow the existing red/gold brand palette; error states should be readable and not rely on color alone.
+- **Design-to-code mapping:** `frontend/src/components/Toaster.tsx` + `.toaster`, `.toast`, `.toast--*` styles in `frontend/src/styles.css`.
+
 ### Productivity Analysis (modal)
 
 - **Shell:** `.pa-pro-shell`, `.badge-modal.productivity-modal` — maps accent tokens to `:root` **red / gold** palette (`--pa-accent`, `--pa-chart-secondary` for secondary series).
 - **Charts:** `.pa-chart-*` classes; dual series use **brand red** (raw / dashed) and **gold / amber** (rolling average / solid) with distinct legend chips.
 - **Tooltips:** Portaled to `document.body` with high z-index so they are never clipped by scroll regions or modal overflow.
-- **Fullscreen chart:** Dedicated host with nav below axis; keyboard shortcuts for chart switch where implemented.
+- **Fullscreen chart:** Dedicated host with nav below axis; supports keyboard shortcuts:
+  - **Esc** closes fullscreen and returns to the modal.
+  - **ArrowLeft / ArrowRight** switches charts while fullscreen (when focus is not in a form field).
 - **Controls:** Range days, timeframe selector, windowing for long histories, pills for Latest / Peak / averages as defined in UI.
 
 ---
@@ -243,4 +254,4 @@ Priorities are visually distinct in task pills, calendar items, day agenda, and 
 
 ---
 
-**Last updated:** 2026-04-01
+**Last updated:** 2026-03-31

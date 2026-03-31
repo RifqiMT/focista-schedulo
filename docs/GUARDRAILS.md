@@ -1,6 +1,6 @@
 # Product and Technical Guardrails — Focista Schedulo
 
-**Last updated:** 2026-04-01  
+**Last updated:** 2026-03-31  
 **Owner:** Product + Engineering
 
 ---
@@ -67,23 +67,27 @@ This document defines the non-negotiable boundaries for product development, del
    - Parent/child IDs must remain stable and predictable.
    - Rebuild logic cannot create duplicate active occurrences for the same series/date.
 
-2. **Mutation reliability**
+2. **Project association integrity (parent/child consistency)**
+   - All tasks that share the same `parentId` must also share the same `projectId`.
+   - Any change that could allow a child/occurrence to drift into a different project is considered a data-integrity bug.
+
+3. **Mutation reliability**
    - Completion/edit/delete operations must be idempotent under rapid interaction.
    - UI optimistic updates must have recovery path on API failure.
 
-3. **Time semantics**
+4. **Time semantics**
    - Day-based metrics and streak logic must use local calendar semantics.
    - Progress-day bucketing for stats uses **`dueDate`** when set; otherwise local date from **`completedAt`** (tasks without both are excluded from day buckets).
    - UTC conversion must not silently shift daily outcomes.
 
-4. **Performance baseline**
+5. **Performance baseline**
    - Primary views should remain responsive with hundreds of tasks.
    - Avoid heavy synchronous computation on each render.
 
-5. **Observability readiness**
+6. **Observability readiness**
    - Critical flows must be testable and diagnosable with clear failure points.
 
-6. **Recurrence horizon and materialization safety**
+7. **Recurrence horizon and materialization safety**
    - Virtual horizon expansion must remain bounded and performant.
    - Materialization must dedupe in-flight requests to prevent duplicate persisted tasks.
 

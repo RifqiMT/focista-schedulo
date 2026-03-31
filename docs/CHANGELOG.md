@@ -1,9 +1,38 @@
 # Changelog — Focista Schedulo
 
-**Last updated:** 2026-04-01  
+**Last updated:** 2026-03-31  
 **Owner:** Engineering (with Product)
 
 This changelog tracks meaningful product, engineering, and documentation changes.
+
+---
+
+## [2026-03-31] Project association integrity for series (parent/child consistency)
+
+### Changed
+
+- **Backend:** Enforced the invariant that tasks sharing the same `parentId` must share the same `projectId` (canonicalized within each parent group). This prevents “child/occurrence drift” where subtasks/childtasks appear under a different project than their parent series.
+- **Frontend:** Normalized tasks on load so any tasks sharing the same `parentId` are displayed with the same `projectId`, ensuring filters and grouping remain consistent even for legacy data.
+
+### Docs
+
+- Updated `VARIABLES.md`, `ARCHITECTURE.md`, `GUARDRAILS.md`, `TRACEABILITY_MATRIX.md`, `USER_STORIES.md`, and `API_CONTRACTS.md` to document the project association invariant and its implications for filtering and recurrence integrity.
+
+---
+
+## [2026-03-31] Data ownership UX — Import/Save actions and toast notifications
+
+### Added
+
+- **Frontend:** App-level `Toaster` notification system for success/error/info feedback driven by the `pst:toast` event.
+- **Backend:** `POST /api/admin/save-data` endpoint to persist current in-memory state and re-run normalization via reload.
+
+### Changed
+
+- **Docs:** Updated `README.md`, `docs/API_CONTRACTS.md`, `docs/ARCHITECTURE.md`, `docs/DESIGN_GUIDELINES.md`, `docs/USER_STORIES.md`, `docs/TRACEABILITY_MATRIX.md`, and `docs/VARIABLES.md` to document:
+  - header **Import / Save / Export** behaviors,
+  - toast notification UX,
+  - productivity-insights optional `projectBreakdown` payload.
 
 ---
 
@@ -126,4 +155,4 @@ This changelog tracks meaningful product, engineering, and documentation changes
 
 ---
 
-**Last updated:** 2026-04-01
+**Last updated:** 2026-03-31

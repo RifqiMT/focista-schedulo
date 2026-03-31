@@ -1,6 +1,6 @@
 # Architecture — Focista Schedulo
 
-**Last updated**: 2026-04-01  
+**Last updated**: 2026-03-31  
 **Owner**: Engineering  
 
 ## Overview
@@ -58,6 +58,9 @@ On server start (`loadData()`):
   - Ensures each series has stable `parentId`
   - Ensures `childId` exists and is sequential by `dueDate`
   - Ensures `durationMinutes` is consistent within the series
+- **Project association normalization (all tasks)**:
+  - Enforces that tasks sharing the same `parentId` also share the same `projectId`
+  - Canonical project per parent group is the first non-empty `projectId` found; otherwise `null`
 - **Parent ID standardization (all tasks)**:
   - Enforces `parentId` format `YYYYMMDD-N` for one-time and repeating tasks
 
@@ -108,6 +111,8 @@ Deletion behavior is primarily persisted deletion/materialization-aware mutation
 ### Admin
 
 - `POST /api/admin/reload-data` → reloads tasks and projects from disk (e.g. after editing JSON); triggers no persistence, used by frontend “Sync data” for consistency
+- `POST /api/admin/save-data` → persists tasks/projects to `backend/data/*.json`, then runs standard normalization by reloading (dedupe + deterministic IDs)
+- `POST /api/admin/import` → imports JSON/CSV exports and merges into persisted data, followed by normalization
 
 ## Frontend state synchronization
 
@@ -116,6 +121,7 @@ The UI uses a lightweight event mechanism:
 - `pst:tasks-changed`
 - `pst:projects-changed`
 - `pst:open-export` (header Export → task board export UI)
+- `pst:toast` (success/error/info notifications surfaced by `Toaster`)
 
 Components dispatch these events after CRUD actions and listen to them to refetch and synchronize state.
 

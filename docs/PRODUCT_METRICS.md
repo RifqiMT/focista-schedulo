@@ -1,6 +1,6 @@
 # Product Metrics — Focista Schedulo
 
-**Last updated:** 2026-04-01  
+**Last updated:** 2026-03-31  
 **Owner:** Product Analytics
 
 This document defines the product metrics used to evaluate the health and growth of Focista Schedulo. For OKRs and product-team metrics, see `METRICS_AND_OKRS.md`. For variable definitions and formulas, see `VARIABLES.md`.
@@ -17,6 +17,17 @@ This document defines the product metrics used to evaluate the health and growth
 | **Why it matters** | Measures users translating planning into execution, not just capturing tasks. |
 | **Formula** | WCST = count(tasks where `completed === true` and `dueDate` is set) per week. |
 | **Instrumentation** | Current implementation computes basic stats server-side; full WCST may require completion timestamps or explicit week grouping. |
+
+---
+
+## Shipped vs Planned (Instrumentation Guide)
+
+This product currently ships **local-first persistence** without a user identity model or telemetry pipeline. Therefore:
+
+- **Shipped metrics (server-computable):** Metrics that can be computed directly from persisted tasks (e.g., streak distribution, recurrence duplication detection signals) or existing endpoints like `GET /api/stats` and `GET /api/productivity-insights`.
+- **Planned metrics (instrumentation-required):** Metrics that require session/user identity and event telemetry (e.g., DAU/WAU, time-to-first-structured-task, weekly open-rate of a modal).
+
+In this document, any metric marked **(planned)** means **instrumentation is required** before it can be reported reliably.
 
 ---
 
@@ -177,4 +188,4 @@ Before metrics are consumed for decisions:
 
 ---
 
-**Last updated:** 2026-04-01
+**Last updated:** 2026-03-31

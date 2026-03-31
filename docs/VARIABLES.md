@@ -1,6 +1,6 @@
 # Variables Catalog — Focista Schedulo
 
-**Last updated:** 2026-04-01  
+**Last updated:** 2026-03-31  
 **Owner:** Product Analytics (with Engineering)
 
 This document defines the key **variables** used across the product: stored fields, derived values, and product metrics. Each variable is documented with a **variable name**, **friendly name**, **definition**, **formula** (when applicable), **location in the app**, **source of truth**, and **example** to align product, analytics, and engineering.
@@ -56,6 +56,7 @@ flowchart TB
 |------|-----|--------------|
 | `project.id` | `task.projectId` | Task belongs to a project; filter and display by project. |
 | `task.parentId` | `task.childId` | Series identity; occurrences share parentId and use backend-normalized child sequence IDs. |
+| `task.parentId` | `task.projectId` | **Invariant:** all tasks sharing the same parentId must share the same projectId (canonicalized per parent group). |
 | `task.dueDate` + `task.dueTime` + `task.durationMinutes` | `CalendarEntry` | Frontend segments tasks into per-day calendar blocks. |
 | `task.priority` | `stats` points | Points per completion: low=1, medium=2, high=3, urgent=4. |
 | `task.completed` + **`task.dueDate`** (else `task.completedAt` → local day) | `stats.completedToday`, `stats.pointsToday`, `stats.streakDays` | Day buckets use **due date** for progress when set; undated completions use completion timestamp. |
@@ -253,10 +254,10 @@ flowchart TB
 |-----------|--------|
 | **Variable name** | `task.location` |
 | **Friendly name** | Location |
-| **Definition** | Optional location context (place name, URL, or meeting room). API stores a single string; UI may support multiple values (e.g. comma-separated or alias format `Alias=>URL`). Only real URLs get an “Open” link; plain text is not turned into a map link. |
+| **Definition** | Optional location context (place name, URL, or meeting room). Backend stores a single string. The UI supports **multiple location tokens** encoded as a single **pipe-delimited** string (`loc1|loc2|...`). Each token may be plain text or `Label=>URL` (alias). Only real URLs are rendered with an “Open” link; plain text is treated as informational context (no automatic map linking). |
 | **Location in app** | Editor drawer; hovercard (clickable when URL). |
 | **Source of truth** | Backend. |
-| **Example** | `Zoom` or `Office 12B` or `Meeting Room=>https://...` |
+| **Example** | `Zoom|Office 12B|Meeting Room=>https://meet.example.com/abc` |
 
 #### `task.link`
 
@@ -293,6 +294,18 @@ flowchart TB
 | **Location in app** | Task project pill; project filter; move dialog. |
 | **Source of truth** | Backend. |
 | **Example** | `P2` |
+
+#### `syncProjectIdForParent` (backend integrity control)
+
+| Attribute | Value |
+|-----------|--------|
+| **Variable name** | `syncProjectIdForParent(parentId)` |
+| **Friendly name** | Parent-group project association normalization |
+| **Definition** | Ensures all tasks sharing the same `parentId` also share the same `projectId` to prevent parent/child/occurrence drift across projects. |
+| **Formula** | For a given `parentId`: set `projectId` to the **first non-empty** projectId found in that group; if none exist, set to `null`. Apply to every task with that `parentId`. |
+| **Location in app** | Backend normalization and write paths (`backend/src/index.ts`). |
+| **Source of truth** | Backend (enforced and persisted). |
+| **Example** | Parent group contains tasks with `{projectId:null, projectId:"P2"}` → after sync, all become `"P2"`. |
 
 #### `task.completed`
 
@@ -422,6 +435,7 @@ flowchart TB
 | `timeScope` | Timeframe filter | Current filter: yesterday, today, tomorrow, last_week, week, next_week, sprint, last_month, month, next_month, last_quarter, quarter, next_quarter, custom, all. | TaskBoard header. |
 | `completionFilter` | Status filter | active, completed, or all. | TaskBoard header. |
 | `expandedGroups` | Expanded series | Set of parentId keys for which “Show occurrences” is expanded. | List view repeating task rows. |
+| `pst:toast` (event) | Toast notification event | Custom event used to display app-level success/error/info notifications. Payload includes kind, title, optional message, and optional duration. | Dispatched by feature components (e.g., `TaskBoard.tsx`, `ProductivityAnalysisModal.tsx`) and handled by `App.tsx` via `Toaster`. |
 
 ---
 
@@ -533,6 +547,17 @@ flowchart TB
 
 Each **row** corresponds to a **local calendar day** from the first to the last day with at least one **completed** task in the persisted dataset (gaps may still appear as days with zero completions in the series builder). Only tasks with `completed === true` and `cancelled !== true` participate. Tasks are attributed to a day using **`dueDate` when set**, otherwise the local calendar day of **`completedAt`**.
 
+### `projectBreakdown` (optional payload)
+
+| Attribute | Value |
+|-----------|--------|
+| **Variable name** | `projectBreakdown` |
+| **Friendly name** | Productivity breakdown by project |
+| **Definition** | Optional companion payload that provides per-day counts and XP grouped by `projectId`, for supporting “by project” charts and tables. Only includes tasks that have a non-null `projectId`. |
+| **Location in app** | Productivity Analysis (when project breakdown views are enabled) and future analytics extensions. |
+| **Source of truth** | Backend (`GET /api/productivity-insights`). |
+| **Example** | `projectBreakdown.projects = [{id:"P1", name:"Work"}]`, `projectBreakdown.rows = [{date:"2026-03-30", tasksCompletedByProject:{P1:3}, xpGainedByProject:{P1:7}}]` |
+
 ### `row.date`
 
 | Attribute | Value |
@@ -637,4 +662,4 @@ This lineage is the canonical path for debugging variable drift or stale values.
 
 ---
 
-**Last updated:** 2026-04-01
+**Last updated:** 2026-03-31

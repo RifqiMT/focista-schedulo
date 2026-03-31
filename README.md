@@ -139,8 +139,13 @@ Runs ESLint for backend and frontend.
 - **Hovercard** — Portaled popover near the pointer with full task details (schedule, details, tags, identifiers) and clickable links/locations. Suppressed while using the row checkbox or action buttons (Complete / Move / Delete). The card uses non-blocking hit-testing so row actions remain clickable when the card overlaps them (links inside the card stay clickable).
 - **Productivity Analysis** — Charts over historical completion rows from `/api/productivity-insights` (tasks, XP, level, badge milestones), opened from the progress panel.
 - **Progress day** — For stats and productivity timelines, a completed task is counted on **`dueDate`** if present; if there is no due date, on the **local calendar day** derived from **`completedAt`**. Lifetime **level** and **totalPoints** still sum all completed tasks regardless of which day they fall into.
+- **Toast** — Lightweight, non-blocking notification used for success/error/info feedback (e.g., export, import, save, materialization). Implemented via the `pst:toast` event and displayed by the app-level `Toaster`.
 
-**Header:** **Sync data** calls `POST /api/admin/reload-data`. **Export** dispatches `pst:open-export` for the task board export flow.
+**Header:**
+
+- **Import** calls `POST /api/admin/import` (JSON/CSV) and triggers refresh events.
+- **Save** calls `POST /api/admin/save-data` to persist current in-memory state to `backend/data/*.json`, then reload + normalize.
+- **Export** dispatches `pst:open-export` for the task board export flow.
 
 **API caching:** `GET /api/stats` and `GET /api/productivity-insights` use in-memory caches cleared when tasks/projects persist or when data is reloaded from disk, so the Progress panel stays aligned with the latest task state.
 
@@ -148,4 +153,4 @@ Data is persisted to JSON files under `backend/data/`, so data survives restarts
 
 ---
 
-**Last updated:** 2026-04-01
+**Last updated:** 2026-03-31

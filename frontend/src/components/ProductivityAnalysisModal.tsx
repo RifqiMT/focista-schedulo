@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import React, { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 
 type Timeframe = "daily" | "weekly" | "monthly" | "quarterly" | "annually";
@@ -183,7 +183,24 @@ const CHARTS: ChartConfig[] = [
   }
 ];
 
+type FsAnyChart =
+  | { kind: "single"; id: string; title: string; description: string; yAxisLabel: string; chart: ChartConfig }
+  ;
+
+const FS_ALL: ReadonlyArray<FsAnyChart> = [
+  ...CHARTS.map((c) => ({
+    kind: "single" as const,
+    id: c.id,
+    title: c.title,
+    description: c.description,
+    yAxisLabel: c.yAxisLabel,
+    chart: c
+  }))
+];
+
 type Point = { label: string; value: number; rawLabel: string };
+
+// By-project charts were removed (they were broken and confusing in practice).
 
 function bucketKeyFor(dateIso: string, timeframe: Timeframe): { key: string; label: string } {
   const d = new Date(`${dateIso}T12:00:00`);
@@ -267,12 +284,14 @@ function formatAxisLabel(timeframe: Timeframe, raw: string): string {
       const d0 = new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3]));
       if (!Number.isNaN(d0.getTime())) {
         const nowY = new Date().getFullYear();
-        return d0.toLocaleDateString(
+        const dayName = d0.toLocaleDateString(undefined, { weekday: "short" });
+        const dayPart = d0.toLocaleDateString(
           undefined,
           d0.getFullYear() !== nowY
             ? { month: "short", day: "numeric", year: "2-digit" }
             : { month: "short", day: "numeric" }
         );
+        return `${dayName}, ${dayPart}`;
       }
     }
   }
@@ -506,38 +525,101 @@ function maxPoint(points: Point[]): { value: number; rawLabel: string } | null {
   return { value: best.value, rawLabel: best.rawLabel };
 }
 
-/** Inline + fullscreen: explicit dual-series legend (red dashed raw vs gold solid average). */
-function PaDualSeriesLegend({ fullscreen }: { fullscreen?: boolean }) {
+/** Inline + fullscreen: explicit dual-series legend with show/hide toggles. */
+function PaDualSeriesLegend({
+  fullscreen,
+  showRaw,
+  showAvg,
+  onToggleRaw,
+  onToggleAvg
+}: {
+  fullscreen?: boolean;
+  showRaw: boolean;
+  showAvg: boolean;
+  onToggleRaw: () => void;
+  onToggleAvg: () => void;
+}) {
   return (
     <div
-      className={`pa-legend${fullscreen ? " pa-legend--fs" : ""}`}
-      role="list"
-      aria-label="Chart lines: raw values and rolling average"
+      className={`pa-legend pa-legend--toggles${fullscreen ? " pa-legend--fs" : ""}`}
+      role="group"
+      aria-label="Chart legend (toggle series)"
     >
-      <div className="pa-legend-chip pa-legend-chip--raw" role="listitem">
+      <button
+        type="button"
+        className={`pa-legend-chip pa-legend-chip--raw ${showRaw ? "is-on" : "is-off"}`}
+        aria-pressed={showRaw}
+        onClick={onToggleRaw}
+        title={showRaw ? "Hide raw series (dashed brand red)" : "Show raw series (dashed brand red)"}
+      >
         <div className="pa-legend-swatch-col" aria-hidden="true">
           <span className="pa-legend-swatch raw" />
         </div>
         <div className="pa-legend-copy">
           <span className="pa-legend-chip-title">Raw</span>
-          <span className="pa-legend-chip-meta">
-            Dashed line, <strong className="pa-legend-em-red">brand red</strong> — unsmoothed per period
-          </span>
+          <span className="pa-legend-chip-sub">Per period (unsmoothed)</span>
         </div>
-      </div>
-      <div className="pa-legend-chip pa-legend-chip--avg" role="listitem">
+      </button>
+      <button
+        type="button"
+        className={`pa-legend-chip pa-legend-chip--avg ${showAvg ? "is-on" : "is-off"}`}
+        aria-pressed={showAvg}
+        onClick={onToggleAvg}
+        title={showAvg ? "Hide rolling average (solid gold)" : "Show rolling average (solid gold)"}
+      >
         <div className="pa-legend-swatch-col" aria-hidden="true">
           <span className="pa-legend-swatch avg" />
         </div>
         <div className="pa-legend-copy">
           <span className="pa-legend-chip-title">Rolling average</span>
-          <span className="pa-legend-chip-meta">
-            Solid line, <strong className="pa-legend-em-gold">gold</strong> — smoothed moving average
-          </span>
+          <span className="pa-legend-chip-sub">Smoothed trend</span>
         </div>
-      </div>
+      </button>
     </div>
   );
+}
+
+class PaErrorBoundary extends React.Component<
+  { title: string; onClose: () => void; onRecover?: () => void; children: any },
+  { hasError: boolean; message: string }
+> {
+  constructor(props: any) {
+    super(props);
+    this.state = { hasError: false, message: "" };
+  }
+  static getDerivedStateFromError(err: unknown) {
+    const msg = err instanceof Error ? err.message : "Unexpected error";
+    return { hasError: true, message: msg };
+  }
+  componentDidCatch() {
+    // Intentionally no console spam here; we render a recovery UI instead.
+  }
+  render() {
+    if (!this.state.hasError) return this.props.children;
+    return (
+      <div className="pa-no-data pa-no-data-fs" role="alert">
+        <div className="muted" style={{ marginBottom: "0.5rem" }}>
+          {this.props.title}
+        </div>
+        <div style={{ fontWeight: 750, marginBottom: "0.5rem" }}>
+          Something went wrong while rendering this view.
+        </div>
+        <div className="muted small" style={{ marginBottom: "0.85rem" }}>
+          {this.state.message}
+        </div>
+        <div style={{ display: "flex", gap: "0.5rem", flexWrap: "wrap" }}>
+          {this.props.onRecover ? (
+            <button type="button" className="ghost-button small" onClick={this.props.onRecover}>
+              Try again
+            </button>
+          ) : null}
+          <button type="button" className="ghost-button small" onClick={this.props.onClose}>
+            Close
+          </button>
+        </div>
+      </div>
+    );
+  }
 }
 
 function InsightChart({
@@ -551,7 +633,9 @@ function InsightChart({
   yAxisLabel,
   mode = "inline",
   idSuffix = "",
-  showArea = false
+  showArea = false,
+  showRaw = true,
+  showAvg = true
 }: {
   chartId: string;
   points: Point[];
@@ -566,6 +650,10 @@ function InsightChart({
   idSuffix?: string;
   /** Area under line reads well for cumulative series; hides clutter on per-day counts. */
   showArea?: boolean;
+  /** Show/hide the raw (primary) series. */
+  showRaw?: boolean;
+  /** Show/hide the rolling average overlay series. */
+  showAvg?: boolean;
 }) {
   const [hover, setHover] = useState<{ idx: number; px: number; py: number } | null>(null);
   const svgRef = useRef<SVGSVGElement | null>(null);
@@ -629,9 +717,21 @@ function InsightChart({
     const tip = tooltipRef.current;
     const svg = svgRef.current;
     if (!tip || !svg) return;
+
     const r = svg.getBoundingClientRect();
-    tip.style.left = `${r.left + (hover.px / VB_W) * r.width}px`;
-    tip.style.top = `${r.top + (hover.py / VB_H) * r.height}px`;
+    const desiredX = r.left + (hover.px / VB_W) * r.width;
+    const desiredY = r.top + (hover.py / VB_H) * r.height;
+
+    const vw = window.innerWidth;
+    const vh = window.innerHeight;
+    const pad = 10;
+    const tipRect = tip.getBoundingClientRect();
+    const halfW = Math.max(20, tipRect.width / 2);
+    const clampedX = Math.max(pad + halfW, Math.min(vw - pad - halfW, desiredX));
+    const clampedY = Math.max(pad, Math.min(vh - pad, desiredY));
+
+    tip.style.left = `${clampedX}px`;
+    tip.style.top = `${clampedY}px`;
   }, [hover]);
 
   useEffect(() => {
@@ -642,8 +742,19 @@ function InsightChart({
       const svg = svgRef.current;
       if (tip && svg) {
         const r = svg.getBoundingClientRect();
-        tip.style.left = `${r.left + (hover.px / VB_W) * r.width}px`;
-        tip.style.top = `${r.top + (hover.py / VB_H) * r.height}px`;
+        const desiredX = r.left + (hover.px / VB_W) * r.width;
+        const desiredY = r.top + (hover.py / VB_H) * r.height;
+
+        const vw = window.innerWidth;
+        const vh = window.innerHeight;
+        const pad = 10;
+        const tipRect = tip.getBoundingClientRect();
+        const halfW = Math.max(20, tipRect.width / 2);
+        const clampedX = Math.max(pad + halfW, Math.min(vw - pad - halfW, desiredX));
+        const clampedY = Math.max(pad, Math.min(vh - pad, desiredY));
+
+        tip.style.left = `${clampedX}px`;
+        tip.style.top = `${clampedY}px`;
       }
       raf = requestAnimationFrame(tick);
     };
@@ -672,7 +783,9 @@ function InsightChart({
     points.length,
     mode === "fullscreen" ? 14 : Math.min(11, Math.max(7, Math.ceil(points.length / 25)))
   );
-  const hasOverlay = Boolean(overlayLineD);
+  const overlayPresent = Boolean(overlayLineD);
+  const overlayVisible = overlayPresent && showAvg;
+  const dualVisible = overlayVisible && showRaw;
   /* Single scrubber only — same for cumulative and non-cumulative (no per-point dots). */
   const strokeW = points.length > 450 ? 1.05 : points.length > 200 ? 1.35 : 1.75;
 
@@ -711,14 +824,39 @@ function InsightChart({
           (() => {
             const hi = hover.idx;
             const pt = points[hi]!;
-            const ov = overlayPoints?.[hi];
+            const prevPt = hi > 0 ? points[hi - 1]! : null;
+            const ov = overlayVisible ? overlayPoints?.[hi] : null;
+            const prevOv = overlayVisible && hi > 0 ? overlayPoints?.[hi - 1] ?? null : null;
             const pyRatio = hover.py / VB_H;
             const tooltipY = pyRatio < 0.34 ? "below" : "above";
+
+            const growthChip = (current: number, prev: number | null) => {
+              if (prev == null) return null;
+              if (prev === 0) {
+                if (current === 0) {
+                  return { text: "0%", kind: "flat" as const, aria: "0% vs previous period" };
+                }
+                return { text: "—", kind: "na" as const, aria: "No previous baseline (previous period is 0)" };
+              }
+              const pct = ((current - prev) / Math.abs(prev)) * 100;
+              const rounded = Math.round(pct * 10) / 10;
+              const text = `${rounded >= 0 ? "+" : ""}${String(rounded).replace(/\\.0$/, "")}%`;
+              return {
+                text,
+                kind: rounded > 0 ? ("up" as const) : rounded < 0 ? ("down" as const) : ("flat" as const),
+                aria: `${text} vs previous period`
+              };
+            };
+
+            const rawGrowth = showRaw ? growthChip(pt.value, prevPt ? prevPt.value : null) : null;
+            const avgGrowth = ov ? growthChip(ov.value, prevOv ? prevOv.value : null) : null;
+            const rawName = showArea ? "Cumulative" : "Raw";
+            const rawStyleChip = overlayPresent ? "Dashed red" : showArea ? "Solid red" : "Solid red";
             return (
               <div
                 ref={tooltipRef}
                 className={`pa-chart-tooltip pa-chart-tooltip--portal pa-chart-tooltip--y-${tooltipY}${
-                  hasOverlay ? " pa-chart-tooltip--dual" : ""
+                  dualVisible ? " pa-chart-tooltip--dual" : ""
                 }`}
                 role="tooltip"
               >
@@ -730,24 +868,32 @@ function InsightChart({
                     </span>
                   </header>
                   <div
-                    className={`pa-chart-tooltip-metrics${hasOverlay ? "" : " pa-chart-tooltip-metrics--solo"}`}
+                    className={`pa-chart-tooltip-metrics${dualVisible ? "" : " pa-chart-tooltip-metrics--solo"}`}
                   >
-                    {hasOverlay ? (
+                    {dualVisible ? (
                       <>
                         <section
                           className="pa-chart-tooltip-metric pa-chart-tooltip-metric--raw"
-                          aria-label={`Raw: ${formatPillValue(pt.value)}. ${yAxisLabel}. Dashed red line on chart.`}
+                          aria-label={`${rawName}: ${formatPillValue(pt.value)}. ${yAxisLabel}. ${rawStyleChip} line on chart.`}
                         >
                           <div className="pa-chart-tooltip-metric-top">
                             <span className="pa-chart-tooltip-dot pa-chart-tooltip-dot--raw" aria-hidden />
                             <div className="pa-chart-tooltip-metric-body">
                               <div className="pa-chart-tooltip-metric-line">
-                                <span className="pa-chart-tooltip-metric-name">Raw</span>
+                                <span className="pa-chart-tooltip-metric-name">{rawName}</span>
                                 <span className="pa-chart-tooltip-metric-fig pa-chart-tooltip-metric-fig--inline">
                                   {formatPillValue(pt.value)}
                                 </span>
+                                {rawGrowth ? (
+                                  <span
+                                    className={`pa-chart-tooltip-chip pa-chart-tooltip-chip--growth pa-chart-tooltip-chip--growth-${rawGrowth.kind}`}
+                                    aria-label={rawGrowth.aria}
+                                  >
+                                    {rawGrowth.text}
+                                  </span>
+                                ) : null}
                                 <span className="pa-chart-tooltip-chip pa-chart-tooltip-chip--raw">
-                                  Dashed red
+                                  {rawStyleChip}
                                 </span>
                               </div>
                               <p className="pa-chart-tooltip-metric-unit">{yAxisLabel}</p>
@@ -770,6 +916,14 @@ function InsightChart({
                                   <span className="pa-chart-tooltip-metric-fig pa-chart-tooltip-metric-fig--inline">
                                     {formatPillValue(ov.value)}
                                   </span>
+                                  {avgGrowth ? (
+                                    <span
+                                      className={`pa-chart-tooltip-chip pa-chart-tooltip-chip--growth pa-chart-tooltip-chip--growth-${avgGrowth.kind}`}
+                                      aria-label={avgGrowth.aria}
+                                    >
+                                      {avgGrowth.text}
+                                    </span>
+                                  ) : null}
                                   <span className="pa-chart-tooltip-chip pa-chart-tooltip-chip--avg">
                                     Smoothed
                                   </span>
@@ -780,24 +934,61 @@ function InsightChart({
                           </section>
                         )}
                       </>
-                    ) : (
+                    ) : showRaw ? (
                       <section
                         className="pa-chart-tooltip-metric pa-chart-tooltip-metric--raw pa-chart-tooltip-metric--solo"
-                        aria-label={`${formatPillValue(pt.value)}. ${yAxisLabel}.`}
+                        aria-label={`${rawName}: ${formatPillValue(pt.value)}. ${yAxisLabel}.`}
                       >
                         <div className="pa-chart-tooltip-metric-top">
                           <span className="pa-chart-tooltip-dot pa-chart-tooltip-dot--raw" aria-hidden />
                           <div className="pa-chart-tooltip-metric-body">
-                            <div className="pa-chart-tooltip-metric-line pa-chart-tooltip-metric-line--solo">
-                              <span className="pa-chart-tooltip-metric-fig pa-chart-tooltip-metric-fig--solo">
+                            <div className="pa-chart-tooltip-metric-line">
+                              <span className="pa-chart-tooltip-metric-name">{rawName}</span>
+                              <span className="pa-chart-tooltip-metric-fig pa-chart-tooltip-metric-fig--inline">
                                 {formatPillValue(pt.value)}
+                              </span>
+                              {rawGrowth ? (
+                                <span
+                                  className={`pa-chart-tooltip-chip pa-chart-tooltip-chip--growth pa-chart-tooltip-chip--growth-${rawGrowth.kind}`}
+                                  aria-label={rawGrowth.aria}
+                                >
+                                  {rawGrowth.text}
+                                </span>
+                              ) : null}
+                              <span className="pa-chart-tooltip-chip pa-chart-tooltip-chip--raw">
+                                {rawStyleChip}
                               </span>
                             </div>
                             <p className="pa-chart-tooltip-metric-unit">{yAxisLabel}</p>
                           </div>
                         </div>
                       </section>
-                    )}
+                    ) : ov ? (
+                      <section
+                        className="pa-chart-tooltip-metric pa-chart-tooltip-metric--avg pa-chart-tooltip-metric--solo"
+                        aria-label={`${formatPillValue(ov.value)}. ${yAxisLabel}.`}
+                      >
+                        <div className="pa-chart-tooltip-metric-top">
+                          <span className="pa-chart-tooltip-dot pa-chart-tooltip-dot--avg" aria-hidden />
+                          <div className="pa-chart-tooltip-metric-body">
+                            <div className="pa-chart-tooltip-metric-line pa-chart-tooltip-metric-line--solo">
+                              <span className="pa-chart-tooltip-metric-fig pa-chart-tooltip-metric-fig--solo">
+                                {formatPillValue(ov.value)}
+                              </span>
+                              {avgGrowth ? (
+                                <span
+                                  className={`pa-chart-tooltip-chip pa-chart-tooltip-chip--growth pa-chart-tooltip-chip--growth-${avgGrowth.kind}`}
+                                  aria-label={avgGrowth.aria}
+                                >
+                                  {avgGrowth.text}
+                                </span>
+                              ) : null}
+                            </div>
+                            <p className="pa-chart-tooltip-metric-unit">{yAxisLabel}</p>
+                          </div>
+                        </div>
+                      </section>
+                    ) : null}
                   </div>
                 </div>
                 <span className="pa-chart-tooltip-caret" aria-hidden />
@@ -875,10 +1066,10 @@ function InsightChart({
           })}
 
           <g clipPath={`url(#${clipId})`}>
-            {areaPathD && (
+            {showRaw && areaPathD && (
               <path d={areaPathD} className="pa-chart-area" fill={`url(#${gradId})`} />
             )}
-            {overlayLineD && (
+            {showAvg && overlayLineD && (
               <path
                 d={overlayLineD}
                 fill="none"
@@ -891,18 +1082,18 @@ function InsightChart({
                 opacity={0.98}
               />
             )}
-            {linePathD && (
+            {showRaw && linePathD && (
               <path
                 d={linePathD}
                 fill="none"
-                className={`pa-chart-line pa-chart-line-primary ${hasOverlay ? "pa-chart-line-primary--muted" : ""}`}
+                className={`pa-chart-line pa-chart-line-primary ${overlayVisible ? "pa-chart-line-primary--muted" : ""}`}
                 stroke="currentColor"
-                strokeWidth={hasOverlay ? Math.max(1.2, strokeW * 0.9) : strokeW}
+                strokeWidth={overlayVisible ? Math.max(1.2, strokeW * 0.9) : strokeW}
                 strokeLinejoin="round"
                 strokeLinecap="round"
                 vectorEffect="non-scaling-stroke"
-                strokeDasharray={hasOverlay ? "3 3.5" : undefined}
-                opacity={hasOverlay ? 0.92 : 1}
+                strokeDasharray={overlayPresent ? "3 3.5" : undefined}
+                opacity={overlayVisible ? 0.92 : 1}
               />
             )}
 
@@ -915,7 +1106,7 @@ function InsightChart({
                 style={{ left: `${(hover.px / VB_W) * 100}%` }}
               />
               <div
-                className={`pa-chart-scrubber ${hasOverlay ? "pa-chart-scrubber--dual" : "pa-chart-scrubber--single"}`}
+                className={`pa-chart-scrubber ${dualVisible ? "pa-chart-scrubber--dual" : "pa-chart-scrubber--single"}`}
                 style={{
                   left: `${(hover.px / VB_W) * 100}%`,
                   top: `${(hover.py / VB_H) * 100}%`
@@ -1029,6 +1220,10 @@ function InsightChart({
   );
 }
 
+// (by-project charts removed)
+
+// (by-project charts removed)
+
 export function ProductivityAnalysisModal({ open, onClose }: Props) {
   const [data, setData] = useState<ProductivityRow[] | null>(null);
   const [loading, setLoading] = useState(false);
@@ -1037,10 +1232,88 @@ export function ProductivityAnalysisModal({ open, onClose }: Props) {
   const [fullscreenChartId, setFullscreenChartId] = useState<string | null>(null);
   const [daysWindow, setDaysWindow] = useState<PaRangeDays>(60);
   const [windowStart, setWindowStart] = useState(0);
+  const [seriesVisibility, setSeriesVisibility] = useState<
+    Record<string, { raw: boolean; avg: boolean }>
+  >({});
   const windowStep = useMemo(() => rangeStepDays(daysWindow), [daysWindow]);
 
   const annuallyTimeframeDisabled =
     daysWindow !== PA_RANGE_ALL && daysWindow <= 365;
+
+  const requestBrowserFullscreen = async () => {
+    if (typeof document === "undefined") return;
+    const docAny = document as unknown as {
+      fullscreenElement?: Element | null;
+      webkitFullscreenElement?: Element | null;
+      exitFullscreen?: () => Promise<void>;
+      webkitExitFullscreen?: () => Promise<void>;
+      documentElement: HTMLElement & { requestFullscreen?: () => Promise<void>; webkitRequestFullscreen?: () => Promise<void> };
+    };
+
+    const already =
+      Boolean(docAny.fullscreenElement) || Boolean(docAny.webkitFullscreenElement);
+    if (already) return;
+
+    const el = docAny.documentElement;
+    const req = el.requestFullscreen ?? el.webkitRequestFullscreen;
+    if (!req) return;
+    try {
+      await req.call(el);
+    } catch {
+      // If the browser blocks fullscreen (non-user gesture / permissions), fall back to in-app overlay only.
+      window.dispatchEvent(
+        new CustomEvent("pst:toast", {
+          detail: {
+            kind: "info",
+            title: "Fullscreen not available",
+            message: "Your browser blocked fullscreen. The chart is still open in an in-app full screen view.",
+            durationMs: 2800
+          }
+        })
+      );
+    }
+  };
+
+  const exitBrowserFullscreen = async () => {
+    if (typeof document === "undefined") return;
+    const docAny = document as unknown as {
+      fullscreenElement?: Element | null;
+      webkitFullscreenElement?: Element | null;
+      exitFullscreen?: () => Promise<void>;
+      webkitExitFullscreen?: () => Promise<void>;
+    };
+    const active =
+      Boolean(docAny.fullscreenElement) || Boolean(docAny.webkitFullscreenElement);
+    if (!active) return;
+    const exit = docAny.exitFullscreen ?? docAny.webkitExitFullscreen;
+    if (!exit) return;
+    try {
+      await exit.call(document);
+    } catch {
+      // ignore
+    }
+  };
+
+  const openFullscreenChart = (chartId: string) => {
+    // Best effort: enter *true* browser fullscreen from the user's click.
+    void requestBrowserFullscreen();
+    setFullscreenChartId(chartId);
+  };
+
+  const closeFullscreenChart = () => {
+    void exitBrowserFullscreen();
+    setFullscreenChartId(null);
+  };
+
+  const fsChromeRef = useRef<HTMLDivElement | null>(null);
+  const fsCloseBtnRef = useRef<HTMLButtonElement | null>(null);
+  const [isBrowserFullscreen, setIsBrowserFullscreen] = useState(false);
+  const fullscreenChartIdRef = useRef<string | null>(null);
+
+  useEffect(() => {
+    fullscreenChartIdRef.current = fullscreenChartId;
+  }, [fullscreenChartId]);
+
 
   useEffect(() => {
     if (!open) return;
@@ -1061,6 +1334,7 @@ export function ProductivityAnalysisModal({ open, onClose }: Props) {
     const fetchData = async () => {
       setLoading(true);
       setError(null);
+      const started = performance.now();
       try {
         const res = await fetch("/api/productivity-insights");
         if (!res.ok) {
@@ -1069,11 +1343,35 @@ export function ProductivityAnalysisModal({ open, onClose }: Props) {
         const body: { rows: ProductivityRow[] } = await res.json();
         if (!cancelled) {
           setData(body.rows ?? []);
+          const elapsed = performance.now() - started;
+          if (elapsed >= 900) {
+            window.dispatchEvent(
+              new CustomEvent("pst:toast", {
+                detail: {
+                  kind: "info",
+                  title: "Charts loaded",
+                  message: `${(body.rows ?? []).length} data point(s).`,
+                  durationMs: elapsed
+                }
+              })
+            );
+          }
         }
       } catch (err) {
         if (!cancelled) {
           setError(
             err instanceof Error ? err.message : "Unable to load productivity insights."
+          );
+          const elapsed = performance.now() - started;
+          window.dispatchEvent(
+            new CustomEvent("pst:toast", {
+              detail: {
+                kind: "error",
+                title: "Chart load failed",
+                message: err instanceof Error ? err.message : "Unable to load productivity insights.",
+                durationMs: elapsed
+              }
+            })
           );
         }
       } finally {
@@ -1092,7 +1390,7 @@ export function ProductivityAnalysisModal({ open, onClose }: Props) {
 
   useEffect(() => {
     if (!open) {
-      setFullscreenChartId(null);
+      closeFullscreenChart();
       return;
     }
     const onKey = (e: KeyboardEvent) => {
@@ -1106,15 +1404,16 @@ export function ProductivityAnalysisModal({ open, onClose }: Props) {
         target?.isContentEditable;
 
       if (fullscreenChartId && !e.repeat && !inField) {
-        const idx = CHARTS.findIndex((c) => c.id === fullscreenChartId);
-        if (e.key === "[" && idx > 0) {
+        const ALL = [...CHARTS.map((c) => c.id)];
+        const idx = ALL.findIndex((id) => id === fullscreenChartId);
+        if (e.key === "ArrowLeft" && idx > 0) {
           e.preventDefault();
-          setFullscreenChartId(CHARTS[idx - 1]!.id);
+          setFullscreenChartId(ALL[idx - 1]!);
           return;
         }
-        if (e.key === "]" && idx >= 0 && idx < CHARTS.length - 1) {
+        if (e.key === "ArrowRight" && idx >= 0 && idx < ALL.length - 1) {
           e.preventDefault();
-          setFullscreenChartId(CHARTS[idx + 1]!.id);
+          setFullscreenChartId(ALL[idx + 1]!);
           return;
         }
       }
@@ -1122,7 +1421,7 @@ export function ProductivityAnalysisModal({ open, onClose }: Props) {
       if (e.key !== "Escape") return;
       if (fullscreenChartId) {
         e.preventDefault();
-        setFullscreenChartId(null);
+        closeFullscreenChart();
       } else {
         onClose();
       }
@@ -1138,6 +1437,42 @@ export function ProductivityAnalysisModal({ open, onClose }: Props) {
     return () => {
       document.body.style.overflow = prev;
     };
+  }, [fullscreenChartId]);
+
+  useEffect(() => {
+    if (typeof document === "undefined") return;
+    const docAny = document as unknown as {
+      fullscreenElement?: Element | null;
+      webkitFullscreenElement?: Element | null;
+    };
+    const compute = () =>
+      Boolean(docAny.fullscreenElement) || Boolean(docAny.webkitFullscreenElement);
+
+    const onFsChange = () => {
+      const active = compute();
+      setIsBrowserFullscreen(active);
+      // If the browser exits fullscreen (often via Esc), also close the in-app fullscreen overlay.
+      if (!active && fullscreenChartIdRef.current) {
+        setFullscreenChartId(null);
+      }
+    };
+
+    onFsChange();
+    document.addEventListener("fullscreenchange", onFsChange);
+    document.addEventListener("webkitfullscreenchange" as any, onFsChange);
+    return () => {
+      document.removeEventListener("fullscreenchange", onFsChange);
+      document.removeEventListener("webkitfullscreenchange" as any, onFsChange);
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!fullscreenChartId) return;
+    // Focus the close button for an app-like modal feel.
+    const t = window.setTimeout(() => {
+      fsCloseBtnRef.current?.focus();
+    }, 0);
+    return () => window.clearTimeout(t);
   }, [fullscreenChartId]);
 
   const windowMeta = useMemo(() => {
@@ -1240,9 +1575,30 @@ export function ProductivityAnalysisModal({ open, onClose }: Props) {
 
   if (!open) return null;
 
-  const fsChart = fullscreenChartId
-    ? CHARTS.find((c) => c.id === fullscreenChartId)
+  const fsAnyChart: FsAnyChart | null = fullscreenChartId
+    ? (FS_ALL.find((c) => c.id === fullscreenChartId) ?? null)
     : null;
+  const fsChart = fsAnyChart?.kind === "single" ? fsAnyChart.chart : null;
+
+  const getSeriesVis = (chartId: string, hasOverlay: boolean): { raw: boolean; avg: boolean } => {
+    const v = seriesVisibility[chartId];
+    if (!v) return { raw: true, avg: hasOverlay };
+    return { raw: v.raw, avg: hasOverlay ? v.avg : false };
+  };
+
+  const toggleSeries = (chartId: string, key: "raw" | "avg", hasOverlay: boolean) => {
+    setSeriesVisibility((prev) => {
+      const current = prev[chartId] ?? { raw: true, avg: hasOverlay };
+      const next = { ...current, [key]: !current[key] };
+      // Prevent hiding both when overlay exists; keep at least one visible.
+      if (hasOverlay && !next.raw && !next.avg) {
+        next.raw = true;
+      }
+      // If this chart doesn't have overlay, avg is always false.
+      if (!hasOverlay) next.avg = false;
+      return { ...prev, [chartId]: next };
+    });
+  };
   const fsPointsAll = fsChart ? byChart[fsChart.id] ?? [] : [];
   // `byChart` is already windowed (daily range), so don't slice again.
   const fsPoints = fsPointsAll;
@@ -1277,13 +1633,10 @@ export function ProductivityAnalysisModal({ open, onClose }: Props) {
       ? cumulativePopGrowthPercent(fsPoints, fsLatestVal)
       : null;
 
-  const fsChartIndex = fsChart ? CHARTS.findIndex((c) => c.id === fsChart.id) : -1;
-  const fsPrevChart =
-    fsChartIndex > 0 ? CHARTS[fsChartIndex - 1]! : null;
+  const fsChartIndex = fsAnyChart ? FS_ALL.findIndex((c) => c.id === fsAnyChart.id) : -1;
+  const fsPrevChart = fsChartIndex > 0 ? FS_ALL[fsChartIndex - 1]! : null;
   const fsNextChart =
-    fsChartIndex >= 0 && fsChartIndex < CHARTS.length - 1
-      ? CHARTS[fsChartIndex + 1]!
-      : null;
+    fsChartIndex >= 0 && fsChartIndex < FS_ALL.length - 1 ? FS_ALL[fsChartIndex + 1]! : null;
 
   const rangeControlsEl = (
     <div className="pa-range-controls" role="group" aria-label="Chart range and timeframe">
@@ -1293,6 +1646,7 @@ export function ProductivityAnalysisModal({ open, onClose }: Props) {
           className="ghost-button small"
           onClick={() => setWindowStart((s) => Math.max(0, s - windowStep))}
           disabled={windowMeta.start <= 0}
+          title="Shift the visible window to older history."
         >
           Older
         </button>
@@ -1308,6 +1662,7 @@ export function ProductivityAnalysisModal({ open, onClose }: Props) {
             })
           }
           disabled={windowMeta.end >= windowMeta.count}
+          title="Shift the visible window to newer history."
         >
           Newer
         </button>
@@ -1319,6 +1674,7 @@ export function ProductivityAnalysisModal({ open, onClose }: Props) {
           value={timeframe}
           onChange={(e) => setTimeframe(e.target.value as Timeframe)}
           aria-label="Chart timeframe"
+          title="Choose how to aggregate the timeline (daily/weekly/monthly/quarterly/annual)."
         >
           <option value="daily">Daily</option>
           <option value="weekly">Weekly</option>
@@ -1340,6 +1696,7 @@ export function ProductivityAnalysisModal({ open, onClose }: Props) {
               setDaysWindow(v as PaRangeDays);
             }
           }}
+          title="Choose how many days of history to include."
         >
           {PA_RANGE_OPTIONS.map((o) => (
             <option key={o.value} value={o.value}>
@@ -1519,7 +1876,7 @@ export function ProductivityAnalysisModal({ open, onClose }: Props) {
                               className="pa-expand-chart-btn"
                               aria-label={`Open full screen for ${chart.title}. Same range and timeframe. Press Escape to close.`}
                               title={`Open full screen: ${chart.title}. Keeps your current range and timeframe. Press Esc or Exit to return.`}
-                              onClick={() => setFullscreenChartId(chart.id)}
+                              onClick={() => openFullscreenChart(chart.id)}
                             >
                               <span className="pa-expand-icon" aria-hidden="true">
                                 <svg
@@ -1538,6 +1895,7 @@ export function ProductivityAnalysisModal({ open, onClose }: Props) {
                                   />
                                 </svg>
                               </span>
+                              <span className="pa-expand-text">Fullscreen</span>
                             </button>
                           )}
                         </div>
@@ -1592,6 +1950,9 @@ export function ProductivityAnalysisModal({ open, onClose }: Props) {
                         {points.length === 0 ? (
                           <div className="muted small pa-no-data">No data for this timeframe.</div>
                         ) : (
+                          (() => {
+                            const vis = getSeriesVis(chart.id, Boolean(overlay));
+                            return (
                           <>
                             <div className="pa-chart-window-caption" aria-label="Visible period">
                               <span className="pa-chart-window-caption-label">Shown</span>
@@ -1609,7 +1970,14 @@ export function ProductivityAnalysisModal({ open, onClose }: Props) {
                                 {points.length} {points.length === 1 ? "point" : "points"}
                               </span>
                             </div>
-                            {overlay && <PaDualSeriesLegend />}
+                            {overlay && (
+                              <PaDualSeriesLegend
+                                showRaw={vis.raw}
+                                showAvg={vis.avg}
+                                onToggleRaw={() => toggleSeries(chart.id, "raw", true)}
+                                onToggleAvg={() => toggleSeries(chart.id, "avg", true)}
+                              />
+                            )}
                           <InsightChart
                             chartId={chart.id}
                             points={points}
@@ -1621,13 +1989,18 @@ export function ProductivityAnalysisModal({ open, onClose }: Props) {
                             yAxisLabel={chart.yAxisLabel}
                             mode="inline"
                             showArea={chart.cumulative}
+                            showRaw={vis.raw}
+                            showAvg={vis.avg}
                           />
                           </>
+                            );
+                          })()
                         )}
                       </div>
                     </article>
                   );
                 })}
+
               </div>
             </div>
           )}
@@ -1635,32 +2008,75 @@ export function ProductivityAnalysisModal({ open, onClose }: Props) {
       </div>
     </div>
 
-    {fsChart && (
+    {fsAnyChart && (
       <div
         className="pa-fs-overlay pa-pro-shell"
         role="dialog"
         aria-modal="true"
-        aria-label={`${fsChart.title} — full screen`}
+        aria-labelledby="pa-fs-title"
+        aria-describedby="pa-fs-desc"
         onClick={(e) => {
-          if (e.target === e.currentTarget) setFullscreenChartId(null);
+          if (e.target === e.currentTarget) closeFullscreenChart();
+        }}
+        onKeyDown={(e) => {
+          if (e.key !== "Tab") return;
+          const host = fsChromeRef.current;
+          if (!host) return;
+          const focusables = Array.from(
+            host.querySelectorAll<HTMLElement>(
+              'button,[href],input,select,textarea,[tabindex]:not([tabindex="-1"])'
+            )
+          ).filter((el) => !el.hasAttribute("disabled") && !el.getAttribute("aria-hidden"));
+          if (focusables.length === 0) return;
+          const first = focusables[0]!;
+          const last = focusables[focusables.length - 1]!;
+          const active = document.activeElement as HTMLElement | null;
+          if (e.shiftKey) {
+            if (!active || active === first || !host.contains(active)) {
+              e.preventDefault();
+              last.focus();
+            }
+          } else {
+            if (active === last) {
+              e.preventDefault();
+              first.focus();
+            }
+          }
         }}
       >
         <div
+          ref={fsChromeRef}
           className="pa-fs-chrome"
           onClick={(e) => e.stopPropagation()}
         >
           <header className="pa-fs-header">
             <div className="pa-fs-header-main">
-              <h2 className="pa-fs-title">{fsChart.title}</h2>
-              <p className="pa-fs-desc">{fsChart.description}</p>
+              <h2 id="pa-fs-title" className="pa-fs-title">
+                {fsAnyChart.title}
+              </h2>
+              <p id="pa-fs-desc" className="pa-fs-desc">
+                {fsAnyChart.description}
+              </p>
             </div>
             <div className="pa-fs-actions">
+              {!isBrowserFullscreen && (
+                <button
+                  type="button"
+                  className="ghost-button small"
+                  onClick={() => void requestBrowserFullscreen()}
+                  title="Enter true browser full screen mode"
+                >
+                  Enter fullscreen
+                </button>
+              )}
               <button
+                ref={fsCloseBtnRef}
                 type="button"
                 className="ghost-button small"
-                onClick={() => setFullscreenChartId(null)}
+                onClick={closeFullscreenChart}
+                title="Close this chart full screen view"
               >
-                Exit full screen
+                Close
               </button>
             </div>
           </header>
@@ -1671,64 +2087,94 @@ export function ProductivityAnalysisModal({ open, onClose }: Props) {
               Scroll this chart horizontally if the timeline is wider than the screen.
             </p>
           </div>
-          {fsPoints.length > 0 && (
-            <div className="pa-fs-pills">
-              <div className="pa-pill">
-                <span className="pa-pill-label">
-                  {fsChart.cumulative ? "Vs prior period" : "Latest"}
-                </span>
-                <span className="pa-pill-value">{formatPillValue(fsLatestVal)}</span>
-              </div>
-              {fsChart.cumulative && (
-                <div
-                  className="pa-pill pa-pill-growth"
-                  title="Change vs prior cumulative level, as a percent of that level"
-                >
-                  <span className="pa-pill-label">Growth %</span>
-                  <span className="pa-pill-value pa-pill-value-growth">
-                    {formatGrowthPercent(fsCumulativeGrowthPct)}
-                  </span>
+          <div className="pa-fs-chart-host">
+            <PaErrorBoundary
+              title="Full screen view failed"
+              onClose={closeFullscreenChart}
+              onRecover={() => {
+                // Simple recover: close + reopen same chart id.
+                const id = fullscreenChartId;
+                closeFullscreenChart();
+                if (id) openFullscreenChart(id);
+              }}
+            >
+              {!fsChart ? (
+                <div className="muted pa-no-data pa-no-data-fs" role="alert">
+                  Full screen chart could not be shown (missing chart config). Close and try again.
                 </div>
-              )}
-              <div className="pa-pill pa-pill-muted">
-                <span className="pa-pill-label">Peak</span>
-                <span className="pa-pill-value">{formatPillValue(fsRawPeak)}</span>
-              </div>
-              {fsOverlayLatest !== null && fsOverlayPeak !== null && (
+              ) : fsPoints.length === 0 ? (
+                <div className="muted pa-no-data pa-no-data-fs">No data for this timeframe.</div>
+              ) : (
                 <>
-                  <div className="pa-pill pa-pill-avg">
-                    <span className="pa-pill-label">Avg · latest</span>
-                    <span className="pa-pill-value">{formatPillValue(fsOverlayLatest)}</span>
+                  <div className="pa-fs-pills">
+                    <div className="pa-pill">
+                      <span className="pa-pill-label">
+                        {fsChart.cumulative ? "Vs prior period" : "Latest"}
+                      </span>
+                      <span className="pa-pill-value">{formatPillValue(fsLatestVal)}</span>
+                    </div>
+                    {fsChart.cumulative && (
+                      <div
+                        className="pa-pill pa-pill-growth"
+                        title="Change vs prior cumulative level, as a percent of that level"
+                      >
+                        <span className="pa-pill-label">Growth %</span>
+                        <span className="pa-pill-value pa-pill-value-growth">
+                          {formatGrowthPercent(fsCumulativeGrowthPct)}
+                        </span>
+                      </div>
+                    )}
+                    <div className="pa-pill pa-pill-muted">
+                      <span className="pa-pill-label">Peak</span>
+                      <span className="pa-pill-value">{formatPillValue(fsRawPeak)}</span>
+                    </div>
+                    {fsOverlayLatest !== null && fsOverlayPeak !== null && (
+                      <>
+                        <div className="pa-pill pa-pill-avg">
+                          <span className="pa-pill-label">Avg · latest</span>
+                          <span className="pa-pill-value">{formatPillValue(fsOverlayLatest)}</span>
+                        </div>
+                        <div className="pa-pill pa-pill-avg-muted">
+                          <span className="pa-pill-label">Avg · peak</span>
+                          <span className="pa-pill-value">{formatPillValue(fsOverlayPeak)}</span>
+                        </div>
+                      </>
+                    )}
                   </div>
-                  <div className="pa-pill pa-pill-avg-muted">
-                    <span className="pa-pill-label">Avg · peak</span>
-                    <span className="pa-pill-value">{formatPillValue(fsOverlayPeak)}</span>
-                  </div>
+                  {(() => {
+                    const vis = getSeriesVis(fsChart.id, Boolean(fsOverlay));
+                    return (
+                      <>
+                        {fsOverlay && (
+                          <PaDualSeriesLegend
+                            fullscreen
+                            showRaw={vis.raw}
+                            showAvg={vis.avg}
+                            onToggleRaw={() => toggleSeries(fsChart.id, "raw", true)}
+                            onToggleAvg={() => toggleSeries(fsChart.id, "avg", true)}
+                          />
+                        )}
+                        <InsightChart
+                          chartId={fsChart.id}
+                          points={fsPoints}
+                          overlayPoints={fsOverlay}
+                          yMin={fsYDomain.yMin}
+                          yMax={fsYDomain.yMax}
+                          timeframe={timeframe}
+                          xAxisLabel={timeframe === "daily" ? "Date" : "Period"}
+                          yAxisLabel={fsChart.yAxisLabel}
+                          mode="fullscreen"
+                          idSuffix="-fs"
+                          showArea={fsChart.cumulative}
+                          showRaw={vis.raw}
+                          showAvg={vis.avg}
+                        />
+                      </>
+                    );
+                  })()}
                 </>
               )}
-            </div>
-          )}
-          <div className="pa-fs-chart-host">
-            {fsPoints.length === 0 ? (
-              <div className="muted pa-no-data pa-no-data-fs">No data for this timeframe.</div>
-            ) : (
-              <>
-                {fsOverlay && <PaDualSeriesLegend fullscreen />}
-                <InsightChart
-                  chartId={fsChart.id}
-                  points={fsPoints}
-                  overlayPoints={fsOverlay}
-                  yMin={fsYDomain.yMin}
-                  yMax={fsYDomain.yMax}
-                  timeframe={timeframe}
-                  xAxisLabel={timeframe === "daily" ? "Date" : "Period"}
-                  yAxisLabel={fsChart.yAxisLabel}
-                  mode="fullscreen"
-                  idSuffix="-fs"
-                  showArea={fsChart.cumulative}
-                />
-              </>
-            )}
+            </PaErrorBoundary>
             <nav
               className="pa-fs-chart-nav pa-fs-chart-nav--below-axis"
               aria-label="Switch productivity chart without leaving full screen"
@@ -1766,10 +2212,10 @@ export function ProductivityAnalysisModal({ open, onClose }: Props) {
 
               <div className="pa-fs-chart-nav-center">
                 <span className="pa-fs-chart-nav-counter">
-                  Chart {fsChartIndex + 1} of {CHARTS.length}
+                  Chart {fsChartIndex + 1} of {FS_ALL.length}
                 </span>
                 <span className="pa-fs-chart-nav-keys-hint muted small">
-                  Keys <kbd className="pa-kbd">[</kbd> <kbd className="pa-kbd">]</kbd>
+                  Keys <kbd className="pa-kbd">←</kbd> <kbd className="pa-kbd">→</kbd>
                 </span>
               </div>
 

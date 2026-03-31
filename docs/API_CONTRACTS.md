@@ -1,6 +1,6 @@
 # API Contracts — Focista Schedulo
 
-**Last updated:** 2026-04-01  
+**Last updated:** 2026-03-31  
 **Owner:** Engineering  
 **Base URL (development):** `http://localhost:4000` (frontend dev server proxies `/api` from port `5173`)
 
@@ -78,6 +78,11 @@ This document summarizes REST endpoints, request and response shapes, and valida
 
 Full validation: `TaskSchema` in `backend/src/index.ts`.
 
+### Data integrity invariant (project association)
+
+- Tasks that share the same `parentId` (series identity) are enforced to share the same `projectId`.
+- This prevents parent/child/occurrence records from drifting into different projects and keeps project-scoped filters consistent.
+
 ---
 
 ## Stats (gamification)
@@ -111,7 +116,7 @@ Full validation: `TaskSchema` in `backend/src/index.ts`.
 
 | Method | Path | Response |
 |--------|------|----------|
-| `GET` | `/api/productivity-insights` | `{ rows: ProductivityRow[] }` |
+| `GET` | `/api/productivity-insights` | `{ rows: ProductivityRow[], projectBreakdown?: ProjectBreakdown }` |
 
 ### `ProductivityRow`
 
@@ -129,6 +134,15 @@ Daily aggregates used by **Productivity Analysis** (`ProductivityAnalysisModal.t
 
 If there are no qualifying completions, `rows` is `[]`.
 
+### `ProjectBreakdown` (optional)
+
+When there are projects and completed tasks associated with projects, the response includes a `projectBreakdown` payload to support per-project analysis views.
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `projects` | `{ id: string, name: string }[]` | Projects included in the breakdown legend. |
+| `rows` | `{ date: string, tasksCompletedByProject: Record<string, number>, xpGainedByProject: Record<string, number> }[]` | Per-day per-project counts/XP (points) keyed by `projectId`. |
+
 ---
 
 ## Admin
@@ -136,8 +150,37 @@ If there are no qualifying completions, `rows` is `[]`.
 | Method | Path | Response |
 |--------|------|----------|
 | `POST` | `/api/admin/reload-data` | `{ ok: true, counts: { projects, tasks } }` or `{ ok: false, error }` |
+| `POST` | `/api/admin/save-data` | `{ ok: true, counts: { projects, tasks } }` or `{ ok: false, error }` |
+| `POST` | `/api/admin/import` | `{ ok: true, imported: { projects, tasks }, counts: { projects, tasks } }` or `{ ok: false, error }` |
 
 Reloads JSON from disk without extra persistence. Used by header **Sync data** after external file edits.
+
+### Save (`POST /api/admin/save-data`)
+
+Persists current in-memory `projects` and `tasks` into `backend/data/*.json`, then runs the same normalization pipeline as startup (via `loadData()`). This is used by the header **Save** action to:
+
+- merge duplicates defensively
+- normalize IDs and series identity deterministically
+- ensure aggregate caches align with persisted state
+
+### Import (`POST /api/admin/import`)
+
+Imports **JSON** or **CSV** exports and merges them into current persisted data. The backend then runs the same normalization and dedupe logic as startup `loadData()`:
+
+- project ID resequencing (`P1..Pn`) + task reference migration
+- series parent/child ID normalization
+- duplicate ID cleanup + same-series same-date collapse
+
+Request body:
+
+```json
+{ "format": "json" | "csv", "content": "<file text>" }
+```
+
+Accepted formats:
+
+- **JSON**: export payload `{ app, exportedAt, projects: Project[], tasks: Task[] }` (as produced by Export JSON)
+- **CSV**: a single file with both `recordType=project` and `recordType=task` rows (as produced by Export CSV)
 
 ---
 

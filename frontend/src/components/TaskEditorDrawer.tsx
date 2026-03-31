@@ -2,9 +2,9 @@ import { Task } from "./TaskBoard";
 import { useEffect, useRef, useState } from "react";
 
 interface TaskEditorDrawerProps {
-  task: Task | null;
+  task: Task | Task[] | null;
   onClose: () => void;
-  onSave: (task: Task) => void;
+  onSave: (task: Task | Task[]) => void;
   // Emits live label tokens while user edits, so the board/hovercard can update
   // before "Save task" is pressed.
   onLabelsDraftChange?: (labels: string[]) => void;
@@ -31,30 +31,63 @@ export function TaskEditorDrawer({
   onLabelsDraftChange,
   onLinksDraftChange
 }: TaskEditorDrawerProps) {
-  const [draft, setDraft] = useState<Task | null>(task);
-  // Keep the text inputs for labels/location empty so users can add new
-  // values without having to clear the existing draft content first.
-  const [labelsInputValue, setLabelsInputValue] = useState<string>("");
-  const hasInteractedWithLabelsRef = useRef(false);
-  const [selectedLabelKeys, setSelectedLabelKeys] = useState<Set<string>>(
+  const [draft, setDraft] = useState<Task | null>(Array.isArray(task) ? task[0] ?? null : task);
+  const [createMode, setCreateMode] = useState<"single" | "multiple">("single");
+  type BatchItem = {
+    key: string;
+    source?: Task;
+    title: string;
+    description?: string;
+    priority?: Task["priority"];
+    dueDate?: string;
+    dueTime?: string;
+    durationMinutes?: number;
+    reminderMinutesBefore?: number;
+    repeat?: Task["repeat"];
+    repeatEvery?: number;
+    repeatUnit?: Task["repeatUnit"];
+    labels?: string[];
+    location?: string;
+    link?: string[];
+  };
+  const [batchItems, setBatchItems] = useState<BatchItem[]>([]);
+  const [batchActiveIdx, setBatchActiveIdx] = useState(0);
+  const [batchVoiceTouchedKeys, setBatchVoiceTouchedKeys] = useState<Set<string>>(
     () => new Set()
   );
-  // Prevent the "sync labels -> input" effect from immediately overwriting
-  // the user's cleared buffer right after committing labels via Enter/blur.
-  const suppressLabelsInputSyncRef = useRef(false);
-
-  const [linksInputValue, setLinksInputValue] = useState<string>(
-    ""
-  );
-  const [locationInputValue, setLocationInputValue] = useState<string>("");
-  const hasInteractedWithLinksRef = useRef(false);
-  const suppressLinksInputSyncRef = useRef(false);
+  // Editor input model is unified across Single and Multiple:
+  // direct inputs bind to task fields (labels/link/location stored on the task itself).
   const [voiceSupported, setVoiceSupported] = useState(true);
   const [listening, setListening] = useState(false);
   const [voiceError, setVoiceError] = useState<string | null>(null);
   const [voiceTranscript, setVoiceTranscript] = useState("");
   const [durationUnit, setDurationUnit] = useState<"minute" | "hour" | "day">("minute");
   const [durationAmount, setDurationAmount] = useState<string>("");
+  const [batchDurationUnit, setBatchDurationUnit] = useState<"minute" | "hour" | "day">("minute");
+  const [batchDurationAmount, setBatchDurationAmount] = useState<string>("");
+
+  const emptyBatchItem = (): BatchItem => ({
+    key: `m-${Date.now()}`,
+    title: "",
+    description: "",
+    priority: "medium",
+    dueDate: undefined,
+    dueTime: undefined,
+    durationMinutes: undefined,
+    reminderMinutesBefore: undefined,
+    repeat: "none",
+    repeatEvery: undefined,
+    repeatUnit: undefined,
+    labels: [],
+    location: undefined,
+    link: undefined
+  });
+
+  const isMultiEdit = Array.isArray(task) && task.length > 0;
+  const isMultiCreate = createMode === "multiple" && draft?.id === "new" && !isMultiEdit;
+  const multipleFlow = createMode === "multiple" && (draft?.id === "new" || isMultiEdit);
+
+  // (Intentionally no per-task number stepper UI; navigation is via Prev/Next only.)
 
   const parseLabelsInput = (raw: string): string[] => {
     const cleaned = raw
@@ -363,41 +396,47 @@ export function TaskEditorDrawer({
   };
 
   useEffect(() => {
+    if (Array.isArray(task)) {
+      const compareDueDateDesc = (a: Task, b: Task) => {
+        // Match list/table sorting: missing dueDate goes last, otherwise ISO desc.
+        if (!a.dueDate && !b.dueDate) return 0;
+        if (!a.dueDate) return 1;
+        if (!b.dueDate) return -1;
+        return b.dueDate.localeCompare(a.dueDate);
+      };
+      const sorted = task.slice().sort(compareDueDateDesc);
+      setDraft(sorted[0] ?? null);
+      setCreateMode("multiple");
+      setBatchItems(
+        sorted.map((t, idx) => ({
+          key: `e-${t.id}-${idx}`,
+          source: t,
+          title: t.title ?? "",
+          description: t.description ?? "",
+          priority: t.priority ?? "medium",
+          dueDate: t.dueDate,
+          dueTime: t.dueTime,
+          durationMinutes: t.durationMinutes,
+          reminderMinutesBefore: t.reminderMinutesBefore,
+          repeat: t.repeat ?? "none",
+          repeatEvery: t.repeatEvery,
+          repeatUnit: t.repeatUnit,
+          labels: t.labels ?? [],
+          location: t.location,
+          link: t.link
+        }))
+      );
+      setBatchActiveIdx(0);
+      setBatchVoiceTouchedKeys(new Set());
+      return;
+    }
+
     setDraft(task);
-    setLabelsInputValue("");
-    // Keep the input itself empty so the user can add new links without
-    // having to clear the existing tokens first.
-    setLinksInputValue("");
-    // Avoid emitting label updates on open/mount.
-    hasInteractedWithLabelsRef.current = false;
-    hasInteractedWithLinksRef.current = false;
-    setSelectedLabelKeys(new Set());
-    setLocationInputValue("");
+    setCreateMode("single");
+    setBatchItems([]);
+    setBatchActiveIdx(0);
+    setBatchVoiceTouchedKeys(new Set());
   }, [task]);
-
-  useEffect(() => {
-    // Keep text input in sync when labels are updated via voice or other actions.
-    if (!draft) return;
-    if (suppressLabelsInputSyncRef.current) {
-      suppressLabelsInputSyncRef.current = false;
-      return;
-    }
-    // Input stays blank by design; labels are edited via the chips + Enter/blur.
-    setLabelsInputValue("");
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [draft?.id, draft?.labels]);
-
-  useEffect(() => {
-    // Keep links input in sync when links are updated via voice or other actions.
-    if (!draft) return;
-    if (suppressLinksInputSyncRef.current) {
-      suppressLinksInputSyncRef.current = false;
-      return;
-    }
-    // Input stays empty by design; links render via preview chips.
-    setLinksInputValue("");
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [draft?.id, draft?.link]);
 
   const setDurationUIFromMinutes = (mins: number | undefined | null) => {
     if (mins === undefined || mins === null) {
@@ -419,6 +458,26 @@ export function TaskEditorDrawer({
     setDurationAmount(String(mins));
   };
 
+  const setBatchDurationUIFromMinutes = (mins: number | undefined | null) => {
+    if (mins === undefined || mins === null) {
+      setBatchDurationUnit("minute");
+      setBatchDurationAmount("");
+      return;
+    }
+    if (mins % 1440 === 0) {
+      setBatchDurationUnit("day");
+      setBatchDurationAmount(String(mins / 1440));
+      return;
+    }
+    if (mins % 60 === 0) {
+      setBatchDurationUnit("hour");
+      setBatchDurationAmount(String(mins / 60));
+      return;
+    }
+    setBatchDurationUnit("minute");
+    setBatchDurationAmount(String(mins));
+  };
+
   useEffect(() => {
     setDurationUIFromMinutes(task?.durationMinutes);
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -429,6 +488,15 @@ export function TaskEditorDrawer({
     setDurationUIFromMinutes(draft?.durationMinutes);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [draft?.durationMinutes]);
+
+  useEffect(() => {
+    if (createMode !== "multiple") return;
+    // In both multi-create and multi-edit, Duration UI is shared, so it must be
+    // re-hydrated from the active row whenever the selection changes.
+    const row = batchItems[batchActiveIdx];
+    setBatchDurationUIFromMinutes(row?.durationMinutes);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [createMode, batchActiveIdx, batchItems[batchActiveIdx]?.durationMinutes]);
 
   useEffect(() => {
     if (typeof window === "undefined") {
@@ -442,77 +510,17 @@ export function TaskEditorDrawer({
     setVoiceSupported(has);
   }, []);
 
-  const draftLabels = (draft?.labels ?? []).slice();
-  const pendingLabelTokens = parseLabelsInput(labelsInputValue);
-  const previewLabels =
-    pendingLabelTokens.length > 0
-      ? mergeLabelTokens(draftLabels, pendingLabelTokens)
-      : draftLabels.slice().sort(
-          (a, b) => a.toLowerCase().localeCompare(b.toLowerCase()) || a.localeCompare(b)
-        );
-
   useEffect(() => {
     if (!onLabelsDraftChange) return;
-    if (!hasInteractedWithLabelsRef.current) return;
-    onLabelsDraftChange(previewLabels);
-  }, [onLabelsDraftChange, previewLabels.join("|")]);
-
-  const draftLinks = (draft?.link ?? []).slice();
-  const pendingLinkTokens = parseLinksInput(linksInputValue);
-  const previewLinks =
-    pendingLinkTokens.length > 0
-      ? mergeLinkTokens(draftLinks, pendingLinkTokens)
-      : draftLinks.slice();
-
-  const draftLocations = deserializeLocationTokens(draft?.location);
-  const pendingLocationTokens = parseLocationsInput(locationInputValue);
-  const previewLocations =
-    pendingLocationTokens.length > 0
-      ? mergeLocationTokens(draftLocations, pendingLocationTokens)
-      : draftLocations.slice();
+    if (!draft || draft.id === "new") return;
+    onLabelsDraftChange(draft.labels ?? []);
+  }, [onLabelsDraftChange, draft?.id, (draft?.labels ?? []).join("|")]);
 
   useEffect(() => {
     if (!onLinksDraftChange) return;
-    if (!hasInteractedWithLinksRef.current) return;
-    onLinksDraftChange(previewLinks);
-  }, [onLinksDraftChange, previewLinks.join("|")]);
-
-  const labelKey = (s: string) => s.trim().toLowerCase();
-  const sortLabelsAsc = (labels: string[]) =>
-    labels
-      .slice()
-      .sort((a, b) => labelKey(a).localeCompare(labelKey(b)) || a.localeCompare(b));
-
-  const applyLabelSet = (nextLabels: string[]) => {
-    if (!draft) return;
-    const sorted = sortLabelsAsc(nextLabels);
-    hasInteractedWithLabelsRef.current = true;
-    suppressLabelsInputSyncRef.current = true;
-    setDraft({ ...draft, labels: sorted });
-    // Keep the input itself blank; show values as preview chips only.
-    setLabelsInputValue("");
-    setSelectedLabelKeys(new Set());
-  };
-
-  const applyLinkSet = (nextLinks: string[]) => {
-    if (!draft) return;
-    const sorted = sortLinksAsc(nextLinks);
-    hasInteractedWithLinksRef.current = true;
-    suppressLinksInputSyncRef.current = true;
-    setDraft({ ...draft, link: sorted.length ? sorted : undefined });
-    // Keep input empty; user edits via the dedicated input box above.
-    setLinksInputValue("");
-  };
-
-  const applyLocationSet = (nextLocations: string[]) => {
-    if (!draft) return;
-    const merged = nextLocations.map((l) => l.trim()).filter(Boolean);
-    setDraft({
-      ...draft,
-      location: serializeLocationTokens(merged)
-    });
-    setLocationInputValue("");
-  };
+    if (!draft || draft.id === "new") return;
+    onLinksDraftChange(draft.link ?? []);
+  }, [onLinksDraftChange, draft?.id, (draft?.link ?? []).join("|")]);
 
   if (!draft) return null;
 
@@ -916,9 +924,109 @@ export function TaskEditorDrawer({
   };
 
   const applyVoiceTranscript = (text: string) => {
-    hasInteractedWithLabelsRef.current = true;
     const cleaned = text.trim().replace(/\s+/g, " ");
     if (!cleaned) return;
+
+    // Multiple-create: either add list items OR apply fields to the current editor draft.
+    if (draft?.id === "new" && createMode === "multiple") {
+      const splitBatchTitles = (raw: string): string[] => {
+        const t = raw
+          .trim()
+          .replace(/\s*\n+\s*/g, "\n")
+          .replaceAll("•", "\n")
+          .replaceAll(";", "\n")
+          .replace(/\s*\.\s+/g, "\n")
+          .replace(/\s+(?:then|next|and then|also)\s+/gi, "\n")
+          .replace(/\s*,\s*/g, "\n");
+        const lines = t
+          .split("\n")
+          .map((s) => s.trim())
+          .filter(Boolean);
+        const out: string[] = [];
+        const seen = new Set<string>();
+        for (const line of lines) {
+          const key = line.toLowerCase();
+          if (seen.has(key)) continue;
+          seen.add(key);
+          out.push(line);
+        }
+        return out.slice(0, 50);
+      };
+
+      const looksLikeFieldInput = /\b(priority|prioritas|due|tanggal|date|on|time|jam|pukul|repeat|every|labels?|label|lokasi|location|reminder|ingatkan|pengingat|duration|durasi|selama|for|description|deskripsi|title|judul)\b/i.test(
+        text
+      );
+      const hasListSeparators = /[\n•;]/.test(text) || /\b(?:then|next|and then|also)\b/i.test(text);
+
+      // If it doesn't look like field commands, treat it as a list of task titles.
+      if (hasListSeparators && !looksLikeFieldInput) {
+        const incoming = splitBatchTitles(text);
+        if (incoming.length === 0) return;
+        setBatchItems((prev) => {
+          const existingKeys = new Set(
+            prev.map((p) => p.title.trim().toLowerCase()).filter(Boolean)
+          );
+          const now = Date.now();
+          const additions = incoming
+            .map((t) => t.trim())
+            .filter(Boolean)
+            .filter((t) => !existingKeys.has(t.toLowerCase()))
+            .map((t, i) => ({ key: `v-${now}-${i}`, title: t }));
+          return [...prev, ...additions].slice(0, 50);
+        });
+        return;
+      }
+
+      // Otherwise apply parsed fields to the active row (dedicated per task).
+      const parsed = parseVoiceFields(cleaned);
+      setBatchItems((prev) => {
+        const base = prev.length ? prev.slice() : [emptyBatchItem()];
+        const idx = Math.max(0, Math.min(base.length - 1, batchActiveIdx));
+        const cur = base[idx] ?? emptyBatchItem();
+
+        const nextTitleFromSpeech =
+          typeof parsed.title === "string" && parsed.title.trim().length > 0
+            ? parsed.title.trim()
+            : cleaned.split(" ").slice(0, 8).join(" ");
+        const nextTitle =
+          (parsed._explicitTitle ? nextTitleFromSpeech : cur.title).trim().length > 0
+            ? (parsed._explicitTitle ? nextTitleFromSpeech : cur.title)
+            : nextTitleFromSpeech;
+
+        const existingDesc = (cur.description ?? "").trim();
+        const nextDescBase = parsed._explicitDescription
+          ? String(parsed.description ?? "").trim()
+          : existingDesc.length > 0
+            ? `${existingDesc}\n${cleaned}`
+            : cleaned;
+
+        const {
+          labels: _labels,
+          _explicitTitle: _et,
+          _explicitDescription: _ed,
+          ...taskFields
+        } = parsed;
+
+        base[idx] = {
+          ...cur,
+          ...taskFields,
+          title: nextTitle,
+          description: nextDescBase
+        };
+        return base;
+      });
+      setBatchVoiceTouchedKeys((prev) => {
+        const next = new Set(prev);
+        const key = batchItems[batchActiveIdx]?.key;
+        if (key) next.add(key);
+        return next;
+      });
+      if (parsed.durationMinutes !== undefined) {
+        setBatchDurationUIFromMinutes(parsed.durationMinutes);
+      }
+      return;
+    }
+
     const parsed = parseVoiceFields(cleaned);
     setDraft((prev) => {
       if (!prev) return prev;
@@ -1083,99 +1191,554 @@ export function TaskEditorDrawer({
     <div className="drawer-backdrop" onClick={onClose}>
       <aside className="drawer" onClick={(e) => e.stopPropagation()}>
         <header className="drawer-header">
-          <h2>{draft.id === "new" ? "New task" : "Edit task"}</h2>
+          <div className="drawer-header-top">
+            <div className="drawer-header-copy">
+              <h2>{draft.id === "new" ? "Create task" : "Edit task"}</h2>
+              <div className="drawer-subtitle">
+                {draft.id === "new"
+                  ? createMode === "multiple"
+                    ? "Add many tasks quickly, then review each with the same editor."
+                    : "Fast capture with voice + a clean, focused form."
+                  : "Update details and keep your schedule accurate."}
+              </div>
+            </div>
+          </div>
+
+          {draft.id === "new" ? (
+            <div className="drawer-header-actions" role="tablist" aria-label="Create mode">
+              <div className="segmented">
+                <button
+                  type="button"
+                  className={`ghost-button small ${createMode === "single" ? "is-active" : ""}`}
+                  onClick={() => setCreateMode("single")}
+                  title="Create one task (standard editor)"
+                  role="tab"
+                  aria-selected={createMode === "single"}
+                >
+                  Single
+                </button>
+                <button
+                  type="button"
+                  className={`ghost-button small ${createMode === "multiple" ? "is-active" : ""}`}
+                  onClick={() => {
+                    setCreateMode("multiple");
+                    setBatchItems([{ ...emptyBatchItem(), key: `m-${Date.now()}` }]);
+                    setBatchActiveIdx(0);
+                  }}
+                  title="Create multiple tasks at once"
+                  role="tab"
+                  aria-selected={createMode === "multiple"}
+                >
+                  Multiple
+                </button>
+              </div>
+              <span className="drawer-kbd-hint">
+                {createMode === "multiple"
+                  ? "Paste a list, then review tasks one by one."
+                  : "Tip: use Voice capture for speed."}
+              </span>
+            </div>
+          ) : null}
         </header>
         <div className="drawer-body">
-          <div style={{ display: "flex", gap: "0.5rem", alignItems: "center" }}>
-            <button
-              type="button"
-              className="ghost-button"
-              disabled={!voiceSupported || listening}
-              onClick={() => startVoiceInput()}
-              title={
-                voiceSupported
-                  ? "Start voice input (auto-stops after 1 minute of silence)"
-                  : "Voice input not supported in this browser"
-              }
-            >
-              {listening ? "Listening…" : "Voice input"}
-            </button>
-            {listening && (
-              <span className="pill subtle">
-                Auto-stops when you finish speaking
-              </span>
+          {draft.id === "new" ? null : null}
+
+          <div className="drawer-card">
+            <div className="drawer-voice-top">
+              <div>
+                <div className="drawer-card-title">Voice capture</div>
+                <div className="drawer-card-desc">
+                  Speak naturally. For multiple tasks, either speak a list (to add rows) or speak field details for the active row.
+                </div>
+              </div>
+              <div className="drawer-voice-meta">
+                <button
+                  type="button"
+                  className="ghost-button"
+                  disabled={!voiceSupported || listening}
+                  onClick={() => startVoiceInput()}
+                  title={
+                    voiceSupported
+                      ? "Start voice input (auto-stops after 1 minute of silence)"
+                      : "Voice input not supported in this browser"
+                  }
+                >
+                  {listening ? "Listening…" : "Voice input"}
+                </button>
+                {listening && (
+                  <span className="pill subtle">
+                    Auto-stops when you finish speaking
+                  </span>
+                )}
+                {voiceError && <span className="pill subtle">Voice: {voiceError}</span>}
+              </div>
+            </div>
+            {listening && voiceTranscript && (
+              <div className="drawer-transcript" aria-label="Live transcript">
+                {voiceTranscript}
+              </div>
             )}
-            {voiceError && <span className="pill subtle">Voice: {voiceError}</span>}
           </div>
-          {listening && voiceTranscript && (
-            <p className="muted" style={{ marginTop: "0.5rem" }}>
-              {voiceTranscript}
-            </p>
+
+          {multipleFlow ? (
+            <div className="drawer-card">
+              <div className="drawer-card-head">
+                <div>
+                  <div className="drawer-card-title">Multiple tasks</div>
+                  <div className="drawer-card-desc">
+                    Add tasks, then review each one with the same editor (like a guided form).
+                  </div>
+                </div>
+              </div>
+
+              {isMultiCreate ? (
+                <div className="drawer-row drawer-row--between" style={{ marginTop: "0.55rem" }}>
+                  <div className="drawer-row drawer-row--tight">
+                    <button
+                      type="button"
+                      className="ghost-button small"
+                      onClick={() => {
+                        const now = Date.now();
+                        setBatchItems((prev) => {
+                          const next = [...prev, { ...emptyBatchItem(), key: `m-${now}` }].slice(0, 50);
+                          setBatchActiveIdx(Math.max(0, Math.min(49, next.length - 1)));
+                          return next;
+                        });
+                      }}
+                      title="Add another task"
+                    >
+                      Add task
+                    </button>
+                    <button
+                      type="button"
+                      className="ghost-button small"
+                      disabled={batchItems.length <= 1}
+                      onClick={() => {
+                        setBatchItems((prev) => {
+                          if (prev.length <= 1) return prev;
+                          const idx = Math.max(0, Math.min(prev.length - 1, batchActiveIdx));
+                          const next = prev.filter((_, i) => i !== idx);
+                          setBatchActiveIdx((cur) => Math.max(0, Math.min(cur, next.length - 1)));
+                          return next.length ? next : [{ ...emptyBatchItem(), key: `m-${Date.now()}` }];
+                        });
+                      }}
+                      title="Remove current task"
+                    >
+                      Remove
+                    </button>
+                  </div>
+                </div>
+              ) : (
+                <div className="drawer-row drawer-row--between" style={{ marginTop: "0.55rem" }}>
+                  <span className="muted small" aria-label="Multiple edit hint">
+                    Editing {batchItems.length} task{batchItems.length === 1 ? "" : "s"} (latest due date first).
+                  </span>
+                </div>
+              )}
+
+              <div className="drawer-card" style={{ marginTop: "0.65rem" }}>
+                <div className="drawer-card-head">
+                  <div className="drawer-row drawer-row--tight" style={{ justifyContent: "space-between", flex: 1 }}>
+                    <div className="drawer-row drawer-row--tight">
+                      <div className="drawer-card-title">Task details</div>
+                      {batchItems.length > 1 ? (
+                        <span className="pill subtle" aria-label="Task position">
+                          {batchActiveIdx + 1}/{batchItems.length}
+                        </span>
+                      ) : null}
+                    </div>
+                    {batchItems[batchActiveIdx] &&
+                    batchVoiceTouchedKeys.has(batchItems[batchActiveIdx]!.key) ? (
+                      <span className="pill subtle" title="This task has been updated by voice input">
+                        Voice-updated
+                      </span>
+                    ) : (
+                      <span className="pill subtle" title="You can fill fields manually or using voice input">
+                        Manual/voice
+                      </span>
+                    )}
+                  </div>
+                </div>
+
+                {(() => {
+                  const row = batchItems[batchActiveIdx];
+                  if (!row) return null;
+                  return (
+                    <>
+                      <div className="drawer-card" style={{ padding: 0, border: "none", boxShadow: "none" }}>
+                        <div className="drawer-card-head" style={{ marginBottom: "0.6rem" }}>
+                          <div>
+                            <div className="drawer-card-title">Basics</div>
+                          </div>
+                        </div>
+                      <label className="field">
+                        <span>Title</span>
+                        <input
+                          value={row.title}
+                          onChange={(e) => {
+                            const v = e.target.value;
+                            setBatchItems((prev) =>
+                              prev.map((p, i) => (i === batchActiveIdx ? { ...p, title: v } : p))
+                            );
+                          }}
+                          placeholder="What do you want to accomplish?"
+                          title="Task title (required)."
+                        />
+                      </label>
+
+                      <label className="field">
+                        <span>Description</span>
+                        <textarea
+                          value={row.description ?? ""}
+                          onChange={(e) => {
+                            const v = e.target.value;
+                            setBatchItems((prev) =>
+                              prev.map((p, i) => (i === batchActiveIdx ? { ...p, description: v } : p))
+                            );
+                          }}
+                          placeholder="Add more context, links, or notes."
+                          rows={4}
+                          title="Optional description for additional context."
+                        />
+                      </label>
+
+                      <div className="field-grid">
+                        <label className="field">
+                          <span>Priority</span>
+                          <select
+                            value={row.priority ?? "medium"}
+                            onChange={(e) => {
+                              const v = e.target.value as Task["priority"];
+                              setBatchItems((prev) =>
+                                prev.map((p, i) => (i === batchActiveIdx ? { ...p, priority: v } : p))
+                              );
+                            }}
+                            title="Priority sets urgency and completion points (low=1, medium=2, high=3, urgent=4)."
+                          >
+                            <option value="low">Low</option>
+                            <option value="medium">Medium</option>
+                            <option value="high">High</option>
+                            <option value="urgent">Urgent</option>
+                          </select>
+                        </label>
+
+                        <label className="field">
+                          <span>Repeat</span>
+                          <select
+                            value={row.repeat ?? "none"}
+                            onChange={(e) => {
+                              const v = e.target.value as Task["repeat"];
+                              setBatchItems((prev) =>
+                                prev.map((p, i) => (i === batchActiveIdx ? { ...p, repeat: v } : p))
+                              );
+                            }}
+                            title="Repeat pattern for recurring tasks."
+                          >
+                            <option value="none">No repetition</option>
+                            <option value="daily">Daily</option>
+                            <option value="weekly">Weekly</option>
+                            <option value="weekdays">Weekdays (Mon–Fri)</option>
+                            <option value="weekends">Weekends (Sat–Sun)</option>
+                            <option value="monthly">Monthly</option>
+                            <option value="quarterly">Quarterly</option>
+                            <option value="yearly">Annually</option>
+                            <option value="custom">Custom…</option>
+                          </select>
+                        </label>
+                      </div>
+
+                      {row.repeat === "custom" ? (
+                        <div className="field-grid">
+                          <label className="field">
+                            <span>Every</span>
+                            <input
+                              type="number"
+                              min={1}
+                              value={row.repeatEvery ?? 1}
+                              onChange={(e) => {
+                                const n = Number(e.target.value) || 1;
+                                setBatchItems((prev) =>
+                                  prev.map((p, i) =>
+                                    i === batchActiveIdx ? { ...p, repeatEvery: n } : p
+                                  )
+                                );
+                              }}
+                            />
+                          </label>
+                          <label className="field">
+                            <span>Unit</span>
+                            <select
+                              value={row.repeatUnit ?? "week"}
+                              onChange={(e) => {
+                                const v = e.target.value as Task["repeatUnit"];
+                                setBatchItems((prev) =>
+                                  prev.map((p, i) =>
+                                    i === batchActiveIdx ? { ...p, repeatUnit: v } : p
+                                  )
+                                );
+                              }}
+                            >
+                              <option value="day">Day(s)</option>
+                              <option value="week">Week(s)</option>
+                              <option value="month">Month(s)</option>
+                              <option value="quarter">Quarter(s)</option>
+                              <option value="year">Year(s)</option>
+                            </select>
+                          </label>
+                        </div>
+                      ) : null}
+                      </div>
+
+                      <div className="drawer-card" style={{ padding: 0, border: "none", boxShadow: "none" }}>
+                        <div className="drawer-card-head" style={{ margin: "0.8rem 0 0.6rem" }}>
+                          <div>
+                            <div className="drawer-card-title">Schedule</div>
+                            <div className="drawer-card-desc">When should it happen, and how long?</div>
+                          </div>
+                        </div>
+                      <div className="field-grid">
+                        <label className="field">
+                          <span>Date</span>
+                          <input
+                            type="date"
+                            value={row.dueDate ?? ""}
+                            onChange={(e) => {
+                              const v = e.target.value || undefined;
+                              setBatchItems((prev) =>
+                                prev.map((p, i) => (i === batchActiveIdx ? { ...p, dueDate: v } : p))
+                              );
+                            }}
+                          />
+                        </label>
+                        <label className="field">
+                          <span>Time</span>
+                          <input
+                            type="time"
+                            value={row.dueTime ?? ""}
+                            onChange={(e) => {
+                              const v = e.target.value || undefined;
+                              setBatchItems((prev) =>
+                                prev.map((p, i) => (i === batchActiveIdx ? { ...p, dueTime: v } : p))
+                              );
+                            }}
+                          />
+                        </label>
+                      </div>
+
+                      <label className="field">
+                        <span>Duration</span>
+                        <div className="drawer-row">
+                          <input
+                            type="number"
+                            min={1}
+                            value={batchDurationAmount}
+                            onChange={(e) => {
+                              const nextAmount = e.target.value;
+                              setBatchDurationAmount(nextAmount);
+                              const amount = Number(nextAmount);
+                              const mult = batchDurationUnit === "day" ? 1440 : batchDurationUnit === "hour" ? 60 : 1;
+                              const mins =
+                                nextAmount.trim().length > 0 && Number.isFinite(amount) && amount > 0
+                                  ? Math.round(amount * mult)
+                                  : undefined;
+                              setBatchItems((prev) =>
+                                prev.map((p, i) =>
+                                  i === batchActiveIdx ? { ...p, durationMinutes: mins } : p
+                                )
+                              );
+                            }}
+                            placeholder="e.g. 30"
+                            style={{ flex: 1, minWidth: 140 }}
+                          />
+                          <select
+                            value={batchDurationUnit}
+                            onChange={(e) => {
+                              const u = e.target.value as typeof batchDurationUnit;
+                              setBatchDurationUnit(u);
+                              const amount = Number(batchDurationAmount);
+                              const mult = u === "day" ? 1440 : u === "hour" ? 60 : 1;
+                              const mins =
+                                batchDurationAmount.trim().length > 0 && Number.isFinite(amount) && amount > 0
+                                  ? Math.round(amount * mult)
+                                  : undefined;
+                              setBatchItems((prev) =>
+                                prev.map((p, i) =>
+                                  i === batchActiveIdx ? { ...p, durationMinutes: mins } : p
+                                )
+                              );
+                            }}
+                            style={{ width: 160 }}
+                          >
+                            <option value="minute">Minutes</option>
+                            <option value="hour">Hours</option>
+                            <option value="day">Days</option>
+                          </select>
+                        </div>
+                      </label>
+                      </div>
+
+                      <div className="drawer-card" style={{ padding: 0, border: "none", boxShadow: "none" }}>
+                        <div className="drawer-card-head" style={{ margin: "0.8rem 0 0.6rem" }}>
+                          <div>
+                            <div className="drawer-card-title">Organize</div>
+                            <div className="drawer-card-desc">Reminders, labels, and context.</div>
+                          </div>
+                        </div>
+                      <label className="field">
+                        <span>Reminder</span>
+                        <select
+                          value={
+                            row.reminderMinutesBefore !== undefined
+                              ? String(row.reminderMinutesBefore)
+                              : "none"
+                          }
+                          onChange={(e) => {
+                            const v =
+                              e.target.value === "none" ? undefined : Number(e.target.value);
+                            setBatchItems((prev) =>
+                              prev.map((p, i) =>
+                                i === batchActiveIdx ? { ...p, reminderMinutesBefore: v } : p
+                              )
+                            );
+                          }}
+                        >
+                          <option value="none">No reminder</option>
+                          <option value="0">At start time</option>
+                          <option value="5">5 minutes before</option>
+                          <option value="10">10 minutes before</option>
+                          <option value="15">15 minutes before</option>
+                          <option value="30">30 minutes before</option>
+                          <option value="60">1 hour before</option>
+                          <option value="1440">1 day before</option>
+                        </select>
+                      </label>
+
+                      <label className="field">
+                        <span>Labels (comma separated)</span>
+                        <input
+                          value={(row.labels ?? []).join(", ")}
+                          onChange={(e) => {
+                            const tokens = parseLabelsInput(e.target.value);
+                            setBatchItems((prev) =>
+                              prev.map((p, i) => (i === batchActiveIdx ? { ...p, labels: tokens } : p))
+                            );
+                          }}
+                          placeholder="Work, Deep focus, Errands"
+                        />
+                      </label>
+
+                      <label className="field">
+                        <span>Location</span>
+                        <input
+                          value={row.location ?? ""}
+                          onChange={(e) => {
+                            const v = e.target.value || undefined;
+                            setBatchItems((prev) =>
+                              prev.map((p, i) => (i === batchActiveIdx ? { ...p, location: v } : p))
+                            );
+                          }}
+                          placeholder="Outdoor, Home, Alias=>https://example.com"
+                        />
+                      </label>
+
+                      <label className="field">
+                        <span>Link</span>
+                        <input
+                          value={(row.link ?? []).join(", ")}
+                          onChange={(e) => {
+                            const tokens = parseLinksInput(e.target.value);
+                            setBatchItems((prev) =>
+                              prev.map((p, i) => (i === batchActiveIdx ? { ...p, link: tokens.length ? tokens : undefined } : p))
+                            );
+                          }}
+                          placeholder="Alias=>URL or URL (comma/newline separated)"
+                        />
+                      </label>
+                      </div>
+                    </>
+                  );
+                })()}
+              </div>
+
+            </div>
+          ) : null}
+
+          {multipleFlow ? null : (
+            <div className="drawer-card">
+              <div className="drawer-card-head">
+                <div>
+                  <div className="drawer-card-title">Basics</div>
+                  <div className="drawer-card-desc">Start with a clear title and optional context.</div>
+                </div>
+              </div>
+
+              <label className="field">
+                <span>Title</span>
+                <input
+                  value={draft.title}
+                  onChange={(e) => setDraft({ ...draft, title: e.target.value })}
+                  placeholder="What do you want to accomplish?"
+                  title="Task title (required)."
+                />
+              </label>
+
+            <label className="field">
+              <span>Description</span>
+              <textarea
+                value={draft.description ?? ""}
+                onChange={(e) => setDraft({ ...draft, description: e.target.value })}
+                placeholder="Add more context, links, or notes."
+                rows={4}
+                title="Optional description for additional context."
+              />
+            </label>
+
+            <div className="field-grid">
+              <label className="field">
+                <span>Priority</span>
+                <select
+                  value={draft.priority}
+                  onChange={(e) =>
+                    setDraft({
+                      ...draft,
+                      priority: e.target.value as Task["priority"]
+                    })
+                  }
+                  title="Priority sets urgency and completion points (low=1, medium=2, high=3, urgent=4)."
+                >
+                  <option value="low">Low</option>
+                  <option value="medium">Medium</option>
+                  <option value="high">High</option>
+                  <option value="urgent">Urgent</option>
+                </select>
+              </label>
+
+              <label className="field">
+                <span>Repeat</span>
+                <select
+                  value={draft.repeat ?? "none"}
+                  onChange={(e) =>
+                    setDraft({
+                      ...draft,
+                      repeat: e.target.value as Task["repeat"]
+                    })
+                  }
+                  title="Repeat pattern for recurring tasks."
+                >
+                  <option value="none">No repetition</option>
+                  <option value="daily">Daily</option>
+                  <option value="weekly">Weekly</option>
+                  <option value="weekdays">Weekdays (Mon–Fri)</option>
+                  <option value="weekends">Weekends (Sat–Sun)</option>
+                  <option value="monthly">Monthly</option>
+                  <option value="quarterly">Quarterly</option>
+                  <option value="yearly">Annually</option>
+                  <option value="custom">Custom…</option>
+                </select>
+              </label>
+            </div>
+            </div>
           )}
-
-          <label className="field">
-            <span>Title</span>
-            <input
-              value={draft.title}
-              onChange={(e) => setDraft({ ...draft, title: e.target.value })}
-              placeholder="What do you want to accomplish?"
-            />
-          </label>
-
-          <label className="field">
-            <span>Description</span>
-            <textarea
-              value={draft.description ?? ""}
-              onChange={(e) =>
-                setDraft({ ...draft, description: e.target.value })
-              }
-              placeholder="Add more context, links, or notes."
-              rows={4}
-            />
-          </label>
-
-          <div className="field-grid">
-            <label className="field">
-              <span>Priority</span>
-              <select
-                value={draft.priority}
-                onChange={(e) =>
-                  setDraft({
-                    ...draft,
-                    priority: e.target.value as Task["priority"]
-                  })
-                }
-              >
-                <option value="low">Low</option>
-                <option value="medium">Medium</option>
-                <option value="high">High</option>
-                <option value="urgent">Urgent</option>
-              </select>
-            </label>
-
-            <label className="field">
-              <span>Repeat</span>
-              <select
-                value={draft.repeat ?? "none"}
-                onChange={(e) =>
-                  setDraft({
-                    ...draft,
-                    repeat: e.target.value as Task["repeat"]
-                  })
-                }
-              >
-                <option value="none">No repetition</option>
-                <option value="daily">Daily</option>
-                <option value="weekly">Weekly</option>
-                <option value="weekdays">Weekdays (Mon–Fri)</option>
-                <option value="weekends">Weekends (Sat–Sun)</option>
-                <option value="monthly">Monthly</option>
-                <option value="quarterly">Quarterly</option>
-                <option value="yearly">Annually</option>
-                <option value="custom">Custom…</option>
-              </select>
-            </label>
-          </div>
 
           {draft.repeat === "custom" && (
             <div className="field-grid">
@@ -1214,452 +1777,228 @@ export function TaskEditorDrawer({
             </div>
           )}
 
-          <div className="field-grid">
-            <label className="field">
-              <span>Date</span>
-              <input
-                type="date"
-                value={draft.dueDate ?? ""}
-                onChange={(e) =>
-                  setDraft({
-                    ...draft,
-                    dueDate: e.target.value || undefined
-                  })
-                }
-              />
-            </label>
-            <label className="field">
-              <span>Time</span>
-              <input
-                type="time"
-                value={draft.dueTime ?? ""}
-                onChange={(e) =>
-                  setDraft({
-                    ...draft,
-                    dueTime: e.target.value || undefined
-                  })
-                }
-              />
-            </label>
-          </div>
-
-          <label className="field">
-            <span>Duration</span>
-            <div style={{ display: "flex", gap: "0.5rem" }}>
-              <input
-                type="number"
-                min={1}
-                value={durationAmount}
-                onChange={(e) => setDurationAmount(e.target.value)}
-                placeholder="e.g. 30"
-                style={{ flex: 1 }}
-              />
-              <select
-                value={durationUnit}
-                onChange={(e) => setDurationUnit(e.target.value as typeof durationUnit)}
-                style={{ width: 140 }}
-              >
-                <option value="minute">Minutes</option>
-                <option value="hour">Hours</option>
-                <option value="day">Days</option>
-              </select>
-            </div>
-            <div className="muted" style={{ marginTop: "0.35rem" }}>
-              Voice examples: “for 30 minutes”, “selama 2 jam”, “durasi 2 hari”.
-            </div>
-          </label>
-
-          <label className="field">
-            <span>Labels (comma separated)</span>
-            <input
-              value={labelsInputValue}
-              onChange={(e) => {
-                hasInteractedWithLabelsRef.current = true;
-                setLabelsInputValue(e.target.value);
-              }}
-              onKeyDown={(e) => {
-                if (e.key !== "Enter") return;
-                e.preventDefault();
-                e.stopPropagation();
-                if (!draft) return;
-
-                hasInteractedWithLabelsRef.current = true;
-                const raw = labelsInputValue;
-                const tokens = parseLabelsInput(raw);
-                if (!tokens.length) return;
-
-                suppressLabelsInputSyncRef.current = true;
-                setDraft((prev) =>
-                  prev
-                    ? { ...prev, labels: mergeLabelTokens(prev.labels, tokens) }
-                    : prev
-                );
-                setLabelsInputValue("");
-              }}
-              onBlur={() => {
-                if (!draft) return;
-                const raw = labelsInputValue;
-                setDraft((prev) => {
-                  const tokens = parseLabelsInput(raw);
-                  if (!tokens.length) return prev;
-                  hasInteractedWithLabelsRef.current = true;
-                  suppressLabelsInputSyncRef.current = true;
-                  return { ...prev, labels: mergeLabelTokens(prev.labels, tokens) };
-                });
-                setLabelsInputValue("");
-              }}
-              placeholder="Work, Deep focus, Errands"
-            />
-            {previewLabels.length > 0 ? (
-              <div style={{ marginTop: "0.45rem" }}>
-                <div
-                  style={{
-                    display: "flex",
-                    flexWrap: "wrap",
-                    gap: "0.35rem"
-                  }}
-                >
-                  {previewLabels.map((l) => {
-                    const key = labelKey(l);
-                    const isSelected = selectedLabelKeys.has(key);
-                    return (
-                      <span
-                        key={l}
-                        className="pill label-pill"
-                        role="button"
-                        tabIndex={0}
-                        onClick={() => {
-                          setSelectedLabelKeys((prev) => {
-                            const next = new Set(prev);
-                            if (next.has(key)) next.delete(key);
-                            else next.add(key);
-                            return next;
-                          });
-                        }}
-                        style={{
-                          cursor: "pointer",
-                          display: "inline-flex",
-                          alignItems: "center",
-                          gap: "0.35rem",
-                          borderColor: isSelected ? "rgba(239, 68, 68, 0.85)" : undefined,
-                          background: isSelected ? "rgba(254, 226, 226, 0.9)" : undefined
-                        }}
-                        aria-pressed={isSelected}
-                        aria-label={`Select label ${l}`}
-                      >
-                        {l}
-                        <button
-                          type="button"
-                          className="label-chip-delete"
-                          style={{
-                            padding: 0,
-                            border: "none",
-                            background: "transparent",
-                            cursor: "pointer",
-                            color: "rgba(239, 68, 68, 1)",
-                            fontWeight: 900,
-                            lineHeight: 1
-                          }}
-                          aria-label={`Delete label ${l}`}
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            applyLabelSet(previewLabels.filter((x) => labelKey(x) !== key));
-                          }}
-                        >
-                          ×
-                        </button>
-                      </span>
-                    );
-                  })}
-                </div>
-
-                {selectedLabelKeys.size > 0 ? (
-                  <div style={{ marginTop: "0.55rem" }}>
-                    <button
-                      type="button"
-                      className="ghost-button small"
-                      onClick={() => {
-                        hasInteractedWithLabelsRef.current = true;
-                        applyLabelSet(
-                          previewLabels.filter((x) => !selectedLabelKeys.has(labelKey(x)))
-                        );
-                      }}
-                    >
-                      Remove selected ({selectedLabelKeys.size})
-                    </button>
+          {multipleFlow ? null : (
+            <div className="drawer-card">
+              <div className="drawer-card-head">
+                <div>
+                  <div className="drawer-card-title">Schedule</div>
+                  <div className="drawer-card-desc">
+                    Set when it’s due and how long it typically takes.
                   </div>
-                ) : null}
-              </div>
-            ) : null}
-          </label>
-
-          <label className="field">
-            <span>Location</span>
-            <input
-              value={locationInputValue}
-              onChange={(e) => {
-                setLocationInputValue(e.target.value);
-              }}
-              placeholder="Outdoor, Home, Alias=>https://example.com"
-              onKeyDown={(e) => {
-                if (e.key !== "Enter") return;
-                e.preventDefault();
-                e.stopPropagation();
-                if (!draft) return;
-                const tokens = parseLocationsInput(locationInputValue);
-                if (!tokens.length) return;
-                applyLocationSet(mergeLocationTokens(deserializeLocationTokens(draft.location), tokens));
-              }}
-              onBlur={() => {
-                if (!draft) return;
-                const tokens = parseLocationsInput(locationInputValue);
-                if (!tokens.length) return;
-                applyLocationSet(mergeLocationTokens(deserializeLocationTokens(draft.location), tokens));
-              }}
-            />
-            {previewLocations.length > 0 ? (
-              <div style={{ marginTop: "0.45rem" }}>
-                <div
-                  style={{
-                    display: "flex",
-                    flexWrap: "wrap",
-                    gap: "0.35rem"
-                  }}
-                >
-                  {previewLocations.map((loc) => {
-                    const arrowIdx = loc.indexOf("=>");
-                    const label = arrowIdx >= 0 ? loc.slice(0, arrowIdx).trim() : "";
-                    const query = arrowIdx >= 0 ? loc.slice(arrowIdx + 2).trim() : loc;
-                    const display = label || query;
-                    const meta = locationHrefMetaForToken(loc);
-                    const href = meta?.href ?? null;
-                    return (
-                      <span
-                        key={loc}
-                        className="pill label-pill"
-                        style={{
-                          display: "inline-flex",
-                          alignItems: "center",
-                          gap: "0.35rem"
-                        }}
-                      >
-                        <span>{display}</span>
-                        {href ? (
-                          <a
-                            href={href}
-                            target="_blank"
-                            rel="noreferrer"
-                            className="location-map-link"
-                            onClick={(e) => e.stopPropagation()}
-                            title={
-                              meta?.kind === "url" ? `Open ${display}` : `Open ${display}`
-                            }
-                          >
-                            {meta?.kind === "url" ? "Open" : "Open"}
-                          </a>
-                        ) : null}
-                        <button
-                          type="button"
-                          className="label-chip-delete"
-                          aria-label={`Delete location ${display}`}
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            const delQueryKey = query.toLowerCase();
-                            applyLocationSet(
-                              previewLocations.filter((x) => {
-                                const i = x.indexOf("=>");
-                                const q = i >= 0 ? x.slice(i + 2).trim() : x;
-                                return q.toLowerCase() !== delQueryKey;
-                              })
-                            );
-                          }}
-                        >
-                          ×
-                        </button>
-                      </span>
-                    );
-                  })}
                 </div>
               </div>
-            ) : null}
-          </label>
 
-          <label className="field">
-            <span>Link</span>
-            <input
-              value={linksInputValue}
-              onChange={(e) => setLinksInputValue(e.target.value)}
-              placeholder="Alias=>URL or URL (comma/newline separated)"
-              onKeyDown={(e) => {
-                if (e.key !== "Enter") return;
-                e.preventDefault();
-                e.stopPropagation();
-                if (!draft) return;
+              <div className="field-grid">
+                <label className="field">
+                  <span>Date</span>
+                  <input
+                    type="date"
+                    value={draft.dueDate ?? ""}
+                    onChange={(e) =>
+                      setDraft({
+                        ...draft,
+                        dueDate: e.target.value || undefined
+                      })
+                    }
+                  />
+                </label>
+                <label className="field">
+                  <span>Time</span>
+                  <input
+                    type="time"
+                    value={draft.dueTime ?? ""}
+                    onChange={(e) =>
+                      setDraft({
+                        ...draft,
+                        dueTime: e.target.value || undefined
+                      })
+                    }
+                  />
+                </label>
+              </div>
 
-                const tokens = parseLinksInput(linksInputValue);
-                if (!tokens.length) return;
-                hasInteractedWithLinksRef.current = true;
-                suppressLinksInputSyncRef.current = true;
-                setDraft((prev) =>
-                  prev
-                    ? {
-                        ...prev,
-                        link: mergeLinkTokens(prev.link ?? [], tokens)
-                      }
-                    : prev
-                );
-                setLinksInputValue("");
-              }}
-              onBlur={() => {
-                if (!draft) return;
-                const tokens = parseLinksInput(linksInputValue);
-                if (!tokens.length) return;
-                hasInteractedWithLinksRef.current = true;
-                suppressLinksInputSyncRef.current = true;
-                setDraft((prev) =>
-                  prev
-                    ? {
-                        ...prev,
-                        link: mergeLinkTokens(prev.link ?? [], tokens)
-                      }
-                    : prev
-                );
-                setLinksInputValue("");
-              }}
-            />
-            {previewLinks.length > 0 ? (
-              <div style={{ marginTop: "0.45rem" }}>
-                <div
-                  style={{
-                    display: "flex",
-                    flexWrap: "wrap",
-                    gap: "0.35rem"
-                  }}
-                >
-                  {previewLinks.map((l) => {
-                    const parsed = parseLinkAliasToken(l) ?? { href: l };
-                    const display = parsed.label ?? l;
-                    const href = parsed.href;
-                    return (
-                    <span
-                      key={l}
-                      className="pill label-pill"
-                      style={{
-                        display: "inline-flex",
-                        alignItems: "center",
-                        gap: "0.35rem"
-                      }}
-                    >
-                      <a
-                        href={href}
-                        target="_blank"
-                        rel="noreferrer"
-                        className="link-preview-anchor"
-                        onClick={(e) => {
-                          // Keep drawer open; do not block navigation.
-                          e.stopPropagation();
-                        }}
-                      >
-                        {display}
-                      </a>
-                      <button
-                        type="button"
-                        className="label-chip-delete"
-                        aria-label={`Delete link ${display}`}
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          const delKey = href.toLowerCase();
-                          applyLinkSet(
-                            previewLinks.filter((x) => {
-                              const p = parseLinkAliasToken(x);
-                              const xHref = p?.href ?? x;
-                              return xHref.toLowerCase() !== delKey;
-                            })
-                          );
-                        }}
-                      >
-                        ×
-                      </button>
-                    </span>
-                    );
-                  })}
+              <label className="field">
+                <span>Duration</span>
+                <div className="drawer-row">
+                  <input
+                    type="number"
+                    min={1}
+                    value={durationAmount}
+                    onChange={(e) => setDurationAmount(e.target.value)}
+                    placeholder="e.g. 30"
+                    style={{ flex: 1, minWidth: 140 }}
+                  />
+                  <select
+                    value={durationUnit}
+                    onChange={(e) => setDurationUnit(e.target.value as typeof durationUnit)}
+                    style={{ width: 160 }}
+                  >
+                    <option value="minute">Minutes</option>
+                    <option value="hour">Hours</option>
+                    <option value="day">Days</option>
+                  </select>
+                </div>
+                <div className="muted small" style={{ marginTop: "0.35rem" }}>
+                  Voice examples: “for 30 minutes”, “selama 2 jam”, “durasi 2 hari”.
+                </div>
+              </label>
+            </div>
+          )}
+
+          {multipleFlow ? null : (
+            <div className="drawer-card">
+              <div className="drawer-card-head">
+                <div>
+                  <div className="drawer-card-title">Organize</div>
+                  <div className="drawer-card-desc">Labels, links, location, and reminders.</div>
                 </div>
               </div>
-            ) : null}
-          </label>
 
-          <label className="field">
-            <span>Reminder</span>
-            <select
-              value={
-                draft.reminderMinutesBefore !== undefined
-                  ? String(draft.reminderMinutesBefore)
-                  : "none"
-              }
-              onChange={(e) =>
-                setDraft({
-                  ...draft,
-                  reminderMinutesBefore:
-                    e.target.value === "none"
-                      ? undefined
-                      : Number(e.target.value)
-                })
-              }
-            >
-              <option value="none">No reminder</option>
-              <option value="0">At start time</option>
-              <option value="5">5 minutes before</option>
-              <option value="10">10 minutes before</option>
-              <option value="15">15 minutes before</option>
-              <option value="30">30 minutes before</option>
-              <option value="60">1 hour before</option>
-              <option value="1440">1 day before</option>
-            </select>
-          </label>
+              <label className="field">
+                <span>Labels</span>
+                <input
+                  value={(draft.labels ?? []).join(", ")}
+                  onChange={(e) => setDraft({ ...draft, labels: parseLabelsInput(e.target.value) })}
+                  placeholder="Work, Deep focus, Errands"
+                  title="Comma-separated labels."
+                />
+              </label>
+
+              <label className="field">
+                <span>Location</span>
+                <input
+                  value={draft.location ?? ""}
+                  onChange={(e) =>
+                    setDraft({ ...draft, location: e.target.value.trim() ? e.target.value : undefined })
+                  }
+                  placeholder="Outdoor, Home, Alias=>https://example.com"
+                  title="Optional location."
+                />
+              </label>
+
+              <label className="field">
+                <span>Links</span>
+                <input
+                  value={(draft.link ?? []).join(", ")}
+                  onChange={(e) => {
+                    const tokens = parseLinksInput(e.target.value);
+                    setDraft({ ...draft, link: tokens.length ? tokens : undefined });
+                  }}
+                  placeholder="Alias=>URL or URL"
+                  title="Comma or newline separated."
+                />
+              </label>
+
+              <label className="field">
+                <span>Reminder</span>
+                <select
+                  value={
+                    draft.reminderMinutesBefore !== undefined
+                      ? String(draft.reminderMinutesBefore)
+                      : "none"
+                  }
+                  onChange={(e) =>
+                    setDraft({
+                      ...draft,
+                      reminderMinutesBefore:
+                        e.target.value === "none" ? undefined : Number(e.target.value)
+                    })
+                  }
+                  title="Notification timing before the task."
+                >
+                  <option value="none">No reminder</option>
+                  <option value="0">At start time</option>
+                  <option value="5">5 minutes before</option>
+                  <option value="10">10 minutes before</option>
+                  <option value="15">15 minutes before</option>
+                  <option value="30">30 minutes before</option>
+                  <option value="60">1 hour before</option>
+                  <option value="1440">1 day before</option>
+                </select>
+              </label>
+            </div>
+          )}
         </div>
         <footer className="drawer-footer">
-          <button className="ghost-button" onClick={onClose}>
-            Cancel
-          </button>
-          <button
-            className="primary-button"
-            onClick={() => {
-              if (!draft) return;
-              // Merge any in-progress label text into draft.labels so the user
-              // doesn't need to press Enter/blur before saving.
-              const tokens = parseLabelsInput(labelsInputValue);
-              const labelsToSave =
-                tokens.length > 0
-                  ? mergeLabelTokens(draft.labels ?? [], tokens)
-                  : (draft.labels ?? [])
-                      .slice()
-                      .sort((a, b) => a.toLowerCase().localeCompare(b.toLowerCase()) || a.localeCompare(b));
-              const linkTokens = parseLinksInput(linksInputValue);
-              const linksToSave =
-                linkTokens.length > 0
-                  ? mergeLinkTokens(draft.link ?? [], linkTokens)
-                  : (draft.link ?? []).slice();
+          <div className="drawer-footer-left">
+            {multipleFlow && batchItems.length > 1 ? (
+              <>
+                <button
+                  type="button"
+                  className="ghost-button"
+                  onClick={() => setBatchActiveIdx((i) => Math.max(0, i - 1))}
+                  disabled={batchActiveIdx <= 0}
+                  title="Previous task"
+                >
+                  Prev
+                </button>
+                <button
+                  type="button"
+                  className="ghost-button"
+                  onClick={() =>
+                    setBatchActiveIdx((i) => Math.min(Math.max(0, batchItems.length - 1), i + 1))
+                  }
+                  disabled={batchActiveIdx >= batchItems.length - 1}
+                  title="Next task"
+                >
+                  Next
+                </button>
+              </>
+            ) : null}
+          </div>
 
-              const locationTokens = parseLocationsInput(locationInputValue);
-              const baseLocations = deserializeLocationTokens(draft.location);
-              const locationsToSave =
-                locationTokens.length > 0
-                  ? mergeLocationTokens(baseLocations, locationTokens)
-                  : baseLocations;
+          <div className="drawer-footer-right">
+            <button className="ghost-button" onClick={onClose}>
+              Cancel
+            </button>
+            <button
+              className="primary-button"
+              onClick={() => {
+                if (!draft) return;
+                if (multipleFlow) {
+                  const out = batchItems
+                    .slice(0, 50)
+                    .map((item) => {
+                      const base: Task | null = item.source ? item.source : draft;
+                      if (!base) return null;
+                      const next: Task = {
+                        ...base,
+                        id: item.source ? item.source.id : "new",
+                        title: item.title.trim(),
+                        description: (item.description ?? "").trim() ? item.description : undefined,
+                        priority: item.priority ?? "medium",
+                        dueDate: item.dueDate,
+                        dueTime: item.dueTime,
+                        durationMinutes: item.durationMinutes,
+                        repeat: item.repeat ?? "none",
+                        repeatEvery: item.repeatEvery,
+                        repeatUnit: item.repeatUnit,
+                        labels: item.labels ?? [],
+                        location: item.location,
+                        link: item.link,
+                        reminderMinutesBefore: item.reminderMinutesBefore,
+                        completed: item.source ? item.source.completed : false
+                      };
+                      if (!item.source) next.projectId = base.projectId;
+                      return next;
+                    })
+                    .filter((x): x is Task => Boolean(x) && Boolean(x.title.trim()));
 
-              onSave(
-                normalizeDraft({
-                  ...draft,
-                  labels: labelsToSave,
-                  link: linksToSave.length ? linksToSave : undefined,
-                  location: serializeLocationTokens(locationsToSave)
-                })
-              );
-            }}
-            disabled={!draft.title.trim()}
-          >
-            Save task
-          </button>
+                  if (out.length === 0) return;
+                  onSave(out);
+                  return;
+                }
+                onSave(normalizeDraft(draft));
+              }}
+              disabled={
+                multipleFlow
+                  ? batchItems.every((x) => !x.title.trim())
+                  : !draft.title.trim()
+              }
+            >
+              {multipleFlow ? (isMultiEdit ? "Save changes" : "Create tasks") : "Save task"}
+            </button>
+          </div>
         </footer>
       </aside>
     </div>

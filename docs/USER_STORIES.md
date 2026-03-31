@@ -1,6 +1,6 @@
 # User Stories — Focista Schedulo
 
-**Last updated:** 2026-04-01  
+**Last updated:** 2026-03-31  
 **Owner:** Product
 
 User stories are written in the format: **As a [role], I want [goal] so that [benefit].** Acceptance criteria define when the story is done.
@@ -27,6 +27,7 @@ As a user, I want to edit a task so it stays accurate as my plan changes.
 - Editing updates the task immediately in the list and calendar.
 - Recurring tasks preserve series identity (stable Parent ID / Child ID).
 - Duration and other definition-level changes propagate to series occurrences where applicable.
+- Project association remains consistent across the series: tasks sharing the same Parent ID must share the same project.
 
 ### US-3 Use voice input to fill a task
 
@@ -136,7 +137,8 @@ As a user, I want to add one or more links and locations to a task so I can quic
 **Acceptance criteria:**
 
 - Task can have multiple links (stored as array); optional alias per link (e.g. `Alias=>URL`).
-- Task can have location(s); UI supports multiple values; plain text or URL with optional alias; only real URLs get an “Open” link (no automatic map for non-URL text).
+- Task can have multiple locations; the UI stores multiple location tokens in one backend field using a **pipe-delimited** encoding (`loc1|loc2|...`).
+- Each location token may be plain text or `Label=>URL` alias; only real URLs get an “Open” link (no automatic map for non-URL text).
 - Links and locations appear as clickable chips in the editor and in the hovercard; they open in a new tab.
 
 ### US-12 Export my data
@@ -147,6 +149,17 @@ As a user, I want to export my data so I can back it up or use it elsewhere.
 
 - One export entry point; user can choose JSON or CSV.
 - Export includes projects and tasks.
+- Exported files can be imported back later (see US-12a) without corrupting or duplicating series data.
+
+### US-12a Import my data (backup/restore)
+
+As a user, I want to import a previously exported file so I can restore my tasks and projects (or migrate them) safely.
+
+**Acceptance criteria:**
+
+- User can import a `.json` or `.csv` export from the header Import action.
+- Import merges duplicates defensively and normalizes data (project IDs, series IDs, and recurring occurrence integrity).
+- After import, the UI refreshes tasks and projects without requiring a manual page refresh.
 
 ### US-13 Bulk delete and move
 
@@ -169,6 +182,8 @@ As a user, I want to see how my completions, experience, level, and milestones e
 - Charts cover tasks completed (per period and cumulative), XP, level, and cumulative milestone-style badge counts as implemented.
 - User can expand a chart to fullscreen where provided; chart tooltips are fully readable (not clipped by scroll containers).
 - Rolling-average overlays appear where the UI defines a second series.
+- While in fullscreen, **Escape** closes fullscreen and returns to the modal.
+- While in fullscreen (and not typing in an input), **ArrowLeft/ArrowRight** switches to the previous/next chart.
 
 ---
 

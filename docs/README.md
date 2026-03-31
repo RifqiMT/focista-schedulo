@@ -1,6 +1,6 @@
 # Documentation Index — Focista Schedulo
 
-**Last updated:** 2026-04-01
+**Last updated:** 2026-03-31
 
 This folder contains product, design, and engineering documentation for Focista Schedulo. All documents are kept up to date with the current codebase and product scope.
 
@@ -72,4 +72,4 @@ This folder contains product, design, and engineering documentation for Focista 
 
 ---
 
-**Last updated:** 2026-04-01
+**Last updated:** 2026-03-31

@@ -1,6 +1,6 @@
 # PRD — Focista Schedulo
 
-**Last updated:** 2026-04-01  
+**Last updated:** 2026-03-31  
 **Owner:** Product (with Engineering and Design)
 
 ---
@@ -53,6 +53,17 @@ See `USER_PERSONAS.md` for detailed personas.
 
 ---
 
+## Shipped vs Planned (Interpretation Guide)
+
+To keep scope discussions unambiguous, this PRD uses the following conventions:
+
+- **Shipped**: Behavior exists in the current UI and/or API. The canonical implementation is in `frontend/src/` and `backend/src/index.ts`.
+- **Planned**: Work is not shipped yet. It must be labeled explicitly as *Planned* (or *Roadmap*) and should include a short rationale and expected impact on metrics/OKRs.
+
+Unless otherwise stated, sections under **“Current Scope (Shipped)”** describe shipped functionality.
+
+---
+
 ## Current Scope (Shipped)
 
 ### Core Tasks
@@ -65,7 +76,7 @@ See `USER_PERSONAS.md` for detailed personas.
   - **Duration** (stored as minutes; UI supports minutes, hours, days; hovercard and overview use human-readable format: e.g., 15 min → “15 mins”, 60 → “1 hour”, 75 → “1 hour & 15 mins”, 1440 → “1 day”, weeks and months where applicable)
   - Deadline date and time
   - **Labels** (array)
-  - **Locations** (single field in API; UI can support multiple values; plain text or URL with optional alias, e.g. `Alias=>https://...`; no automatic Google Maps for non-URL text)
+  - **Locations** (stored as a single string in the API; UI supports **multiple tokens** encoded as `loc1|loc2|...`; each token may be plain text or `Label=>URL` alias; only real URLs are clickable)
   - **Links** (array of URLs per task; optional alias per link, e.g. `Alias=>URL`; normalized and shown as clickable chips in editor and hovercard)
   - Reminder offset (minutes before)
   - Completion state
@@ -79,6 +90,7 @@ See `USER_PERSONAS.md` for detailed personas.
 - Create, edit, delete projects.
 - Project IDs are standardized as `P1`, `P2`, … (backend-enforced).
 - Deleting a project deletes its tasks.
+- **Invariant:** Tasks sharing the same Parent ID (`parentId`) must also share the same project association (`projectId`) to prevent parent/child drift and ensure project filters are trustworthy.
 
 ### Recurrence / Series Logic
 
@@ -103,6 +115,11 @@ See `USER_PERSONAS.md` for detailed personas.
 
 - One-button export with format selection: JSON (projects + tasks) or CSV (recordType: project | task).
 
+### Import and Save (Data ownership)
+
+- **Import:** Header import supports JSON/CSV exports and merges safely with normalization and dedupe (`POST /api/admin/import`).
+- **Save:** Header save persists current state to disk and re-runs normalization to keep IDs and series integrity deterministic (`POST /api/admin/save-data`).
+
 ### Gamification
 
 - `/api/stats` provides: completedToday, pointsToday, totalPoints, level, xpToNext, streakDays, last7Days, achievements and milestoneAchievements (streak, tasks completed, XP, levels).
@@ -116,6 +133,10 @@ See `USER_PERSONAS.md` for detailed personas.
 - **Entry:** Progress panel (gamification) opens a modal for deeper **historical** trends.
 - **Data:** `GET /api/productivity-insights` returns a daily time series of completed-task counts, cumulative completions, XP (per day and cumulative), implied **level** from cumulative XP, and **cumulative badge-milestone unlocks** derived from the same milestone families as stats (server-side simulation across the user’s completion history).
 - **UX:** Configurable day window and timeframe aggregation (daily, weekly, monthly, quarterly, annual where applicable); multiple charts (tasks, XP, level, badges); optional fullscreen per chart with keyboard navigation; dual series (raw + rolling average) on supported charts; chart tooltips portaled to avoid clipping.
+- **Fullscreen + keyboard (shipped):**
+  - Each chart card offers a **Full screen** action that opens an in-app fullscreen overlay and *attempts* to enter native browser fullscreen from the same click (best-effort).
+  - **Esc behavior:** Pressing **Escape** closes the fullscreen overlay; if not in fullscreen, Escape closes the modal.
+  - **Chart navigation:** While in fullscreen (and focus is not inside a form field), **Left/Right Arrow** keys switch charts.
 
 ### Empty State and Filters
 

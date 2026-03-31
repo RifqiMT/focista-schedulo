@@ -1,6 +1,6 @@
 # Metrics and OKRs — Focista Schedulo
 
-**Last updated:** 2026-04-01  
+**Last updated:** 2026-03-31  
 **Owner:** Product
 
 This document frames quarterly OKRs and the metrics used to measure them for the product team. Product metric definitions live in `PRODUCT_METRICS.md`. Variable definitions and formulas live in `VARIABLES.md`.
@@ -86,7 +86,7 @@ This document frames quarterly OKRs and the metrics used to measure them for the
 | ID | Key result | Measurement |
 |----|-------------|-------------|
 | KR4.1 | Export success rate ≥ 99% (no corrupted downloads). | Q3 (PRODUCT_METRICS.md). |
-| KR4.2 | (Planned) Add import flow with validation and conflict handling. | Feature shipped. |
+| KR4.2 | Add import flow with validation and conflict handling. | Feature shipped. |
 
 ### Inputs / Initiatives
 
@@ -137,4 +137,4 @@ Escalate when one or more conditions hold for two consecutive reporting cycles:
 
 ---
 
-**Last updated:** 2026-04-01
+**Last updated:** 2026-03-31

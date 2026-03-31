@@ -301,6 +301,7 @@ export function GamificationPanel() {
             className="ghost-button small"
             type="button"
             onClick={() => setAnalysisOpen(true)}
+            title="Open historical charts for completions, XP, level, and milestones."
           >
             Productivity analysis
           </button>
@@ -308,6 +309,7 @@ export function GamificationPanel() {
             className="ghost-button small"
             type="button"
             onClick={() => setBadgesOpen(true)}
+            title="Browse milestone badge tiers and your unlock progress."
           >
             Badges
           </button>
