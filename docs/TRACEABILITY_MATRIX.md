@@ -1,6 +1,6 @@
 # Enterprise Traceability Matrix — Focista Schedulo
 
-**Last updated:** 2026-03-31  
+**Last updated:** 2026-04-01  
 **Owner:** Product Operations (with Engineering and QA)
 
 ---

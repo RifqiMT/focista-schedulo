@@ -1,6 +1,6 @@
 # API Contracts — Focista Schedulo
 
-**Last updated:** 2026-03-31  
+**Last updated:** 2026-04-01  
 **Owner:** Engineering  
 **Base URL (development):** `http://localhost:4000` (frontend dev server proxies `/api` from port `5173`)
 
@@ -95,7 +95,7 @@ Full validation: `TaskSchema` in `backend/src/index.ts`.
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `completedToday` | `number` | Completed tasks whose **progress day** is local today (`dueDate` if set, else local day from `completedAt`) |
+| `completedToday` | `number` | Completed tasks whose **progress day** is local today (local day from `completedAt` when available; otherwise fallback to `dueDate` for legacy records) |
 | `streakDays` | `number` | Consecutive days ending today with ≥1 task counting on that day (same progress-day rule) |
 | `level` | `number` | `1 + floor(totalPoints / 50)` |
 | `pointsToday` | `number` | Sum of priority points for tasks whose progress day is today |
@@ -108,7 +108,7 @@ Full validation: `TaskSchema` in `backend/src/index.ts`.
 
 **Priority points:** low=1, medium=2, high=3, urgent=4.
 
-**Progress day (stats & productivity buckets):** Use **`dueDate`** when present; if the task has no due date, use local calendar day from **`completedAt`**.
+**Progress day (stats & productivity buckets):** Use the local calendar day from **`completedAt`** when available; fall back to **`dueDate`** only for legacy records missing `completedAt`.
 
 ---
 
@@ -151,9 +151,10 @@ When there are projects and completed tasks associated with projects, the respon
 |--------|------|----------|
 | `POST` | `/api/admin/reload-data` | `{ ok: true, counts: { projects, tasks } }` or `{ ok: false, error }` |
 | `POST` | `/api/admin/save-data` | `{ ok: true, counts: { projects, tasks } }` or `{ ok: false, error }` |
+| `POST` | `/api/admin/sync-from-data` | `{ ok: true, filesRead, imported: { projects, tasks }, counts: { projects, tasks } }` or `{ ok: false, error }` |
 | `POST` | `/api/admin/import` | `{ ok: true, imported: { projects, tasks }, counts: { projects, tasks } }` or `{ ok: false, error }` |
 
-Reloads JSON from disk without extra persistence. Used by header **Sync data** after external file edits.
+Reloads JSON from disk without extra persistence. Intended for maintenance and recovery workflows (e.g., after manual edits in `backend/data/*.json`).
 
 ### Save (`POST /api/admin/save-data`)
 
@@ -181,6 +182,16 @@ Accepted formats:
 
 - **JSON**: export payload `{ app, exportedAt, projects: Project[], tasks: Task[] }` (as produced by Export JSON)
 - **CSV**: a single file with both `recordType=project` and `recordType=task` rows (as produced by Export CSV)
+
+### Sync-from-data (`POST /api/admin/sync-from-data`)
+
+Synces from JSON files in `backend/data/` into the server’s in-memory state, then persists and normalizes.
+
+- Reads `*.json` files from `backend/data/` (oldest → newest by file mtime)
+- Extracts `projects` and `tasks` payloads where present
+- Merges/dedupes by id (keeps the latest values when duplicates exist)
+- Persists to `backend/data/projects.json` and `backend/data/tasks.json`
+- Runs the standard normalization pipeline (`loadData()`)
 
 ---
 

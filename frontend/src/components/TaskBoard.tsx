@@ -198,6 +198,25 @@ function formatWithWeekday(dateStr: string | undefined): string {
   return `${weekday}, ${dateStr}`;
 }
 
+function addMinutesLocal(startIsoDate: string, startTime: string, minutes: number): { endDate: string; endTime: string } | null {
+  const start = new Date(`${startIsoDate}T${startTime}:00`);
+  if (Number.isNaN(start.getTime())) return null;
+  const endRaw = new Date(start.getTime() + Math.max(1, minutes) * 60_000);
+  // Match calendar semantics: if the event ends exactly at midnight,
+  // treat it as ending in the previous day.
+  const end =
+    endRaw.getHours() === 0 &&
+    endRaw.getMinutes() === 0 &&
+    endRaw.getSeconds() === 0 &&
+    endRaw.getMilliseconds() === 0
+      ? new Date(endRaw.getTime() - 1)
+      : endRaw;
+  const endDate = toISODateLocal(new Date(end.getTime() + 12 * 60 * 60 * 1000));
+  const hh = String(end.getHours()).padStart(2, "0");
+  const mm = String(end.getMinutes()).padStart(2, "0");
+  return { endDate, endTime: `${hh}:${mm}` };
+}
+
 function getParentId(task: Task): string {
   return task.parentId ?? task.id;
 }
@@ -279,9 +298,13 @@ function parseLinkAliasToken(
   const t = raw?.trim();
   if (!t) return null;
 
-  const idx = t.indexOf("=>");
-  const hrefRaw = idx >= 0 ? t.slice(idx + 2).trim() : t;
-  const labelRaw = idx >= 0 ? t.slice(0, idx).trim() : "";
+  // Accept multiple alias separators for UX:
+  // - `Label=>https://...` (canonical stored format)
+  // - `Label -> https://...`
+  // - `Label | https://...`
+  const m = t.match(/^\s*(.*?)\s*(=>|->|\|)\s*(\S.*?)\s*$/);
+  const hrefRaw = m ? (m[3] ?? "").trim() : t;
+  const labelRaw = m ? (m[1] ?? "").trim() : "";
   const href = normalizeHyperlinkHref(hrefRaw);
   if (!href) return null;
   const label = labelRaw ? labelRaw.replace(/\s+/g, " ") : undefined;
@@ -432,7 +455,11 @@ function nextOccurrenceDate(current: Date, task: Task): Date | null {
   }
 }
 
-function expandRepeatingTasks(base: Task[], horizonEndIso?: string | null): Task[] {
+function expandRepeatingTasks(
+  base: Task[],
+  horizonEndIso?: string | null,
+  horizonStartIso?: string | null
+): Task[] {
   const result: Task[] = [...base];
   const today = new Date();
   // Generate occurrences only up to the visible calendar horizon (plus buffer).
@@ -444,6 +471,14 @@ function expandRepeatingTasks(base: Task[], horizonEndIso?: string | null): Task
       if (!Number.isNaN(d.getTime())) return d;
     }
     return addDays(today, 365); // safe fallback
+  })();
+  const horizonStart = (() => {
+    const raw = (horizonStartIso ?? "").trim();
+    if (raw) {
+      const d = new Date(raw + "T12:00:00");
+      if (!Number.isNaN(d.getTime())) return d;
+    }
+    return null;
   })();
 
   type SeriesKey = string;
@@ -548,6 +583,49 @@ function expandRepeatingTasks(base: Task[], horizonEndIso?: string | null): Task
     let current = new Date(template.dueDate + "T12:00:00");
     // Index within the full repeating sequence (1-based) starting from the earliest.
     let occurrenceIndex = 1;
+
+    // Optimization (list view): if we only care about occurrences from horizonStart onward,
+    // fast-forward close to that date so we don't walk from an early historical template.
+    if (horizonStart && current < horizonStart) {
+      const diffDays = Math.floor((horizonStart.getTime() - current.getTime()) / (24 * 60 * 60 * 1000));
+      const repeat = template.repeat ?? "none";
+      const every = template.repeat === "custom" ? template.repeatEvery ?? 1 : template.repeatEvery ?? 1;
+      const unit = template.repeat === "custom" ? template.repeatUnit ?? "week" : null;
+
+      const jumpByDays = (stepDays: number) => {
+        if (stepDays <= 0) return;
+        const steps = Math.max(0, Math.floor(diffDays / stepDays));
+        if (steps <= 0) return;
+        current = addDays(current, steps * stepDays);
+        occurrenceIndex += steps;
+      };
+
+      const jumpByMonths = (stepMonths: number) => {
+        if (stepMonths <= 0) return;
+        const startYM = current.getFullYear() * 12 + current.getMonth();
+        const targetYM = horizonStart.getFullYear() * 12 + horizonStart.getMonth();
+        const diffM = targetYM - startYM;
+        const steps = Math.max(0, Math.floor(diffM / stepMonths));
+        if (steps <= 0) return;
+        current = addMonths(current, steps * stepMonths);
+        occurrenceIndex += steps;
+      };
+
+      if (repeat === "daily") jumpByDays(every);
+      else if (repeat === "weekly") jumpByDays(7 * every);
+      else if (repeat === "monthly") jumpByMonths(every);
+      else if (repeat === "quarterly") jumpByMonths(3 * every);
+      else if (repeat === "yearly") jumpByMonths(12 * every);
+      else if (repeat === "custom") {
+        if (unit === "day") jumpByDays(every);
+        else if (unit === "week") jumpByDays(7 * every);
+        else if (unit === "month") jumpByMonths(every);
+        else if (unit === "quarter") jumpByMonths(3 * every);
+        else if (unit === "year") jumpByMonths(12 * every);
+      }
+      // For weekdays/weekends, we fall back to the loop below (date math isn't constant-step).
+    }
+
     // Walk forward, generating occurrences until the horizon.
     for (;;) {
       const next = nextOccurrenceDate(current, template);
@@ -555,6 +633,11 @@ function expandRepeatingTasks(base: Task[], horizonEndIso?: string | null): Task
 
       const iso = toISODateLocal(next);
       occurrenceIndex += 1;
+
+      if (horizonStart && next < horizonStart) {
+        current = next;
+        continue;
+      }
 
       // Skip if a real task already exists on this date for this series.
       const realExistsOnDate = base.some(
@@ -610,7 +693,7 @@ function expandRepeatingTasks(base: Task[], horizonEndIso?: string | null): Task
   return result;
 }
 
-function collapseSeriesForList(tasks: Task[], rangeStartIso: string): Task[] {
+function collapseSeriesForList(tasks: Task[], rangeStartIso: string, rangeEndIso: string): Task[] {
   const nonRecurring = tasks.filter((t) => !t.repeat || t.repeat === "none");
   const recurring = tasks.filter(
     (t) => t.repeat && t.repeat !== "none" && !!t.dueDate && !t.cancelled
@@ -635,30 +718,21 @@ function collapseSeriesForList(tasks: Task[], rangeStartIso: string): Task[] {
   const upcomingPerSeries: Task[] = [];
 
   for (const [, seriesTasks] of seriesMap.entries()) {
-    // Prefer the nearest upcoming *active* occurrence (not completed / cancelled).
-    const upcomingActive = seriesTasks
-      .filter(
-        (t) =>
-          (t.dueDate ?? "") >= rangeStartIso &&
-          !t.completed &&
-          !t.cancelled
-      )
+    const inWindow = seriesTasks
+      .filter((t) => {
+        const iso = t.dueDate ?? "";
+        if (!iso) return false;
+        return iso >= rangeStartIso && iso <= rangeEndIso;
+      })
       .slice()
       .sort((a, b) => (a.dueDate ?? "").localeCompare(b.dueDate ?? ""));
 
-    if (upcomingActive.length > 0) {
-      upcomingPerSeries.push(upcomingActive[0]);
-      continue;
-    }
+    if (inWindow.length === 0) continue;
 
-    // If there is no upcoming active task (e.g., all future ones were completed),
-    // keep the most recent occurrence so the series is still visible.
-    const byDateDesc = seriesTasks
-      .slice()
-      .sort((a, b) => (b.dueDate ?? "").localeCompare(a.dueDate ?? ""));
-    if (byDateDesc.length > 0) {
-      upcomingPerSeries.push(byDateDesc[0]);
-    }
+    // Prefer an active (not completed) occurrence within the window; otherwise
+    // fall back to the first occurrence in the window (e.g., when viewing Completed or All).
+    const firstActive = inWindow.find((t) => !t.completed && !t.cancelled) ?? inWindow[0]!;
+    upcomingPerSeries.push(firstActive);
   }
 
   return [...nonRecurring, ...upcomingPerSeries];
@@ -722,12 +796,6 @@ export function TaskBoard({ selectedProjectId, timeScope, onTimeScopeChange }: T
     const d = String(end.getDate()).padStart(2, "0");
     return `${y}-${m}-${d}`;
   }, [calendarMonthAnchor]);
-
-  // Performance: only expand repeating tasks when needed (calendar view).
-  const tasksWithRepeats = useMemo(() => {
-    if (viewMode !== "calendar") return activeBaseTasks;
-    return expandRepeatingTasks(activeBaseTasks, calendarHorizonIso);
-  }, [activeBaseTasks, viewMode, calendarHorizonIso]);
 
   // If hovercard is closed, cancel any pending auto-close.
   useEffect(() => {
@@ -865,25 +933,6 @@ export function TaskBoard({ selectedProjectId, timeScope, onTimeScopeChange }: T
       window.removeEventListener("pointerdown", onPointerDown, { capture: true } as any);
     };
   }, [hoveredTask]);
-
-  // Keep hovercard content in sync after any task update/refresh.
-  // Without this, the hover popup can remain open with stale task data/IDs.
-  useEffect(() => {
-    if (!hoveredTask) return;
-    const updated = tasksWithRepeats.find((t) => t.id === hoveredTask.task.id);
-
-    if (!updated) {
-      setHoveredTask(null);
-      return;
-    }
-
-    // Update the task reference used by the hovercard render.
-    setHoveredTask((prev) => {
-      if (!prev) return prev;
-      // Preserve anchor coords; only swap the task object.
-      return { ...prev, task: updated };
-    });
-  }, [tasksWithRepeats, hoveredTaskId]);
 
   // If DOM refresh prevents `onMouseLeave` from firing, auto-close hovercard
   // when the pointer moves away from both the card and the hovercard.
@@ -1449,6 +1498,142 @@ export function TaskBoard({ selectedProjectId, timeScope, onTimeScopeChange }: T
   const customRangeEndNormalizedIso =
     customRangeStartIso <= customRangeEndIso ? customRangeEndIso : customRangeStartIso;
 
+  const listHorizonIso = useMemo(() => {
+    if (viewMode !== "list") return null;
+    // Expand repeats for future-facing list scopes so tasks in next week/month/quarter show up.
+    // Past-only scopes should not inflate the list with virtual tasks.
+    const endIso = (() => {
+      if (timeScope === "all") {
+        // "All" should still feel like a usable upcoming list; expand repeats for a reasonable
+        // forward horizon so recurring series show their next occurrences.
+        const d = new Date(todayIso + "T12:00:00");
+        return toISODateLocal(addMonths(d, 12));
+      }
+      if (timeScope === "week") return endOfWeekSundayIso;
+      if (timeScope === "next_week") return nextWeekEndIso;
+      if (timeScope === "sprint") return endOfSprintIso;
+      if (timeScope === "month") return thisMonthEndIso;
+      if (timeScope === "next_month") return nextMonthEndIso;
+      if (timeScope === "quarter") return thisQuarterEndIso;
+      if (timeScope === "next_quarter") return nextQuarterEndIso;
+      if (timeScope === "custom") return customRangeEndNormalizedIso;
+      return null;
+    })();
+    if (!endIso) return null;
+    if (endIso < todayIso) return null;
+    return endIso;
+  }, [
+    viewMode,
+    timeScope,
+    endOfWeekSundayIso,
+    nextWeekEndIso,
+    endOfSprintIso,
+    thisMonthEndIso,
+    nextMonthEndIso,
+    thisQuarterEndIso,
+    nextQuarterEndIso,
+    customRangeEndNormalizedIso,
+    todayIso
+  ]);
+
+  // Performance: expand repeating tasks only when needed (calendar, and future list scopes).
+  const tasksWithRepeats = useMemo(() => {
+    if (viewMode === "calendar") {
+      return expandRepeatingTasks(activeBaseTasks, calendarHorizonIso);
+    }
+    if (viewMode === "list" && listHorizonIso) {
+      // List view only needs occurrences within the selected window; avoid generating
+      // a broad horizon of virtual tasks (helps keep interactions snappy).
+      const startIso = (() => {
+        if (timeScope === "all") return todayIso;
+        if (timeScope === "yesterday") return yesterdayIso;
+        if (timeScope === "today") return todayIso;
+        if (timeScope === "tomorrow") return tomorrowIso;
+        if (timeScope === "last_week") return lastWeekStartIso;
+        if (timeScope === "week") return startOfWeekMondayIso;
+        if (timeScope === "next_week") return nextWeekStartIso;
+        if (timeScope === "sprint") return startOfWeekMondayIso;
+        if (timeScope === "last_month") return lastMonthStartIso;
+        if (timeScope === "month") return thisMonthStartIso;
+        if (timeScope === "next_month") return nextMonthStartIso;
+        if (timeScope === "last_quarter") return lastQuarterStartIso;
+        if (timeScope === "quarter") return thisQuarterStartIso;
+        if (timeScope === "next_quarter") return nextQuarterStartIso;
+        if (timeScope === "custom") return customRangeStartNormalizedIso;
+        return null;
+      })();
+      const endIso = (() => {
+        if (timeScope === "all") return null;
+        if (timeScope === "yesterday") return yesterdayIso;
+        if (timeScope === "today") return todayIso;
+        if (timeScope === "tomorrow") return tomorrowIso;
+        if (timeScope === "last_week") return lastWeekEndIso;
+        if (timeScope === "week") return endOfWeekSundayIso;
+        if (timeScope === "next_week") return nextWeekEndIso;
+        if (timeScope === "sprint") return endOfSprintIso;
+        if (timeScope === "last_month") return lastMonthEndIso;
+        if (timeScope === "month") return thisMonthEndIso;
+        if (timeScope === "next_month") return nextMonthEndIso;
+        if (timeScope === "last_quarter") return lastQuarterEndIso;
+        if (timeScope === "quarter") return thisQuarterEndIso;
+        if (timeScope === "next_quarter") return nextQuarterEndIso;
+        if (timeScope === "custom") return customRangeEndNormalizedIso;
+        return null;
+      })();
+      return expandRepeatingTasks(activeBaseTasks, endIso ?? listHorizonIso, startIso);
+    }
+    return activeBaseTasks;
+  }, [
+    activeBaseTasks,
+    viewMode,
+    calendarHorizonIso,
+    listHorizonIso,
+    timeScope,
+    yesterdayIso,
+    todayIso,
+    tomorrowIso,
+    lastWeekStartIso,
+    lastWeekEndIso,
+    startOfWeekMondayIso,
+    endOfWeekSundayIso,
+    nextWeekStartIso,
+    nextWeekEndIso,
+    endOfSprintIso,
+    lastMonthStartIso,
+    lastMonthEndIso,
+    thisMonthStartIso,
+    thisMonthEndIso,
+    nextMonthStartIso,
+    nextMonthEndIso,
+    lastQuarterStartIso,
+    lastQuarterEndIso,
+    thisQuarterStartIso,
+    thisQuarterEndIso,
+    nextQuarterStartIso,
+    nextQuarterEndIso,
+    customRangeStartNormalizedIso,
+    customRangeEndNormalizedIso
+  ]);
+
+  // Keep hovercard content in sync after any task update/refresh.
+  // Without this, the hover popup can remain open with stale task data/IDs.
+  useEffect(() => {
+    if (!hoveredTask) return;
+    const updated = tasksWithRepeats.find((t) => t.id === hoveredTask.task.id);
+
+    if (!updated) {
+      setHoveredTask(null);
+      return;
+    }
+
+    // Update the task reference used by the hovercard render.
+    setHoveredTask((prev) => {
+      if (!prev) return prev;
+      // Preserve anchor coords; only swap the task object.
+      return { ...prev, task: updated };
+    });
+  }, [tasksWithRepeats, hoveredTaskId]);
+
   useEffect(() => {
     if (viewMode !== "calendar") return;
     const d = new Date();
@@ -1513,6 +1698,8 @@ export function TaskBoard({ selectedProjectId, timeScope, onTimeScopeChange }: T
   // - show only the next upcoming occurrence per series for active/all views
   // - show *all* occurrences when filtering by completed, so the user can see
   //   the full history of a recurring series (e.g., 55 completed standups).
+  // - for day-scoped views (Yesterday/Today/Tomorrow), show all occurrences so
+  //   completed recurring tasks done that day are visible (avoid "empty" despite completions).
   const listRangeStartIso = (() => {
     if (timeScope === "all") return "0000-01-01";
     if (timeScope === "yesterday") return yesterdayIso;
@@ -1531,10 +1718,26 @@ export function TaskBoard({ selectedProjectId, timeScope, onTimeScopeChange }: T
     if (timeScope === "custom") return customRangeStartNormalizedIso;
     return todayIso;
   })();
-  const listSource =
-    completionFilter === "completed"
-      ? tasksWithRepeats
-      : collapseSeriesForList(tasksWithRepeats, listRangeStartIso);
+  const listRangeEndIso = (() => {
+    if (timeScope === "all") return "9999-12-31";
+    if (timeScope === "yesterday") return yesterdayIso;
+    if (timeScope === "today") return todayIso;
+    if (timeScope === "tomorrow") return tomorrowIso;
+    if (timeScope === "last_week") return lastWeekEndIso;
+    if (timeScope === "week") return endOfWeekSundayIso;
+    if (timeScope === "next_week") return nextWeekEndIso;
+    if (timeScope === "sprint") return endOfSprintIso;
+    if (timeScope === "last_month") return lastMonthEndIso;
+    if (timeScope === "month") return thisMonthEndIso;
+    if (timeScope === "next_month") return nextMonthEndIso;
+    if (timeScope === "last_quarter") return lastQuarterEndIso;
+    if (timeScope === "quarter") return thisQuarterEndIso;
+    if (timeScope === "next_quarter") return nextQuarterEndIso;
+    if (timeScope === "custom") return customRangeEndNormalizedIso;
+    return "9999-12-31";
+  })();
+
+  const listSource = tasksWithRepeats;
 
   const searchTokens = taskSearchQuery
     .trim()
@@ -1567,70 +1770,101 @@ export function TaskBoard({ selectedProjectId, timeScope, onTimeScopeChange }: T
     return searchTokens.every((tok) => haystack.includes(tok));
   };
 
-  const filteredTasks = listSource
-    .filter((t) => {
-      if (completionFilter === "active" && t.completed) return false;
-      if (completionFilter === "completed" && !t.completed) return false;
-      // Project association filter has priority over a specific selected project.
-      // "No project" should still work even if the user previously selected a project.
-      if (projectAssocFilter === "none") {
-        if (hasProject(t)) return false;
-      } else {
-        if (selectedProjectId && t.projectId !== selectedProjectId) return false;
-        if (projectAssocFilter === "with" && !hasProject(t)) return false;
-      }
+  const filteredTasksRaw = useMemo(() => {
+    const startIso = listRangeStartIso;
+    const endIso = listRangeEndIso;
+    return listSource
+      .filter((t) => {
+        if (completionFilter === "active" && t.completed) return false;
+        if (completionFilter === "completed" && !t.completed) return false;
+        // Project association filter has priority over a specific selected project.
+        // "No project" should still work even if the user previously selected a project.
+        if (projectAssocFilter === "none") {
+          if (hasProject(t)) return false;
+        } else {
+          if (selectedProjectId && t.projectId !== selectedProjectId) return false;
+          if (projectAssocFilter === "with" && !hasProject(t)) return false;
+        }
 
-      if (!t.dueDate || timeScope === "all") {
-        return matchesTaskSearch(t);
-      }
+        if (!t.dueDate) {
+          return timeScope === "all" && matchesTaskSearch(t);
+        }
 
-      let inTimeScope = false;
-      if (timeScope === "yesterday") inTimeScope = t.dueDate === yesterdayIso;
-      else if (timeScope === "today") inTimeScope = t.dueDate === todayIso;
-      else if (timeScope === "tomorrow") inTimeScope = t.dueDate === tomorrowIso;
-      else if (timeScope === "last_week") {
-        inTimeScope = t.dueDate >= lastWeekStartIso && t.dueDate <= lastWeekEndIso;
-      } else if (timeScope === "last_month") {
-        inTimeScope = t.dueDate >= lastMonthStartIso && t.dueDate <= lastMonthEndIso;
-      } else if (timeScope === "last_quarter") {
-        inTimeScope = t.dueDate >= lastQuarterStartIso && t.dueDate <= lastQuarterEndIso;
-      }
-      else if (timeScope === "week") {
-        inTimeScope = t.dueDate >= startOfWeekMondayIso && t.dueDate <= endOfWeekSundayIso;
-      } else if (timeScope === "next_week") {
-        inTimeScope = t.dueDate >= nextWeekStartIso && t.dueDate <= nextWeekEndIso;
-      } else if (timeScope === "sprint") {
-        inTimeScope = t.dueDate >= startOfWeekMondayIso && t.dueDate <= endOfSprintIso;
-      } else if (timeScope === "month") {
-        inTimeScope = t.dueDate >= thisMonthStartIso && t.dueDate <= thisMonthEndIso;
-      } else if (timeScope === "next_month") {
-        inTimeScope = t.dueDate >= nextMonthStartIso && t.dueDate <= nextMonthEndIso;
-      } else if (timeScope === "quarter") {
-        inTimeScope = t.dueDate >= thisQuarterStartIso && t.dueDate <= thisQuarterEndIso;
-      } else if (timeScope === "next_quarter") {
-        inTimeScope = t.dueDate >= nextQuarterStartIso && t.dueDate <= nextQuarterEndIso;
-      } else if (timeScope === "custom") {
-        inTimeScope =
-          t.dueDate >= customRangeStartNormalizedIso && t.dueDate <= customRangeEndNormalizedIso;
-      } else {
-        inTimeScope = true;
-      }
+        // Fast path: timeScope is always a simple ISO range for dated tasks.
+        // (Day scopes are ranges of length 1.)
+        const inRange = t.dueDate >= startIso && t.dueDate <= endIso;
+        return inRange && matchesTaskSearch(t);
+      })
+      .slice()
+      .sort((a, b) => {
+        // List-view ordering:
+        // 1) Active first, then completed
+        // 2) Earliest due date/time first (within current filter window)
+        // 3) Stable tie-breakers (parentId, then id)
+        const aStatus = a.completed ? 1 : 0;
+        const bStatus = b.completed ? 1 : 0;
+        if (aStatus !== bStatus) return aStatus - bStatus;
 
-      return inTimeScope && matchesTaskSearch(t);
-    })
-    .slice()
-    .sort((a, b) => {
-      // List-view ordering:
-      // 1) Active first, then completed
-      // 2) Group by parent ID
-      const aStatus = a.completed ? 1 : 0;
-      const bStatus = b.completed ? 1 : 0;
-      if (aStatus !== bStatus) return aStatus - bStatus;
-      return getParentId(a).localeCompare(getParentId(b));
-    });
+        const ad = a.dueDate ?? "";
+        const bd = b.dueDate ?? "";
+        if (ad && bd) {
+          const d = ad.localeCompare(bd);
+          if (d !== 0) return d;
+        } else if (ad && !bd) {
+          return -1;
+        } else if (!ad && bd) {
+          return 1;
+        }
+
+        const at = a.dueTime ?? "";
+        const bt = b.dueTime ?? "";
+        if (at && bt) {
+          const t = at.localeCompare(bt);
+          if (t !== 0) return t;
+        } else if (at && !bt) {
+          return -1;
+        } else if (!at && bt) {
+          return 1;
+        }
+
+        const pa = getParentId(a);
+        const pb = getParentId(b);
+        const p = pa.localeCompare(pb);
+        if (p !== 0) return p;
+        return a.id.localeCompare(b.id);
+      });
+  }, [
+    listSource,
+    completionFilter,
+    projectAssocFilter,
+    selectedProjectId,
+    timeScope,
+    listRangeStartIso,
+    listRangeEndIso,
+    taskSearchQuery
+  ]);
+
+  const filteredTasks = useMemo(() => {
+    if (viewMode !== "list") return filteredTasksRaw;
+    if (completionFilter === "completed") return filteredTasksRaw;
+    // For day-scoped views we intentionally show all occurrences (including completed repeats).
+    if (timeScope === "yesterday" || timeScope === "today" || timeScope === "tomorrow") {
+      return filteredTasksRaw;
+    }
+    const startIso = timeScope === "all" ? todayIso : listRangeStartIso;
+    return collapseSeriesForList(filteredTasksRaw, startIso, listRangeEndIso);
+  }, [
+    viewMode,
+    completionFilter,
+    timeScope,
+    filteredTasksRaw,
+    listRangeStartIso,
+    listRangeEndIso,
+    todayIso
+  ]);
 
   const searchQuery = taskSearchQuery.trim().toLowerCase();
-  const searchSuggestions = (() => {
+  const searchSuggestions = useMemo(() => {
     if (!searchQuery) return [];
     const out: string[] = [];
     const seen = new Set<string>();
@@ -1645,7 +1879,8 @@ export function TaskBoard({ selectedProjectId, timeScope, onTimeScopeChange }: T
         if (projectAssocFilter === "with" && !hasProject(t)) return false;
       }
 
-      if (!t.dueDate || timeScope === "all") return true;
+      if (!t.dueDate) return timeScope === "all";
+      if (timeScope === "all") return true;
       if (timeScope === "yesterday") return t.dueDate === yesterdayIso;
       if (timeScope === "today") return t.dueDate === todayIso;
       if (timeScope === "tomorrow") return t.dueDate === tomorrowIso;
@@ -1718,7 +1953,38 @@ export function TaskBoard({ selectedProjectId, timeScope, onTimeScopeChange }: T
     }
 
     return out;
-  })();
+  }, [
+    searchQuery,
+    listSource,
+    completionFilter,
+    projectAssocFilter,
+    selectedProjectId,
+    timeScope,
+    yesterdayIso,
+    todayIso,
+    tomorrowIso,
+    lastWeekStartIso,
+    lastWeekEndIso,
+    startOfWeekMondayIso,
+    endOfWeekSundayIso,
+    nextWeekStartIso,
+    nextWeekEndIso,
+    endOfSprintIso,
+    lastMonthStartIso,
+    lastMonthEndIso,
+    thisMonthStartIso,
+    thisMonthEndIso,
+    nextMonthStartIso,
+    nextMonthEndIso,
+    lastQuarterStartIso,
+    lastQuarterEndIso,
+    thisQuarterStartIso,
+    thisQuarterEndIso,
+    nextQuarterStartIso,
+    nextQuarterEndIso,
+    customRangeStartNormalizedIso,
+    customRangeEndNormalizedIso
+  ]);
 
   const materializeVirtualTask = async (task: Task): Promise<Task | null> => {
     if (!task.virtual) return task;
@@ -2021,10 +2287,12 @@ export function TaskBoard({ selectedProjectId, timeScope, onTimeScopeChange }: T
       }
     >();
 
+    // IMPORTANT: group/count from the *uncollapsed* set so recurring series counts
+    // reflect all matching occurrences in the selected timeframe.
     const baseForGrouping =
       completionFilter === "completed"
         ? filteredTasks
-        : filteredTasks.filter((t) => t.completed);
+        : filteredTasksRaw.filter((t) => t.completed);
 
     for (const task of baseForGrouping) {
       // Only repeating series should be grouped by their Parent ID.
@@ -2037,6 +2305,10 @@ export function TaskBoard({ selectedProjectId, timeScope, onTimeScopeChange }: T
       } else {
         existing.count += 1;
         existing.items.push(task);
+        // Keep the most recent occurrence as the representative.
+        if (compareDueDateDesc(task, existing.representative) < 0) {
+          existing.representative = task;
+        }
       }
     }
 
@@ -2141,8 +2413,58 @@ export function TaskBoard({ selectedProjectId, timeScope, onTimeScopeChange }: T
             <div className="task-meta-row">
               {task.dueDate && (
                 <span className="pill subtle">
-                  Due {formatWithWeekday(task.dueDate)}{" "}
-                  {task.dueTime && `• ${task.dueTime}`}
+                  {(() => {
+                    const hasTime = !!task.dueTime;
+                    const duration =
+                      task.durationMinutes !== undefined
+                        ? task.durationMinutes
+                        : hasTime
+                          ? 30
+                          : 1440;
+                    const startTime = task.dueTime ?? "00:00";
+                    const end = addMinutesLocal(task.dueDate!, startTime, duration);
+                    if (!end) {
+                      return (
+                        <>
+                          Due {formatWithWeekday(task.dueDate)} {task.dueTime ? `• ${task.dueTime}` : ""}
+                        </>
+                      );
+                    }
+
+                    const startDate = task.dueDate!;
+                    const endDate = end.endDate;
+                    const multiDay = endDate !== startDate;
+                    const daySpan = (() => {
+                      const a = new Date(startDate + "T12:00:00");
+                      const b = new Date(endDate + "T12:00:00");
+                      if (Number.isNaN(a.getTime()) || Number.isNaN(b.getTime())) return null;
+                      const diff = Math.round((b.getTime() - a.getTime()) / (24 * 60 * 60 * 1000));
+                      return diff >= 0 ? diff + 1 : null;
+                    })();
+
+                    if (!hasTime) {
+                      if (!multiDay) return <>Due {formatWithWeekday(startDate)} (all day)</>;
+                      return (
+                        <>
+                          {formatWithWeekday(startDate)} — {formatWithWeekday(endDate)}
+                          {daySpan ? ` • ${daySpan} ${daySpan === 1 ? "day" : "days"}` : ""}
+                        </>
+                      );
+                    }
+
+                    if (!multiDay) {
+                      return (
+                        <>
+                          Due {formatWithWeekday(startDate)} • {startTime}
+                        </>
+                      );
+                    }
+                    return (
+                      <>
+                        {formatWithWeekday(startDate)} • {startTime} — {formatWithWeekday(endDate)} • {end.endTime}
+                      </>
+                    );
+                  })()}
                 </span>
               )}
               {task.durationMinutes !== undefined && (
@@ -4474,7 +4796,8 @@ export function TaskBoard({ selectedProjectId, timeScope, onTimeScopeChange }: T
               const parentKey = getParentId(task);
 
               const inTimeScopeForList = (t: Task): boolean => {
-                if (!t.dueDate || timeScope === "all") return true;
+                if (!t.dueDate) return timeScope === "all";
+                if (timeScope === "all") return true;
                 if (timeScope === "yesterday") return t.dueDate === yesterdayIso;
                 if (timeScope === "today") return t.dueDate === todayIso;
                 if (timeScope === "tomorrow") return t.dueDate === tomorrowIso;

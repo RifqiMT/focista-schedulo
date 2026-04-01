@@ -1,6 +1,6 @@
 # Product Documentation Standard — Focista Schedulo
 
-**Last updated:** 2026-03-31  
+**Last updated:** 2026-04-01  
 **Owner:** Product (with Design and Engineering)
 
 ---
@@ -171,17 +171,17 @@ Use these canonical terms consistently:
 | **Voice input** | Speech-to-form autofill in the task editor. |
 | **Hovercard** | Portaled popover near the pointer with full task details; suppressed on row checkbox and action buttons; pointer-events passthrough so row actions stay usable when overlapped. |
 | **Productivity Analysis** | Modal with historical charts from `/api/productivity-insights`. |
-| **Progress day** | Local date (`YYYY-MM-DD`) used to bucket a completed task in stats and productivity: **`dueDate`** first, else local day from **`completedAt`**. |
+| **Progress day** | Local date (`YYYY-MM-DD`) used to bucket a completed task in stats and productivity: **local day from `completedAt`** when available; otherwise fall back to **`dueDate`** (legacy records). |
 | **List view** | Task list with optional timeframe and status filters; repeating tasks can be expanded to show occurrences. |
 
 ### Required Consistency Checks for Each Release
 
 - Timeframe taxonomy in docs must match shipped values in `TimeScope` and UI selectors.
 - Recurrence docs must reflect current horizon/materialization behavior (not legacy one-upcoming-only wording).
-- Day-based metrics docs must state **due-date-first** progress bucketing (`dueDate`, then `completedAt` local day) for streak, completed-today, and productivity timelines.
+- Day-based metrics docs must state **completion-time-first** progress bucketing (`completedAt` local day, then `dueDate` as legacy fallback) for streak, completed-today, and productivity timelines.
 - Traceability rows must include any new reliability controls added in backend normalization and frontend mutation dedupe.
 - `docs/API_CONTRACTS.md` must match Zod schemas and route list in `backend/src/index.ts`.
 
 ---
 
-**Last updated:** 2026-03-31
+**Last updated:** 2026-04-01

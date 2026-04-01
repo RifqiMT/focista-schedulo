@@ -27,6 +27,7 @@ export function App() {
   // Default timeframe is "today" for a focused daily view.
   const [timeScope, setTimeScope] = useState<TimeScope>("today");
   const [syncingData, setSyncingData] = useState(false);
+  const [syncingFromData, setSyncingFromData] = useState(false);
   const [importingData, setImportingData] = useState(false);
   const [importError, setImportError] = useState<string | null>(null);
   const [importOkMsg, setImportOkMsg] = useState<string | null>(null);
@@ -111,6 +112,39 @@ export function App() {
       pushToast({ kind: "success", title: "Saved", message: "Data saved and normalized.", durationMs: elapsed });
     } finally {
       setSyncingData(false);
+    }
+  };
+
+  const syncAndMergeFromDataFolder = async () => {
+    if (syncingFromData) return;
+    setSyncingFromData(true);
+    const started = performance.now();
+    try {
+      const res = await fetch("/api/admin/sync-from-data", { method: "POST" });
+      const elapsed = performance.now() - started;
+      if (!res.ok) {
+        pushToast({
+          kind: "error",
+          title: "Sync failed",
+          message: `Request failed (${res.status})`,
+          durationMs: elapsed
+        });
+        return;
+      }
+      const out = await res.json().catch(() => null);
+      window.dispatchEvent(new Event("pst:projects-changed"));
+      window.dispatchEvent(new Event("pst:tasks-changed"));
+      const filesRead = out?.filesRead ?? 0;
+      const importedTasks = out?.imported?.tasks ?? 0;
+      const importedProjects = out?.imported?.projects ?? 0;
+      pushToast({
+        kind: "success",
+        title: "Synced",
+        message: `Synced from data folder (${filesRead} file(s)); merged ${importedProjects} project(s), ${importedTasks} task(s).`,
+        durationMs: elapsed
+      });
+    } finally {
+      setSyncingFromData(false);
     }
   };
 
@@ -207,6 +241,14 @@ export function App() {
                 {importingData ? "Importing…" : "Import"}
               </span>
             </label>
+            <button
+              className="ghost-button"
+              onClick={syncAndMergeFromDataFolder}
+              disabled={syncingFromData}
+              title="Sync & merge from backend/data/*.json (dedupes by id and keeps the latest values)."
+            >
+              {syncingFromData ? "Syncing…" : "Sync"}
+            </button>
             <button
               className="ghost-button"
               onClick={syncDataFromJson}

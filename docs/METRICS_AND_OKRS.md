@@ -1,6 +1,6 @@
 # Metrics and OKRs — Focista Schedulo
 
-**Last updated:** 2026-03-31  
+**Last updated:** 2026-04-01  
 **Owner:** Product
 
 This document frames quarterly OKRs and the metrics used to measure them for the product team. Product metric definitions live in `PRODUCT_METRICS.md`. Variable definitions and formulas live in `VARIABLES.md`.
@@ -137,4 +137,4 @@ Escalate when one or more conditions hold for two consecutive reporting cycles:
 
 ---
 
-**Last updated:** 2026-03-31
+**Last updated:** 2026-04-01

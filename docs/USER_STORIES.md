@@ -1,6 +1,6 @@
 # User Stories — Focista Schedulo
 
-**Last updated:** 2026-03-31  
+**Last updated:** 2026-04-01  
 **Owner:** Product
 
 User stories are written in the format: **As a [role], I want [goal] so that [benefit].** Acceptance criteria define when the story is done.
@@ -84,7 +84,7 @@ As a user, I want to see my progress so I feel motivated to continue.
 
 **Acceptance criteria:**
 
-- Progress panel shows tasks **counted today** (by **progress day**: `dueDate` when set, else completion day from `completedAt`), streak, level, and XP toward the next level.
+- Progress panel shows tasks **counted today** (by **progress day**: local day from `completedAt` when available; otherwise `dueDate` as legacy fallback), streak, level, and XP toward the next level.
 - Points per completed task: low=1, medium=2, high=3, urgent=4. Lifetime **level** / **totalPoints** reflect all completed tasks.
 - Stats update when tasks change (events + cache invalidation on persist; no manual refresh required for typical flows).
 
@@ -210,7 +210,7 @@ As a user, I want to see how my completions, experience, level, and milestones e
   2. Recurrence identity and expansion behavior
   3. Calendar rendering and day-agenda segmentation
   4. Export integrity (JSON/CSV)
-  5. Productivity insights parity with stats priority weights and due-date-first progress bucketing
+  5. Productivity insights parity with stats priority weights and completion-time-first progress bucketing
 
 ---
 

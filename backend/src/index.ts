@@ -199,6 +199,93 @@ function mergeTasks(existing: Task[], incoming: Task[]): Task[] {
   return Array.from(byId.values());
 }
 
+function toEpochMs(iso: string | undefined): number {
+  const s = (iso ?? "").trim();
+  if (!s) return 0;
+  const d = new Date(s);
+  const ms = d.getTime();
+  return Number.isNaN(ms) ? 0 : ms;
+}
+
+function mergeTasksPreferLatest(existing: Task[], incoming: Task[]): Task[] {
+  const byId = new Map<string, Task>();
+  for (const t of existing) byId.set(t.id, t);
+  for (const t of incoming) {
+    const prev = byId.get(t.id);
+    if (!prev) {
+      byId.set(t.id, t);
+      continue;
+    }
+    const prevRecency = toEpochMs(prev.completedAt);
+    const nextRecency = toEpochMs(t.completedAt);
+    const winner = nextRecency >= prevRecency ? t : prev;
+    const loser = winner === t ? prev : t;
+    byId.set(t.id, {
+      ...loser,
+      ...winner,
+      completed: (loser.completed ?? false) || (winner.completed ?? false),
+      cancelled: (loser.cancelled ?? false) || (winner.cancelled ?? false)
+    });
+  }
+  return Array.from(byId.values());
+}
+
+async function readJsonFilesFromDataDir(): Promise<{
+  projects: Project[];
+  tasks: Task[];
+  filesRead: number;
+}> {
+  const entries = await fs.readdir(DATA_DIR).catch(() => []);
+  const jsonFiles = entries.filter((n) => n.toLowerCase().endsWith(".json"));
+  const fileMetas = await Promise.all(
+    jsonFiles.map(async (name) => {
+      const full = path.join(DATA_DIR, name);
+      const st = await fs.stat(full).catch(() => null);
+      return st ? { name, full, mtimeMs: st.mtimeMs } : null;
+    })
+  );
+  const ordered = fileMetas.filter(Boolean).sort((a, b) => a!.mtimeMs - b!.mtimeMs) as Array<{
+    name: string;
+    full: string;
+    mtimeMs: number;
+  }>;
+
+  let incomingProjects: Project[] = [];
+  let incomingTasks: Task[] = [];
+
+  for (const f of ordered) {
+    const raw = await fs.readFile(f.full, "utf8").catch(() => "");
+    if (!raw.trim()) continue;
+    let parsed: any = null;
+    try {
+      parsed = JSON.parse(raw);
+    } catch {
+      continue;
+    }
+    const pArr = Array.isArray(parsed?.projects)
+      ? parsed.projects
+      : Array.isArray(parsed) && parsed.length && typeof parsed[0]?.name === "string"
+        ? parsed
+        : [];
+    const tArr = Array.isArray(parsed?.tasks)
+      ? parsed.tasks
+      : Array.isArray(parsed) && parsed.length && typeof parsed[0]?.priority === "string"
+        ? parsed
+        : [];
+
+    const pSafe = z.array(ProjectSchema).safeParse(pArr);
+    const tSafe = z.array(TaskSchema).safeParse(tArr);
+    if (pSafe.success && pSafe.data.length) {
+      incomingProjects = mergeProjects(incomingProjects, pSafe.data);
+    }
+    if (tSafe.success && tSafe.data.length) {
+      incomingTasks = mergeTasksPreferLatest(incomingTasks, tSafe.data);
+    }
+  }
+
+  return { projects: incomingProjects, tasks: incomingTasks, filesRead: ordered.length };
+}
+
 // Lightweight in-memory caching for expensive aggregate endpoints.
 type CachedValue<T> = {
   version: number;
@@ -257,11 +344,15 @@ function parseIsoDateTimeToLocalDate(isoDateTime: string | undefined): string | 
   return isoDateLocal(d);
 }
 
-/** Calendar day used for progress (/api/stats, productivity, streaks): due date when set, else completion timestamp. */
+/** Calendar day used for progress (/api/stats, productivity, streaks): completion timestamp when available. */
 function completionDateIsoLocalForTask(t: Task): string | null {
   if (!t.completed) return null;
+  // Prefer the actual completion timestamp so charts reflect when work was done.
+  const completedIso = parseIsoDateTimeToLocalDate(t.completedAt);
+  if (completedIso) return completedIso;
+  // Backward compatible fallback: older data may not have completedAt.
   if (t.dueDate) return t.dueDate;
-  return parseIsoDateTimeToLocalDate(t.completedAt);
+  return null;
 }
 
 function fromIsoDateLocal(iso: string): Date {
@@ -1990,6 +2081,29 @@ app.post("/api/admin/save-data", async (_req, res) => {
     await loadData();
     res.json({
       ok: true,
+      counts: { projects: projects.length, tasks: tasks.length }
+    });
+  } catch (error) {
+    res.status(500).json({
+      ok: false,
+      error: error instanceof Error ? error.message : String(error)
+    });
+  }
+});
+
+app.post("/api/admin/sync-from-data", async (_req, res) => {
+  try {
+    const disk = await readJsonFilesFromDataDir();
+    // Merge disk into memory, dedupe by id, keep "latest" by completedAt where available.
+    projects = mergeProjects(projects, disk.projects);
+    tasks = mergeTasksPreferLatest(tasks, disk.tasks);
+    await persistProjects();
+    await persistTasks();
+    await loadData();
+    res.json({
+      ok: true,
+      filesRead: disk.filesRead,
+      imported: { projects: disk.projects.length, tasks: disk.tasks.length },
       counts: { projects: projects.length, tasks: tasks.length }
     });
   } catch (error) {

@@ -1,6 +1,6 @@
 # Documentation Index — Focista Schedulo
 
-**Last updated:** 2026-03-31
+**Last updated:** 2026-04-01
 
 This folder contains product, design, and engineering documentation for Focista Schedulo. All documents are kept up to date with the current codebase and product scope.
 
@@ -42,6 +42,7 @@ This folder contains product, design, and engineering documentation for Focista 
 | [ARCHITECTURE.md](ARCHITECTURE.md) | System architecture: repo structure, runtime topology, data model, persistence and migrations, recurrence and identity, API surface, frontend state sync, build and dev. |
 | [API_CONTRACTS.md](API_CONTRACTS.md) | API contracts: health, projects, tasks, stats, productivity insights, admin reload. |
 | [VARIABLES.md](VARIABLES.md) | Variable catalog: stored and derived variables with friendly name, definition, formula, location in app, source of truth, example; includes relationship chart. |
+| [DOCS_CODE_CROSSWALK.md](DOCS_CODE_CROSSWALK.md) | Claim-by-claim crosswalk mapping docs to current code artifacts and a repeatable verification checklist. |
 
 ---
 
@@ -66,10 +67,10 @@ This folder contains product, design, and engineering documentation for Focista 
 | Traceability matrix | Complete | New enterprise matrix added |
 | Guardrails and constraints | Complete | New business/technical guardrails added |
 | Recurrence and timeframe parity | Complete | Horizon-based recurrence + full timeframe taxonomy documented |
-| Progress-day / streak semantics | Complete | **Due-date-first** bucketing for daily stats and productivity (`dueDate`, then `completedAt` local day); lifetime points/level unchanged |
+| Progress-day / streak semantics | Complete | **Completion-time-first** bucketing for daily stats and productivity (`completedAt` local day, then `dueDate` as legacy fallback); lifetime points/level unchanged |
 | Productivity insights API and charts | Complete | `/api/productivity-insights`, `ProductivityAnalysisModal`, variables documented |
 | Task hovercard portal + control suppression | Complete | Portaled hovercard; suppressed on checkbox/actions; **pointer-events** pass-through so row actions work when overlapped |
 
 ---
 
-**Last updated:** 2026-03-31
+**Last updated:** 2026-04-01

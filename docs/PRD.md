@@ -1,6 +1,6 @@
 # PRD — Focista Schedulo
 
-**Last updated:** 2026-03-31  
+**Last updated:** 2026-04-01  
 **Owner:** Product (with Engineering and Design)
 
 ---
@@ -118,13 +118,14 @@ Unless otherwise stated, sections under **“Current Scope (Shipped)”** descri
 ### Import and Save (Data ownership)
 
 - **Import:** Header import supports JSON/CSV exports and merges safely with normalization and dedupe (`POST /api/admin/import`).
+- **Sync:** Header sync merges from JSON files in `backend/data/` into memory, dedupes by id, persists, then normalizes (`POST /api/admin/sync-from-data`).
 - **Save:** Header save persists current state to disk and re-runs normalization to keep IDs and series integrity deterministic (`POST /api/admin/save-data`).
 
 ### Gamification
 
 - `/api/stats` provides: completedToday, pointsToday, totalPoints, level, xpToNext, streakDays, last7Days, achievements and milestoneAchievements (streak, tasks completed, XP, levels).
 - Points per priority: low=1, medium=2, high=3, urgent=4.
-- **Progress day:** Day-scoped fields (e.g. completedToday, streak, last7Days, achievement thresholds tied to “today”) bucket each **completed** task by **`dueDate`** when set; if there is no due date, by the **local calendar day** of **`completedAt`**. **totalPoints** and **level** remain lifetime aggregates over all completed tasks.
+- **Progress day:** Day-scoped fields (e.g. completedToday, streak, last7Days, achievement thresholds tied to “today”) bucket each **completed** task by the **local calendar day** of **`completedAt`** when available; if `completedAt` is missing (legacy records), fall back to **`dueDate`**. **totalPoints** and **level** remain lifetime aggregates over all completed tasks.
 - Responses are cached in memory and invalidated when task/project data is persisted or reloaded from disk.
 - UI updates via `pst:tasks-changed` events and focus/visibility refresh patterns.
 
@@ -177,7 +178,7 @@ Unless otherwise stated, sections under **“Current Scope (Shipped)”** descri
 | FR-7 | Gamification stats and real-time updates. |
 | FR-8 | Task hovercard with full details and clickable links/locations; portaled rendering; pointer-aligned placement with viewport clamping; suppressed for row checkbox and action buttons. |
 | FR-9 | Multi-link and multi-location (UI) with normalization and alias support where applicable. |
-| FR-10 | Streak/day metrics and progress charts attribute completions to **`dueDate`** when set; undated tasks use **`completedAt`** (local day). |
+| FR-10 | Streak/day metrics and progress charts attribute completions to **`completedAt`** (local day) when available; legacy records fall back to **`dueDate`**. |
 | FR-11 | Productivity Analysis modal consuming `/api/productivity-insights` with range controls, aggregations, fullscreen charts, and non-clipped chart tooltips. |
 
 ---
@@ -234,7 +235,7 @@ A release is considered ready only when:
 1. Scope requirements are verified in both UI and API behavior.
 2. Data integrity checks pass (schema validity, recurrence consistency, no duplicate IDs).
 3. Core metrics remain correct (`completedToday`, `streakDays`, `level`, `xpToNext`, milestone progress).
-4. Productivity insights rows stay consistent with **due-date-first** progress bucketing and priority-point rules.
+4. Productivity insights rows stay consistent with **completion-time-first** progress bucketing and priority-point rules.
 5. Export paths (JSON/CSV) remain reliable.
 6. Related product documentation is updated in the same release train.
 

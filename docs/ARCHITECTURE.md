@@ -1,6 +1,6 @@
 # Architecture — Focista Schedulo
 
-**Last updated**: 2026-03-31  
+**Last updated**: 2026-04-01  
 **Owner**: Engineering  
 
 ## Overview
@@ -102,17 +102,18 @@ Deletion behavior is primarily persisted deletion/materialization-aware mutation
 
 ### Stats
 
-- `GET /api/stats` → stats used by Progress panel (points, level, streak, last7Days, achievements, milestoneAchievements). Day-based metrics use **due date** when set, else local day from `completedAt`. Responses are cached in memory; caches are **cleared at the start of** `persistTasks` / `persistProjects` and **after** `loadData()` completes so clients never read stale aggregates while in-memory `tasks` already reflect mutations.
+- `GET /api/stats` → stats used by Progress panel (points, level, streak, last7Days, achievements, milestoneAchievements). Day-based metrics use **completion-time-first** progress bucketing: local day from `completedAt` when available; fall back to `dueDate` for legacy records missing `completedAt`. Responses are cached in memory; caches are **cleared at the start of** `persistTasks` / `persistProjects` and **after** `loadData()` completes so clients never read stale aggregates while in-memory `tasks` already reflect mutations.
 
 ### Productivity insights
 
-- `GET /api/productivity-insights` → `{ rows: ProductivityRow[] }` daily series for **completed** tasks only: same **progress-day** bucketing as stats (`dueDate` first, then `completedAt` local day). Includes per-day counts, cumulative completions, per-day and cumulative XP (same priority weights as stats), implied level from cumulative XP, and cumulative milestone “unlocks” along the timeline. Cached and invalidated like `/api/stats`.
+- `GET /api/productivity-insights` → `{ rows: ProductivityRow[] }` daily series for **completed** tasks only: same **progress-day** bucketing as stats (`completedAt` local day first, then `dueDate` as legacy fallback). Includes per-day counts, cumulative completions, per-day and cumulative XP (same priority weights as stats), implied level from cumulative XP, and cumulative milestone “unlocks” along the timeline. Cached and invalidated like `/api/stats`.
 
 ### Admin
 
-- `POST /api/admin/reload-data` → reloads tasks and projects from disk (e.g. after editing JSON); triggers no persistence, used by frontend “Sync data” for consistency
+- `POST /api/admin/reload-data` → reloads tasks and projects from disk (e.g. after editing JSON)
 - `POST /api/admin/save-data` → persists tasks/projects to `backend/data/*.json`, then runs standard normalization by reloading (dedupe + deterministic IDs)
 - `POST /api/admin/import` → imports JSON/CSV exports and merges into persisted data, followed by normalization
+- `POST /api/admin/sync-from-data` → reads JSON files from `backend/data/`, merges into in-memory state, dedupes by id, persists, then runs standard normalization
 
 ## Frontend state synchronization
 

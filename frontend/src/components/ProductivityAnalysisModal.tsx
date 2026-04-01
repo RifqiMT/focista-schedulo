@@ -13,6 +13,17 @@ interface ProductivityRow {
   badgesEarnedCumulative: number;
 }
 
+type ProjectRef = { id: string; name: string };
+type ProjectBreakdownRow = {
+  date: string;
+  tasksCompletedByProject: Record<string, number>;
+  xpGainedByProject: Record<string, number>;
+};
+type ProjectBreakdownPayload = {
+  projects: ProjectRef[];
+  rows: ProjectBreakdownRow[];
+};
+
 interface Props {
   open: boolean;
   onClose: () => void;
@@ -185,7 +196,7 @@ const CHARTS: ChartConfig[] = [
 
 type FsAnyChart =
   | { kind: "single"; id: string; title: string; description: string; yAxisLabel: string; chart: ChartConfig }
-  ;
+  | { kind: "project"; id: "tasksCompletedByProject"; title: string; description: string; yAxisLabel: string };
 
 const FS_ALL: ReadonlyArray<FsAnyChart> = [
   ...CHARTS.map((c) => ({
@@ -195,18 +206,45 @@ const FS_ALL: ReadonlyArray<FsAnyChart> = [
     description: c.description,
     yAxisLabel: c.yAxisLabel,
     chart: c
-  }))
+  })),
+  {
+    kind: "project" as const,
+    id: "tasksCompletedByProject",
+    title: "Tasks completed by project",
+    description: "Tasks finished per period, split by project (top projects in the selected range).",
+    yAxisLabel: "Tasks · per period"
+  }
 ];
 
 type Point = { label: string; value: number; rawLabel: string };
 
-// By-project charts were removed (they were broken and confusing in practice).
+type MultiSeries = {
+  id: string;
+  name: string;
+  color: string;
+  points: Point[];
+};
+
+function seriesPaletteColor(idx: number): string {
+  // Distinct, high-contrast colors that read well on light surfaces.
+  const colors = [
+    "#ce1126", // brand red
+    "#0f766e", // teal
+    "#7c3aed", // purple
+    "#2563eb", // blue
+    "#ea580c", // orange
+    "#16a34a", // green
+    "#0ea5e9", // sky
+    "#9333ea", // violet
+    "#7f1d1d" // deep red
+  ];
+  return colors[idx % colors.length]!;
+}
 
 function bucketKeyFor(dateIso: string, timeframe: Timeframe): { key: string; label: string } {
   const d = new Date(`${dateIso}T12:00:00`);
   const y = d.getFullYear();
   const m = d.getMonth();
-  const day = d.getDate();
 
   switch (timeframe) {
     case "daily": {
@@ -525,6 +563,32 @@ function maxPoint(points: Point[]): { value: number; rawLabel: string } | null {
   return { value: best.value, rawLabel: best.rawLabel };
 }
 
+function projectSeriesTotals(
+  series: MultiSeries[],
+  visibleIds: Set<string>
+): { latest: number; peak: number } | null {
+  if (series.length === 0) return null;
+  const len = series[0]?.points.length ?? 0;
+  if (len === 0) return { latest: 0, peak: 0 };
+  if (visibleIds.size === 0) return null;
+  let peak = 0;
+  for (let i = 0; i < len; i++) {
+    let sum = 0;
+    for (const s of series) {
+      if (!visibleIds.has(s.id)) continue;
+      sum += s.points[i]?.value ?? 0;
+    }
+    peak = Math.max(peak, sum);
+  }
+  let latest = 0;
+  const i = len - 1;
+  for (const s of series) {
+    if (!visibleIds.has(s.id)) continue;
+    latest += s.points[i]?.value ?? 0;
+  }
+  return { latest, peak };
+}
+
 /** Inline + fullscreen: explicit dual-series legend with show/hide toggles. */
 function PaDualSeriesLegend({
   fullscreen,
@@ -539,42 +603,104 @@ function PaDualSeriesLegend({
   onToggleRaw: () => void;
   onToggleAvg: () => void;
 }) {
+  const allOn = showRaw && showAvg;
+  const noneOn = !showRaw && !showAvg;
+  const setAll = (on: boolean) => {
+    if (on) {
+      if (!showRaw) onToggleRaw();
+      if (!showAvg) onToggleAvg();
+      return;
+    }
+    if (showRaw) onToggleRaw();
+    if (showAvg) onToggleAvg();
+  };
+
   return (
     <div
       className={`pa-legend pa-legend--toggles${fullscreen ? " pa-legend--fs" : ""}`}
-      role="group"
       aria-label="Chart legend (toggle series)"
     >
-      <button
-        type="button"
-        className={`pa-legend-chip pa-legend-chip--raw ${showRaw ? "is-on" : "is-off"}`}
-        aria-pressed={showRaw}
-        onClick={onToggleRaw}
-        title={showRaw ? "Hide raw series (dashed brand red)" : "Show raw series (dashed brand red)"}
-      >
-        <div className="pa-legend-swatch-col" aria-hidden="true">
-          <span className="pa-legend-swatch raw" />
+      <div className="pa-legend-bar">
+        <div className="pa-legend-bar-left">
+          <span className="pa-legend-bar-title">Series</span>
+          <span className="pa-legend-bar-meta" aria-label="Visible series count">
+            {(showRaw ? 1 : 0) + (showAvg ? 1 : 0)}/2 visible
+          </span>
         </div>
-        <div className="pa-legend-copy">
-          <span className="pa-legend-chip-title">Raw</span>
-          <span className="pa-legend-chip-sub">Per period (unsmoothed)</span>
+        <div className="pa-legend-bar-actions" role="group" aria-label="Legend actions">
+          {noneOn ? (
+            <button
+              type="button"
+              className="ghost-button small"
+              onClick={() => setAll(true)}
+              title="Show all series"
+            >
+              Show all
+            </button>
+          ) : allOn ? (
+            <button
+              type="button"
+              className="ghost-button small"
+              onClick={() => setAll(false)}
+              title="Hide all series"
+            >
+              Hide all
+            </button>
+          ) : (
+            <>
+              <button
+                type="button"
+                className="ghost-button small"
+                onClick={() => setAll(false)}
+                title="Hide all series"
+              >
+                Hide all
+              </button>
+              <button
+                type="button"
+                className="ghost-button small"
+                onClick={() => setAll(true)}
+                title="Show all series"
+              >
+                Show all
+              </button>
+            </>
+          )}
         </div>
-      </button>
-      <button
-        type="button"
-        className={`pa-legend-chip pa-legend-chip--avg ${showAvg ? "is-on" : "is-off"}`}
-        aria-pressed={showAvg}
-        onClick={onToggleAvg}
-        title={showAvg ? "Hide rolling average (solid gold)" : "Show rolling average (solid gold)"}
-      >
-        <div className="pa-legend-swatch-col" aria-hidden="true">
-          <span className="pa-legend-swatch avg" />
-        </div>
-        <div className="pa-legend-copy">
-          <span className="pa-legend-chip-title">Rolling average</span>
-          <span className="pa-legend-chip-sub">Smoothed trend</span>
-        </div>
-      </button>
+      </div>
+
+      <div className="pa-legend-row" role="group" aria-label="Toggle series visibility">
+        <button
+          type="button"
+          className={`pa-legend-chip pa-legend-chip--raw ${showRaw ? "is-on" : "is-off"}`}
+          aria-pressed={showRaw}
+          onClick={onToggleRaw}
+          title={showRaw ? "Hide raw series (dashed brand red)" : "Show raw series (dashed brand red)"}
+        >
+          <div className="pa-legend-swatch-col" aria-hidden="true">
+            <span className="pa-legend-swatch raw" />
+          </div>
+          <div className="pa-legend-copy">
+            <span className="pa-legend-chip-title">Raw</span>
+            <span className="pa-legend-chip-sub">Per period (unsmoothed)</span>
+          </div>
+        </button>
+        <button
+          type="button"
+          className={`pa-legend-chip pa-legend-chip--avg ${showAvg ? "is-on" : "is-off"}`}
+          aria-pressed={showAvg}
+          onClick={onToggleAvg}
+          title={showAvg ? "Hide rolling average (solid gold)" : "Show rolling average (solid gold)"}
+        >
+          <div className="pa-legend-swatch-col" aria-hidden="true">
+            <span className="pa-legend-swatch avg" />
+          </div>
+          <div className="pa-legend-copy">
+            <span className="pa-legend-chip-title">Rolling average</span>
+            <span className="pa-legend-chip-sub">Smoothed trend</span>
+          </div>
+        </button>
+      </div>
     </div>
   );
 }
@@ -874,7 +1000,7 @@ function InsightChart({
                       <>
                         <section
                           className="pa-chart-tooltip-metric pa-chart-tooltip-metric--raw"
-                          aria-label={`${rawName}: ${formatPillValue(pt.value)}. ${yAxisLabel}. ${rawStyleChip} line on chart.`}
+                          aria-label={`${rawName}: ${formatPillValue(pt.value)}. ${rawStyleChip} line on chart.`}
                         >
                           <div className="pa-chart-tooltip-metric-top">
                             <span className="pa-chart-tooltip-dot pa-chart-tooltip-dot--raw" aria-hidden />
@@ -896,14 +1022,13 @@ function InsightChart({
                                   {rawStyleChip}
                                 </span>
                               </div>
-                              <p className="pa-chart-tooltip-metric-unit">{yAxisLabel}</p>
                             </div>
                           </div>
                         </section>
                         {ov && (
                           <section
                             className="pa-chart-tooltip-metric pa-chart-tooltip-metric--avg"
-                            aria-label={`Rolling average: ${formatPillValue(ov.value)}. ${yAxisLabel}. Solid gold line.`}
+                            aria-label={`Rolling average: ${formatPillValue(ov.value)}. Solid gold line.`}
                           >
                             <div className="pa-chart-tooltip-metric-top">
                               <span
@@ -928,7 +1053,6 @@ function InsightChart({
                                     Smoothed
                                   </span>
                                 </div>
-                                <p className="pa-chart-tooltip-metric-unit">{yAxisLabel}</p>
                               </div>
                             </div>
                           </section>
@@ -937,7 +1061,7 @@ function InsightChart({
                     ) : showRaw ? (
                       <section
                         className="pa-chart-tooltip-metric pa-chart-tooltip-metric--raw pa-chart-tooltip-metric--solo"
-                        aria-label={`${rawName}: ${formatPillValue(pt.value)}. ${yAxisLabel}.`}
+                        aria-label={`${rawName}: ${formatPillValue(pt.value)}.`}
                       >
                         <div className="pa-chart-tooltip-metric-top">
                           <span className="pa-chart-tooltip-dot pa-chart-tooltip-dot--raw" aria-hidden />
@@ -959,14 +1083,13 @@ function InsightChart({
                                 {rawStyleChip}
                               </span>
                             </div>
-                            <p className="pa-chart-tooltip-metric-unit">{yAxisLabel}</p>
                           </div>
                         </div>
                       </section>
                     ) : ov ? (
                       <section
                         className="pa-chart-tooltip-metric pa-chart-tooltip-metric--avg pa-chart-tooltip-metric--solo"
-                        aria-label={`${formatPillValue(ov.value)}. ${yAxisLabel}.`}
+                        aria-label={`Rolling average: ${formatPillValue(ov.value)}.`}
                       >
                         <div className="pa-chart-tooltip-metric-top">
                           <span className="pa-chart-tooltip-dot pa-chart-tooltip-dot--avg" aria-hidden />
@@ -984,7 +1107,6 @@ function InsightChart({
                                 </span>
                               ) : null}
                             </div>
-                            <p className="pa-chart-tooltip-metric-unit">{yAxisLabel}</p>
                           </div>
                         </div>
                       </section>
@@ -1220,12 +1342,599 @@ function InsightChart({
   );
 }
 
-// (by-project charts removed)
+function MultiLineChart({
+  chartId,
+  series,
+  yMin,
+  yMax,
+  timeframe,
+  xAxisLabel = "Date",
+  yAxisLabel,
+  mode = "inline",
+  idSuffix = "",
+  visibleSeriesIds,
+  onToggleSeries
+}: {
+  chartId: string;
+  series: MultiSeries[];
+  yMin: number;
+  yMax: number;
+  timeframe: Timeframe;
+  xAxisLabel?: string;
+  yAxisLabel: string;
+  mode?: InsightChartMode;
+  idSuffix?: string;
+  visibleSeriesIds: Set<string>;
+  onToggleSeries: (id: string) => void;
+}) {
+  const pointsLen = series[0]?.points.length ?? 0;
+  const [hover, setHover] = useState<{ idx: number; px: number; py: number } | null>(null);
+  const svgRef = useRef<SVGSVGElement | null>(null);
+  const scrollRef = useRef<HTMLDivElement | null>(null);
+  const tooltipRef = useRef<HTMLDivElement | null>(null);
+  const [chartContainerW, setChartContainerW] = useState(0);
+  const clipId = `pa-clip-${chartId}${idSuffix}`;
 
-// (by-project charts removed)
+  useLayoutEffect(() => {
+    if (mode !== "inline") {
+      setChartContainerW(0);
+      return;
+    }
+    const el = scrollRef.current;
+    if (!el) return;
+    const measure = () => setChartContainerW(Math.max(0, Math.round(el.clientWidth)));
+    measure();
+    const ro = new ResizeObserver(() => measure());
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [mode, chartId, pointsLen]);
+
+  useLayoutEffect(() => {
+    if (!hover) return;
+    const tip = tooltipRef.current;
+    const svg = svgRef.current;
+    if (!tip || !svg) return;
+
+    const r = svg.getBoundingClientRect();
+    const desiredX = r.left + (hover.px / VB_W) * r.width;
+    const desiredY = r.top + (hover.py / VB_H) * r.height;
+
+    const vw = window.innerWidth;
+    const vh = window.innerHeight;
+    const pad = 10;
+    const tipRect = tip.getBoundingClientRect();
+    const halfW = Math.max(20, tipRect.width / 2);
+    const clampedX = Math.max(pad + halfW, Math.min(vw - pad - halfW, desiredX));
+    const clampedY = Math.max(pad, Math.min(vh - pad, desiredY));
+
+    tip.style.left = `${clampedX}px`;
+    tip.style.top = `${clampedY}px`;
+  }, [hover]);
+
+  useEffect(() => {
+    if (!hover) return;
+    let raf = 0;
+    const tick = () => {
+      const tip = tooltipRef.current;
+      const svg = svgRef.current;
+      if (tip && svg) {
+        const r = svg.getBoundingClientRect();
+        const desiredX = r.left + (hover.px / VB_W) * r.width;
+        const desiredY = r.top + (hover.py / VB_H) * r.height;
+
+        const vw = window.innerWidth;
+        const vh = window.innerHeight;
+        const pad = 10;
+        const tipRect = tip.getBoundingClientRect();
+        const halfW = Math.max(20, tipRect.width / 2);
+        const clampedX = Math.max(pad + halfW, Math.min(vw - pad - halfW, desiredX));
+        const clampedY = Math.max(pad, Math.min(vh - pad, desiredY));
+
+        tip.style.left = `${clampedX}px`;
+        tip.style.top = `${clampedY}px`;
+      }
+      raf = requestAnimationFrame(tick);
+    };
+    raf = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(raf);
+  }, [hover]);
+
+  const xAt = useMemo(() => {
+    const n = Math.max(pointsLen, 1);
+    const plotW = VB_W - PAD_L - PAD_R;
+    return (i: number) => {
+      if (n <= 1) return PAD_L + plotW / 2;
+      return PAD_L + (i / (n - 1)) * plotW;
+    };
+  }, [pointsLen]);
+
+  const yAt = useMemo(() => {
+    const plotH = BASE_Y - PAD_T;
+    const span = yMax - yMin;
+    return (v: number) => {
+      const norm = span <= 0 ? 0 : (v - yMin) / span;
+      const clamped = Math.max(0, Math.min(1, norm));
+      return BASE_Y - clamped * plotH;
+    };
+  }, [yMin, yMax]);
+
+  const visibleSeries = useMemo(
+    () => series.filter((s) => visibleSeriesIds.has(s.id)),
+    [series, visibleSeriesIds]
+  );
+
+  const allVisible = visibleSeriesIds.size >= series.length && series.length > 0;
+  const noneVisible = visibleSeriesIds.size === 0;
+  const hasVisibleData = visibleSeries.length > 0;
+
+  const seriesPaths = useMemo(() => {
+    return visibleSeries.map((s) => {
+      const coords = s.points.map((p, i) => ({ x: xAt(i), y: yAt(p.value) }));
+      return { id: s.id, name: s.name, color: s.color, d: linearLinePath(coords), coords };
+    });
+  }, [visibleSeries, xAt, yAt]);
+
+  if (pointsLen === 0) return null;
+
+  const setHoverIdx = (idx: number) => {
+    const clamped = Math.max(0, Math.min(pointsLen - 1, idx));
+    // Anchor tooltip to the highest visible series at that index (or the first).
+    const anchor =
+      seriesPaths
+        .map((p) => p.coords[clamped])
+        .filter(Boolean)
+        .sort((a, b) => a.y - b.y)[0] ?? { x: xAt(clamped), y: yAt(0) };
+    setHover({ idx: clamped, px: anchor.x, py: anchor.y });
+  };
+
+  const yTicks = 4;
+  const ySpan = yMax - yMin;
+  const tickIndices = xTickIndices(
+    pointsLen,
+    mode === "fullscreen" ? 14 : Math.min(11, Math.max(7, Math.ceil(pointsLen / 25)))
+  );
+  const strokeW = pointsLen > 450 ? 1.05 : pointsLen > 200 ? 1.35 : 1.75;
+
+  const updateHoverFromClientX = (clientX: number) => {
+    const el = svgRef.current;
+    if (!el) return;
+    const rect = el.getBoundingClientRect();
+    if (rect.width <= 0) return;
+    const plotW = VB_W - PAD_L - PAD_R;
+    const xSvg = ((clientX - rect.left) / rect.width) * VB_W;
+    const n = Math.max(pointsLen, 1);
+    let idx: number;
+    if (n <= 1) idx = 0;
+    else {
+      const t = (xSvg - PAD_L) / plotW;
+      idx = Math.round(Math.max(0, Math.min(1, t)) * (n - 1));
+    }
+    setHoverIdx(idx);
+  };
+
+  const minPx = chartTrackMinWidthPx(pointsLen, mode, chartContainerW > 0 ? chartContainerW : undefined);
+  const idealW = chartIdealMinWidthPx(pointsLen, mode);
+  const chartCompressedInline = mode === "inline" && chartContainerW > 0 && idealW > minPx + 6;
+  const trackSize = `max(100%, ${minPx}px)`;
+
+  const tooltipPortal =
+    hover !== null && hasVisibleData && typeof document !== "undefined"
+      ? createPortal(
+          (() => {
+            const hi = hover.idx;
+            const label = series[0]?.points[hi]?.rawLabel ?? "";
+            const tooltipY = hover.py / VB_H < 0.34 ? "below" : "above";
+            const growthChip = (current: number, prev: number | null) => {
+              if (prev == null) return null;
+              if (prev === 0) {
+                if (current === 0) {
+                  return { text: "0%", kind: "flat" as const, aria: "0% vs previous period" };
+                }
+                return { text: "—", kind: "na" as const, aria: "No previous baseline (previous period is 0)" };
+              }
+              const pct = ((current - prev) / Math.abs(prev)) * 100;
+              const rounded = Math.round(pct * 10) / 10;
+              const text = `${rounded >= 0 ? "+" : ""}${String(rounded).replace(/\\.0$/, "")}%`;
+              return {
+                text,
+                kind: rounded > 0 ? ("up" as const) : rounded < 0 ? ("down" as const) : ("flat" as const),
+                aria: `${text} vs previous period`
+              };
+            };
+            const dual = visibleSeries.length > 1;
+            return (
+              <div
+                ref={tooltipRef}
+                className={`pa-chart-tooltip pa-chart-tooltip--portal pa-chart-tooltip--y-${tooltipY}${
+                  dual ? " pa-chart-tooltip--dual" : ""
+                }`}
+                role="tooltip"
+              >
+                <div className="pa-chart-tooltip-card">
+                  <header className="pa-chart-tooltip-head">
+                    <span className="pa-chart-tooltip-head-k">{xAxisLabel}</span>
+                    <span className="pa-chart-tooltip-head-v">
+                      {formatAxisLabel(timeframe, label)}
+                    </span>
+                  </header>
+                  <div className="pa-chart-tooltip-metrics pa-chart-tooltip-metrics--solo">
+                    {visibleSeries.map((s) => {
+                      const v = s.points[hi]?.value ?? 0;
+                      const prev = hi > 0 ? s.points[hi - 1]?.value ?? null : null;
+                      const g = growthChip(v, prev);
+                      return (
+                        <section
+                          key={s.id}
+                          className="pa-chart-tooltip-metric pa-chart-tooltip-metric--solo"
+                          aria-label={`${s.name}: ${formatPillValue(v)}${g ? `. ${g.aria}.` : "."}`}
+                        >
+                          <div className="pa-chart-tooltip-metric-top">
+                            <span
+                              className="pa-chart-tooltip-dot"
+                              aria-hidden
+                              style={{ background: s.color }}
+                            />
+                            <div className="pa-chart-tooltip-metric-body">
+                              <div className="pa-chart-tooltip-metric-line">
+                                <span className="pa-chart-tooltip-metric-name">{s.name}</span>
+                                <span className="pa-chart-tooltip-metric-fig pa-chart-tooltip-metric-fig--inline">
+                                  {formatPillValue(v)}
+                                </span>
+                                {g ? (
+                                  <span
+                                    className={`pa-chart-tooltip-chip pa-chart-tooltip-chip--growth pa-chart-tooltip-chip--growth-${g.kind}`}
+                                    aria-label={g.aria}
+                                  >
+                                    {g.text}
+                                  </span>
+                                ) : null}
+                              </div>
+                            </div>
+                          </div>
+                        </section>
+                      );
+                    })}
+                  </div>
+                </div>
+              </div>
+            );
+          })(),
+          document.body
+        )
+      : null;
+
+  const shell = (
+    <div
+      className={`pa-chart-shell ${mode === "fullscreen" ? "pa-chart-shell--fs" : ""}`}
+      style={{ minWidth: `${minPx}px` }}
+    >
+      <div className="pa-chart-y-rail-wrap" aria-hidden="true">
+        <div className="pa-axis-legend pa-axis-legend-y">
+          {hasVisibleData ? yAxisLabel : "No projects selected"}
+        </div>
+        <div className="pa-chart-y-rail">
+          {Array.from({ length: yTicks + 1 }, (_, i) => {
+            const t = i / yTicks;
+            const value = yMax - t * ySpan;
+            return (
+              <span key={i} className="pa-chart-y-tick">
+                {formatYTick(value)}
+              </span>
+            );
+          })}
+        </div>
+      </div>
+      <div className={`pa-chart-main ${mode === "fullscreen" ? "pa-chart-main--fs" : ""}`}>
+        <div
+          className="pa-chart-plot"
+          onMouseMove={(e) => {
+            if (!hasVisibleData) return;
+            updateHoverFromClientX(e.clientX);
+          }}
+          onMouseLeave={() => setHover(null)}
+          onTouchStart={(e) => {
+            if (!hasVisibleData) return;
+            const t = e.touches[0];
+            if (t) updateHoverFromClientX(t.clientX);
+          }}
+          onTouchMove={(e) => {
+            if (!hasVisibleData) return;
+            const t = e.touches[0];
+            if (t) updateHoverFromClientX(t.clientX);
+          }}
+          onTouchEnd={() => setHover(null)}
+        >
+          <svg
+            ref={svgRef}
+            className={`pa-chart-svg ${mode === "fullscreen" ? "pa-chart-svg--fs" : ""}`}
+            viewBox={`0 0 ${VB_W} ${VB_H}`}
+            preserveAspectRatio="none"
+            role="img"
+            aria-label={`${chartId} chart`}
+          >
+            <defs>
+              <clipPath id={clipId}>
+                <rect
+                  x={PAD_L}
+                  y={PAD_T}
+                  width={VB_W - PAD_L - PAD_R}
+                  height={BASE_Y - PAD_T + 1}
+                />
+              </clipPath>
+            </defs>
+
+            {Array.from({ length: yTicks + 1 }, (_, i) => {
+              const y = BASE_Y - ((BASE_Y - PAD_T) * i) / yTicks;
+              return (
+                <line
+                  key={i}
+                  x1={PAD_L}
+                  x2={VB_W - PAD_R}
+                  y1={y}
+                  y2={y}
+                  className="pa-chart-grid"
+                />
+              );
+            })}
+
+            <g clipPath={`url(#${clipId})`}>
+              {hasVisibleData
+                ? seriesPaths.map((p) => (
+                    <path
+                      key={p.id}
+                      d={p.d}
+                      fill="none"
+                      stroke={p.color}
+                      strokeWidth={strokeW}
+                      strokeLinejoin="round"
+                      strokeLinecap="round"
+                      vectorEffect="non-scaling-stroke"
+                      opacity={visibleSeries.length > 6 ? 0.92 : 1}
+                    />
+                  ))
+                : null}
+            </g>
+          </svg>
+
+          {!hasVisibleData ? (
+            <div
+              className="pa-no-data"
+              style={{
+                position: "absolute",
+                inset: 0,
+                display: "grid",
+                placeItems: "center",
+                pointerEvents: "none",
+                padding: "0.75rem",
+                textAlign: "center"
+              }}
+              aria-label="No series selected"
+            >
+              <div className="muted small">
+                No projects selected. Use <strong>Show all</strong> or toggle projects above.
+              </div>
+            </div>
+          ) : null}
+
+          {hover !== null && hasVisibleData && (
+            <div className="pa-chart-hover-layer" aria-hidden="true">
+              <div
+                className="pa-chart-v-rule"
+                style={{ left: `${(hover.px / VB_W) * 100}%` }}
+              />
+              <div
+                className="pa-chart-scrubber pa-chart-scrubber--single"
+                style={{
+                  left: `${(hover.px / VB_W) * 100}%`,
+                  top: `${(hover.py / VB_H) * 100}%`
+                }}
+              />
+            </div>
+          )}
+        </div>
+
+        <div
+          className={`pa-chart-xaxis pa-chart-xaxis--pos ${mode === "fullscreen" ? "pa-chart-xaxis--fs" : ""}`}
+        >
+          {tickIndices.map((i, tpos) => {
+            const leftPct = pointsLen <= 1 ? 50 : (i / (pointsLen - 1)) * 100;
+            const isSingleton = tickIndices.length === 1;
+            const isFirst = !isSingleton && tpos === 0;
+            const isLast = !isSingleton && tpos === tickIndices.length - 1;
+            const raw = series[0]!.points[i]!.rawLabel;
+            return (
+              <span
+                key={`x-${raw}-${i}`}
+                className={`pa-chart-xcell ${isSingleton ? "is-singleton" : ""} ${isFirst ? "is-first" : ""} ${isLast ? "is-last" : ""}`}
+                style={{ left: `${leftPct}%` }}
+              >
+                {formatAxisLabel(timeframe, raw)}
+              </span>
+            );
+          })}
+        </div>
+        <div className="pa-axis-legend pa-axis-legend-x" aria-hidden="true">
+          {xAxisLabel}
+        </div>
+      </div>
+    </div>
+  );
+
+  return (
+    <>
+      <div
+        className={`pa-legend pa-legend--projects${mode === "fullscreen" ? " pa-legend--fs" : ""}`}
+        aria-label="Project series legend"
+      >
+        <div className="pa-legend-bar">
+          <div className="pa-legend-bar-left">
+            <span className="pa-legend-bar-title">Projects</span>
+            <span className="pa-legend-bar-meta" aria-label="Visible series count">
+              {visibleSeriesIds.size}/{series.length} visible
+            </span>
+          </div>
+          <div className="pa-legend-bar-actions" role="group" aria-label="Legend actions">
+            {noneVisible ? (
+              <button
+                type="button"
+                className="ghost-button small"
+                onClick={() => {
+                  for (const s of series) {
+                    if (!visibleSeriesIds.has(s.id)) onToggleSeries(s.id);
+                  }
+                }}
+                title="Show all projects"
+              >
+                Show all
+              </button>
+            ) : allVisible ? (
+              <button
+                type="button"
+                className="ghost-button small"
+                onClick={() => {
+                  for (const s of series) {
+                    if (visibleSeriesIds.has(s.id)) onToggleSeries(s.id);
+                  }
+                }}
+                title="Hide all projects"
+              >
+                Hide all
+              </button>
+            ) : (
+              <>
+                <button
+                  type="button"
+                  className="ghost-button small"
+                  onClick={() => {
+                    for (const s of series) {
+                      if (visibleSeriesIds.has(s.id)) onToggleSeries(s.id);
+                    }
+                  }}
+                  title="Hide all projects"
+                >
+                  Hide all
+                </button>
+                <button
+                  type="button"
+                  className="ghost-button small"
+                  onClick={() => {
+                    for (const s of series) {
+                      if (!visibleSeriesIds.has(s.id)) onToggleSeries(s.id);
+                    }
+                  }}
+                  title="Show all projects"
+                >
+                  Show all
+                </button>
+              </>
+            )}
+          </div>
+        </div>
+
+        <div className="pa-legend-row" role="group" aria-label="Toggle project series visibility">
+          {series.map((s) => {
+            const on = visibleSeriesIds.has(s.id);
+            return (
+              <button
+                key={s.id}
+                type="button"
+                className={`pa-legend-chip pa-legend-chip--project ${on ? "is-on" : "is-off"}`}
+                aria-pressed={on}
+                onClick={() => onToggleSeries(s.id)}
+                title={on ? `Hide ${s.name}` : `Show ${s.name}`}
+              >
+                <span className="pa-legend-swatch-col" aria-hidden="true">
+                  <span className="pa-legend-swatch" style={{ background: s.color }} />
+                </span>
+                <span className="pa-legend-copy">
+                  <span className="pa-legend-chip-title">{s.name}</span>
+                </span>
+              </button>
+            );
+          })}
+        </div>
+      </div>
+
+      <div
+        ref={scrollRef}
+        className={`pa-chart-h-scroll ${mode === "fullscreen" ? "pa-chart-h-scroll--fs" : ""}`}
+        role="region"
+        aria-label={`${chartId} scroll area`}
+        tabIndex={0}
+        onFocus={() => {
+          if (!hover) setHoverIdx(pointsLen - 1);
+        }}
+        onKeyDown={(e) => {
+          if (e.key === "ArrowLeft") {
+            e.preventDefault();
+            setHoverIdx((hover?.idx ?? pointsLen - 1) - 1);
+            return;
+          }
+          if (e.key === "ArrowRight") {
+            e.preventDefault();
+            setHoverIdx((hover?.idx ?? -1) + 1);
+            return;
+          }
+          if (e.key === "Home") {
+            e.preventDefault();
+            setHoverIdx(0);
+            return;
+          }
+          if (e.key === "End") {
+            e.preventDefault();
+            setHoverIdx(pointsLen - 1);
+            return;
+          }
+          if (e.key === "Escape") {
+            e.preventDefault();
+            setHover(null);
+          }
+        }}
+        onPointerDown={(e) => {
+          const target = e.target as HTMLElement;
+          if (target.closest(".pa-legend")) return;
+          updateHoverFromClientX((e as any).clientX);
+        }}
+        onPointerMove={(e) => {
+          if ((e as any).buttons !== 1) return;
+          updateHoverFromClientX((e as any).clientX);
+        }}
+      >
+        <div
+          className={`pa-chart-h-track ${mode === "fullscreen" ? "pa-chart-h-track--fs" : ""}`}
+          style={{ width: trackSize, minWidth: trackSize }}
+        >
+          {shell}
+        </div>
+      </div>
+
+      {mode === "inline" && chartCompressedInline && pointsLen > 24 && (
+        <p className="pa-scroll-hint">
+          <span className="pa-scroll-hint-icon" aria-hidden="true">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none">
+              <path
+                d="M4 12h16M9 7l-5 5 5 5M15 7l5 5-5 5"
+                stroke="currentColor"
+                strokeWidth="1.75"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+              />
+            </svg>
+          </span>
+          <span>
+            Timeline is scaled to fit this card. Drag horizontally or use full screen for more spacing.
+            Hover or drag along the line for values.
+          </span>
+        </p>
+      )}
+      {tooltipPortal}
+    </>
+  );
+}
 
 export function ProductivityAnalysisModal({ open, onClose }: Props) {
   const [data, setData] = useState<ProductivityRow[] | null>(null);
+  const [projectBreakdown, setProjectBreakdown] = useState<ProjectBreakdownPayload | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [timeframe, setTimeframe] = useState<Timeframe>("daily");
@@ -1235,6 +1944,9 @@ export function ProductivityAnalysisModal({ open, onClose }: Props) {
   const [seriesVisibility, setSeriesVisibility] = useState<
     Record<string, { raw: boolean; avg: boolean }>
   >({});
+  const [projectSeriesVisibility, setProjectSeriesVisibility] = useState<Record<string, boolean>>(
+    {}
+  );
   const windowStep = useMemo(() => rangeStepDays(daysWindow), [daysWindow]);
 
   const annuallyTimeframeDisabled =
@@ -1340,9 +2052,11 @@ export function ProductivityAnalysisModal({ open, onClose }: Props) {
         if (!res.ok) {
           throw new Error(`Request failed with status ${res.status}`);
         }
-        const body: { rows: ProductivityRow[] } = await res.json();
+        const body: { rows: ProductivityRow[]; projectBreakdown?: ProjectBreakdownPayload } =
+          await res.json();
         if (!cancelled) {
           setData(body.rows ?? []);
+          setProjectBreakdown(body.projectBreakdown ?? null);
           const elapsed = performance.now() - started;
           if (elapsed >= 900) {
             window.dispatchEvent(
@@ -1404,7 +2118,7 @@ export function ProductivityAnalysisModal({ open, onClose }: Props) {
         target?.isContentEditable;
 
       if (fullscreenChartId && !e.repeat && !inField) {
-        const ALL = [...CHARTS.map((c) => c.id)];
+        const ALL = [...FS_ALL.map((c) => c.id)];
         const idx = ALL.findIndex((id) => id === fullscreenChartId);
         if (e.key === "ArrowLeft" && idx > 0) {
           e.preventDefault();
@@ -1502,6 +2216,127 @@ export function ProductivityAnalysisModal({ open, onClose }: Props) {
     [windowRows, timeframe]
   );
 
+  const projectTasksSeries = useMemo((): MultiSeries[] => {
+    if (!projectBreakdown?.rows?.length || !projectBreakdown.projects?.length) return [];
+
+    // Bucket daily breakdown rows into the selected timeframe by summing counts per project.
+    const byKey = new Map<
+      string,
+      { rawLabel: string; byProject: Map<string, number> }
+    >();
+
+    for (const r of projectBreakdown.rows) {
+      const { key } = bucketKeyFor(r.date, timeframe);
+      const existing = byKey.get(key);
+      const bucket = existing ?? { rawLabel: key, byProject: new Map<string, number>() };
+      for (const [pid, n] of Object.entries(r.tasksCompletedByProject ?? {})) {
+        bucket.byProject.set(pid, (bucket.byProject.get(pid) ?? 0) + (Number(n) || 0));
+      }
+      byKey.set(key, bucket);
+    }
+
+    // Preserve chronological order using chartRows buckets (so it aligns with other charts).
+    const keysInOrder = chartRows.map((row) =>
+      timeframe === "daily" ? row.date : bucketKeyFor(row.date, timeframe).key
+    );
+
+    // Totals per project in current window (for top-N selection).
+    const totals = new Map<string, number>();
+    for (const key of keysInOrder) {
+      const bucket = byKey.get(key);
+      if (!bucket) continue;
+      for (const [pid, n] of bucket.byProject.entries()) {
+        totals.set(pid, (totals.get(pid) ?? 0) + n);
+      }
+    }
+
+    const projectsById = new Map(projectBreakdown.projects.map((p) => [p.id, p.name] as const));
+
+    const sortedPids = Array.from(totals.entries())
+      .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
+      .map(([pid]) => pid);
+
+    const TOP_N = 8;
+    const keep = new Set(sortedPids.slice(0, TOP_N));
+    const hasOther = sortedPids.length > TOP_N;
+
+    const buildPoints = (pid: string | null): Point[] => {
+      return keysInOrder.map((key) => {
+        const bucket = byKey.get(key);
+        let v = 0;
+        if (bucket) {
+          if (pid) {
+            v = bucket.byProject.get(pid) ?? 0;
+          } else {
+            // Other = sum of all non-top projects.
+            let sum = 0;
+            for (const [p, n] of bucket.byProject.entries()) {
+              if (!keep.has(p)) sum += n;
+            }
+            v = sum;
+          }
+        }
+        return { label: key, rawLabel: key, value: v };
+      });
+    };
+
+    const seriesOut: MultiSeries[] = [];
+    let idx = 0;
+    for (const pid of sortedPids.slice(0, TOP_N)) {
+      seriesOut.push({
+        id: pid,
+        name: projectsById.get(pid) ?? pid,
+        color: seriesPaletteColor(idx++),
+        points: buildPoints(pid)
+      });
+    }
+    if (hasOther) {
+      seriesOut.push({
+        id: "__other__",
+        name: "Other",
+        color: seriesPaletteColor(idx++),
+        points: buildPoints(null)
+      });
+    }
+
+    return seriesOut;
+  }, [projectBreakdown, chartRows, timeframe]);
+
+  const projectTasksYDomain = useMemo(() => {
+    if (!projectTasksSeries.length) return { yMin: 0, yMax: 1 };
+    const vals: number[] = [];
+    for (const s of projectTasksSeries) {
+      if (!projectSeriesVisibility[s.id] && Object.keys(projectSeriesVisibility).length) continue;
+      for (const p of s.points) vals.push(p.value);
+    }
+    if (vals.length === 0) return { yMin: 0, yMax: 1 };
+    const vMax = Math.max(...vals, 1);
+    const padTop = Math.max(vMax * 0.14, 0.5);
+    return { yMin: 0, yMax: vMax + padTop };
+  }, [projectTasksSeries, projectSeriesVisibility]);
+
+  const visibleProjectSeriesIds = useMemo(() => {
+    const ids = new Set<string>();
+    if (!projectTasksSeries.length) return ids;
+    // Default: all on until the user toggles.
+    const hasAny = Object.keys(projectSeriesVisibility).length > 0;
+    for (const s of projectTasksSeries) {
+      if (!hasAny || projectSeriesVisibility[s.id] !== false) ids.add(s.id);
+    }
+    return ids;
+  }, [projectTasksSeries, projectSeriesVisibility]);
+
+  const toggleProjectSeries = (id: string) => {
+    setProjectSeriesVisibility((prev) => {
+      const next = { ...prev };
+      const current = prev[id];
+      const hasAny = Object.keys(prev).length > 0;
+      const isOn = !hasAny || current !== false;
+      next[id] = isOn ? false : true;
+      return next;
+    });
+  };
+
   const byChart = useMemo(() => {
     const result: Record<string, Point[]> = {};
     for (const chart of CHARTS) {
@@ -1573,11 +2408,29 @@ export function ProductivityAnalysisModal({ open, onClose }: Props) {
     };
   }, [windowRows]);
 
+  const inlineProjectTotals = useMemo(() => {
+    if (projectTasksSeries.length === 0) return { latest: 0, peak: 0, hasVisible: false };
+    const totals = projectSeriesTotals(projectTasksSeries, visibleProjectSeriesIds);
+    if (!totals) return { latest: 0, peak: 0, hasVisible: false };
+    return { ...totals, hasVisible: true };
+  }, [projectTasksSeries, visibleProjectSeriesIds]);
+
+  /** Must run every render (even when modal closed) — hooks cannot follow `if (!open) return null`. */
+  const fsProjectTotals = useMemo(() => {
+    const fsIsProject = fullscreenChartId === "tasksCompletedByProject";
+    if (!fsIsProject || projectTasksSeries.length === 0) {
+      return { latest: 0, peak: 0 };
+    }
+    const totals = projectSeriesTotals(projectTasksSeries, visibleProjectSeriesIds);
+    return totals ?? { latest: 0, peak: 0 };
+  }, [fullscreenChartId, projectTasksSeries, visibleProjectSeriesIds]);
+
   if (!open) return null;
 
   const fsAnyChart: FsAnyChart | null = fullscreenChartId
     ? (FS_ALL.find((c) => c.id === fullscreenChartId) ?? null)
     : null;
+  const fsIsProject = fsAnyChart?.kind === "project";
   const fsChart = fsAnyChart?.kind === "single" ? fsAnyChart.chart : null;
 
   const getSeriesVis = (chartId: string, hasOverlay: boolean): { raw: boolean; avg: boolean } => {
@@ -1590,10 +2443,6 @@ export function ProductivityAnalysisModal({ open, onClose }: Props) {
     setSeriesVisibility((prev) => {
       const current = prev[chartId] ?? { raw: true, avg: hasOverlay };
       const next = { ...current, [key]: !current[key] };
-      // Prevent hiding both when overlay exists; keep at least one visible.
-      if (hasOverlay && !next.raw && !next.avg) {
-        next.raw = true;
-      }
       // If this chart doesn't have overlay, avg is always false.
       if (!hasOverlay) next.avg = false;
       return { ...prev, [chartId]: next };
@@ -1637,6 +2486,9 @@ export function ProductivityAnalysisModal({ open, onClose }: Props) {
   const fsPrevChart = fsChartIndex > 0 ? FS_ALL[fsChartIndex - 1]! : null;
   const fsNextChart =
     fsChartIndex >= 0 && fsChartIndex < FS_ALL.length - 1 ? FS_ALL[fsChartIndex + 1]! : null;
+
+  const windowDailyFrom = windowRows.length > 0 ? windowRows[0]!.date : null;
+  const windowDailyTo = windowRows.length > 0 ? windowRows[windowRows.length - 1]!.date : null;
 
   const rangeControlsEl = (
     <div className="pa-range-controls" role="group" aria-label="Chart range and timeframe">
@@ -1706,7 +2558,22 @@ export function ProductivityAnalysisModal({ open, onClose }: Props) {
         </select>
       </label>
       <div className="pa-range-meta" aria-label="Visible range">
-        Days {windowMeta.start + 1}–{windowMeta.end} of {windowMeta.count}
+        <span className="pa-range-meta-label">Shown</span>{" "}
+        {windowDailyFrom && windowDailyTo ? (
+          <>
+            <span className="pa-range-meta-strong">{formatAxisLabel("daily", windowDailyFrom)}</span>
+            <span className="pa-range-meta-sep" aria-hidden="true">
+              —
+            </span>
+            <span className="pa-range-meta-strong">{formatAxisLabel("daily", windowDailyTo)}</span>
+          </>
+        ) : (
+          <span className="pa-range-meta-strong">—</span>
+        )}
+        <span className="pa-range-meta-buckets">
+          {" "}
+          · {windowRows.length} {windowRows.length === 1 ? "day" : "days"}
+        </span>
         {daysWindow === PA_RANGE_ALL && windowMeta.count > 0 && (
           <span className="pa-range-meta-buckets"> (full timeline)</span>
         )}
@@ -1825,7 +2692,107 @@ export function ProductivityAnalysisModal({ open, onClose }: Props) {
               aria-label="Productivity charts"
               tabIndex={0}
             >
-              <div className="productivity-grid pa-grid">
+              <div className="pa-grid">
+                {projectTasksSeries.length > 0 && (
+                  <article key="tasksCompletedByProject" className="pa-card">
+                    <div className="pa-card-top">
+                      <div className="pa-card-head pa-card-head-row">
+                        <div className="pa-card-head-text">
+                          <h3 className="pa-card-title">
+                            Tasks completed by project
+                          </h3>
+                          <p className="pa-card-desc">
+                            Tasks finished per period, split by project (top projects in the selected range).
+                          </p>
+                        </div>
+                        <button
+                          type="button"
+                          className="pa-expand-chart-btn"
+                          aria-label="Open full screen for Tasks completed by project. Same range and timeframe. Press Escape to close."
+                          title="Open full screen: Tasks completed by project. Keeps your current range and timeframe. Press Esc or Exit to return."
+                          onClick={() => openFullscreenChart("tasksCompletedByProject")}
+                        >
+                          <span className="pa-expand-icon" aria-hidden="true">
+                            <svg
+                              className="pa-expand-svg"
+                              viewBox="0 0 24 24"
+                              fill="none"
+                              xmlns="http://www.w3.org/2000/svg"
+                            >
+                              <path
+                                d="M3.75 3.75v4.5m0-4.5h4.5m-4.5 0L9 9M3.75 20.25v-4.5m0 4.5h4.5m-4.5 0L9 15M20.25 3.75h-4.5m4.5 0v4.5m0-4.5L15 9m5.25 11.25h-4.5m4.5 0v-4.5m0 4.5L15 15"
+                                stroke="currentColor"
+                                strokeWidth="1.85"
+                                strokeLinecap="round"
+                                strokeLinejoin="round"
+                                vectorEffect="non-scaling-stroke"
+                              />
+                            </svg>
+                          </span>
+                          <span className="pa-expand-text">Fullscreen</span>
+                        </button>
+                      </div>
+                      <div className="pa-stat-pills" aria-label="Project chart quick stats">
+                        <div className="pa-pill">
+                          <span className="pa-pill-label">Latest</span>
+                          <span className="pa-pill-value">
+                            {inlineProjectTotals.hasVisible
+                              ? formatPillValue(inlineProjectTotals.latest)
+                              : "—"}
+                          </span>
+                        </div>
+                        <div className="pa-pill pa-pill-muted">
+                          <span className="pa-pill-label">Peak</span>
+                          <span className="pa-pill-value">
+                            {inlineProjectTotals.hasVisible
+                              ? formatPillValue(inlineProjectTotals.peak)
+                              : "—"}
+                          </span>
+                        </div>
+                        <div
+                          className="pa-pill pa-pill-avg-muted"
+                          title="Number of visible project series"
+                        >
+                          <span className="pa-pill-label">Series</span>
+                          <span className="pa-pill-value">{visibleProjectSeriesIds.size}</span>
+                        </div>
+                      </div>
+                    </div>
+
+                    <div className="pa-chart-panel">
+                      <div className="pa-chart-window-caption" aria-label="Visible period">
+                        <span className="pa-chart-window-caption-label">Shown</span>
+                        <span className="pa-chart-window-caption-range">
+                          {formatAxisLabel(timeframe, projectTasksSeries[0]!.points[0]!.rawLabel)}
+                          <span className="pa-chart-window-caption-sep" aria-hidden="true">
+                            —
+                          </span>
+                          {formatAxisLabel(
+                            timeframe,
+                            projectTasksSeries[0]!.points[projectTasksSeries[0]!.points.length - 1]!
+                              .rawLabel
+                          )}
+                        </span>
+                        <span className="pa-chart-window-caption-meta">
+                          {projectTasksSeries[0]!.points.length}{" "}
+                          {projectTasksSeries[0]!.points.length === 1 ? "point" : "points"}
+                        </span>
+                      </div>
+                      <MultiLineChart
+                        chartId="tasksCompletedByProject"
+                        series={projectTasksSeries}
+                        yMin={projectTasksYDomain.yMin}
+                        yMax={projectTasksYDomain.yMax}
+                        timeframe={timeframe}
+                        xAxisLabel={timeframe === "daily" ? "Date" : "Period"}
+                        yAxisLabel="Tasks · per period"
+                        mode="inline"
+                        visibleSeriesIds={visibleProjectSeriesIds}
+                        onToggleSeries={toggleProjectSeries}
+                      />
+                    </div>
+                  </article>
+                )}
                 {CHARTS.map((chart) => {
                   const pointsAll = byChart[chart.id] ?? [];
                   // `byChart` is already windowed (daily range), so don't slice again.
@@ -1863,12 +2830,12 @@ export function ProductivityAnalysisModal({ open, onClose }: Props) {
                       : null;
 
                   return (
-                    <article key={chart.id} className="productivity-card pa-card">
+                    <article key={chart.id} className="pa-card">
                       <div className="pa-card-top">
-                        <div className="productivity-card-head pa-card-head pa-card-head-row">
+                        <div className="pa-card-head pa-card-head-row">
                           <div className="pa-card-head-text">
-                            <h3 className="productivity-card-title pa-card-title">{chart.title}</h3>
-                            <p className="productivity-card-sub pa-card-desc">{chart.description}</p>
+                            <h3 className="pa-card-title">{chart.title}</h3>
+                            <p className="pa-card-desc">{chart.description}</p>
                           </div>
                           {points.length > 0 && (
                             <button
@@ -1946,7 +2913,7 @@ export function ProductivityAnalysisModal({ open, onClose }: Props) {
                         )}
                       </div>
 
-                      <div className="productivity-chart pa-chart-panel">
+                      <div className="pa-chart-panel">
                         {points.length === 0 ? (
                           <div className="muted small pa-no-data">No data for this timeframe.</div>
                         ) : (
@@ -2098,7 +3065,41 @@ export function ProductivityAnalysisModal({ open, onClose }: Props) {
                 if (id) openFullscreenChart(id);
               }}
             >
-              {!fsChart ? (
+              {fsIsProject ? projectTasksSeries.length === 0 ? (
+                <div className="muted pa-no-data pa-no-data-fs" role="alert">
+                  No project breakdown data is available for this range.
+                </div>
+              ) : (
+                <>
+                  <div className="pa-fs-pills">
+                    <div className="pa-pill">
+                      <span className="pa-pill-label">Latest</span>
+                      <span className="pa-pill-value">{formatPillValue(fsProjectTotals.latest)}</span>
+                    </div>
+                    <div className="pa-pill pa-pill-muted">
+                      <span className="pa-pill-label">Peak</span>
+                      <span className="pa-pill-value">{formatPillValue(fsProjectTotals.peak)}</span>
+                    </div>
+                    <div className="pa-pill pa-pill-avg-muted" title="Number of visible project series">
+                      <span className="pa-pill-label">Series</span>
+                      <span className="pa-pill-value">{visibleProjectSeriesIds.size}</span>
+                    </div>
+                  </div>
+                  <MultiLineChart
+                    chartId="tasksCompletedByProject"
+                    series={projectTasksSeries}
+                    yMin={projectTasksYDomain.yMin}
+                    yMax={projectTasksYDomain.yMax}
+                    timeframe={timeframe}
+                    xAxisLabel={timeframe === "daily" ? "Date" : "Period"}
+                    yAxisLabel="Tasks · per period"
+                    mode="fullscreen"
+                    idSuffix="-fs"
+                    visibleSeriesIds={visibleProjectSeriesIds}
+                    onToggleSeries={toggleProjectSeries}
+                  />
+                </>
+              ) : !fsChart ? (
                 <div className="muted pa-no-data pa-no-data-fs" role="alert">
                   Full screen chart could not be shown (missing chart config). Close and try again.
                 </div>

@@ -1,6 +1,6 @@
 # Design Guidelines — Focista Schedulo
 
-**Last updated:** 2026-03-31  
+**Last updated:** 2026-04-01  
 **Owner:** Design (with Engineering)
 
 This document describes the visual system used in the application and how to extend it consistently. It covers theme palettes, typography, components, accessibility, and design-to-code mapping.
@@ -104,7 +104,7 @@ Priorities are visually distinct in task pills, calendar items, day agenda, and 
 | Type | Use | Styling |
 |------|-----|---------|
 | **Primary** | Save, Create, irreversible confirmations. | Prominent background (e.g. gold gradient); visible hover and disabled states. |
-| **Ghost** | Secondary actions (e.g. New project, view toggles, Sync data, Export). | Transparent or subtle background; in header: white border and light fill. |
+| **Ghost** | Secondary actions (e.g. New project, view toggles, Sync, Save, Export). | Transparent or subtle background; in header: white border and light fill. |
 | **Icon button** | Compact actions only. | Must have `aria-label`. |
 | **Task action button** | Mark active, Move, Delete, Show occurrences. | Small, text-style; consistent with `.task-action-button`. |
 
@@ -254,4 +254,4 @@ Priorities are visually distinct in task pills, calendar items, day agenda, and 
 
 ---
 
-**Last updated:** 2026-03-31
+**Last updated:** 2026-04-01

@@ -1,6 +1,6 @@
 # Changelog — Focista Schedulo
 
-**Last updated:** 2026-03-31  
+**Last updated:** 2026-04-01  
 **Owner:** Engineering (with Product)
 
 This changelog tracks meaningful product, engineering, and documentation changes.
@@ -45,7 +45,7 @@ This changelog tracks meaningful product, engineering, and documentation changes
 
 ### Docs
 
-- Single narrative across the doc pack: **due-date-first** progress bucketing for day-scoped analytics; **lifetime** points/level semantics unchanged; **API** cache cleared on persist start and after `loadData()`.
+- Single narrative across the doc pack: **completion-time-first** progress bucketing for day-scoped analytics (local day from `completedAt`, with `dueDate` as legacy fallback); **lifetime** points/level semantics unchanged; **API** cache cleared on persist start and after `loadData()`.
 
 ---
 
@@ -53,7 +53,7 @@ This changelog tracks meaningful product, engineering, and documentation changes
 
 ### Changed
 
-- **Backend:** `completionDateIsoLocalForTask` (used by `GET /api/stats`, `GET /api/productivity-insights`, and task list `since` filtering) now attributes completed tasks to **`dueDate`** when set; if there is no due date, it uses the local calendar day from **`completedAt`**.
+- **Backend:** `completionDateIsoLocalForTask` (used by `GET /api/stats` and `GET /api/productivity-insights`) now attributes completed tasks to the **local calendar day from `completedAt`** when available; legacy records fall back to **`dueDate`**.
 - **Docs:** Updated `VARIABLES.md`, `API_CONTRACTS.md`, `PRD.md` (FR-10), `GUARDRAILS.md`, `ARCHITECTURE.md`, `PRODUCT_DOCUMENTATION_STANDARD.md` to match.
 
 ---
@@ -155,4 +155,4 @@ This changelog tracks meaningful product, engineering, and documentation changes
 
 ---
 
-**Last updated:** 2026-03-31
+**Last updated:** 2026-04-01

@@ -1,6 +1,6 @@
 # Product and Technical Guardrails — Focista Schedulo
 
-**Last updated:** 2026-03-31  
+**Last updated:** 2026-04-01  
 **Owner:** Product + Engineering
 
 ---
@@ -77,7 +77,7 @@ This document defines the non-negotiable boundaries for product development, del
 
 4. **Time semantics**
    - Day-based metrics and streak logic must use local calendar semantics.
-   - Progress-day bucketing for stats uses **`dueDate`** when set; otherwise local date from **`completedAt`** (tasks without both are excluded from day buckets).
+   - Progress-day bucketing for stats uses the **local day from `completedAt`** when available; otherwise it falls back to **`dueDate`** (legacy records). Tasks without either date are excluded from day buckets.
    - UTC conversion must not silently shift daily outcomes.
 
 5. **Performance baseline**

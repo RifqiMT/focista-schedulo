@@ -65,6 +65,12 @@ export function TaskEditorDrawer({
   const [durationAmount, setDurationAmount] = useState<string>("");
   const [batchDurationUnit, setBatchDurationUnit] = useState<"minute" | "hour" | "day">("minute");
   const [batchDurationAmount, setBatchDurationAmount] = useState<string>("");
+  const [labelsInput, setLabelsInput] = useState("");
+  const [locationInput, setLocationInput] = useState("");
+  const [linksInput, setLinksInput] = useState("");
+  const [batchLabelsInputByIdx, setBatchLabelsInputByIdx] = useState<Record<number, string>>({});
+  const [batchLocationInputByIdx, setBatchLocationInputByIdx] = useState<Record<number, string>>({});
+  const [batchLinksInputByIdx, setBatchLinksInputByIdx] = useState<Record<number, string>>({});
 
   const emptyBatchItem = (): BatchItem => ({
     key: `m-${Date.now()}`,
@@ -90,15 +96,17 @@ export function TaskEditorDrawer({
   // (Intentionally no per-task number stepper UI; navigation is via Prev/Next only.)
 
   const parseLabelsInput = (raw: string): string[] => {
-    const cleaned = raw
-      .trim()
-      .replaceAll(";", ",")
-      .replaceAll("&", ",")
-      // Allow “and” / “dan” style separators from text input.
-      .replace(/\s+(?:and|dan)\s+/gi, ",");
+    const cleaned = raw.trim();
     if (!cleaned) return [];
 
-    const parts = cleaned
+    // Separators: comma, semicolon, newline. Also allow "and/dan" between words.
+    // (Do NOT treat "&" as a separator; users often want it inside a label.)
+    const normalized = cleaned
+      .replaceAll(";", ",")
+      .replace(/\r?\n+/g, ",")
+      .replace(/\s+(?:and|dan)\s+/gi, ",");
+
+    const parts = normalized
       .split(",")
       .map((p) => p.trim())
       .filter(Boolean)
@@ -115,6 +123,9 @@ export function TaskEditorDrawer({
     }
     return deduped;
   };
+
+  const formatLabelsForInput = (tokens: string[] | undefined | null): string =>
+    (tokens ?? []).join("\n");
 
   const normalizeSingleLabel = (raw: string): string => raw.trim().replace(/\s+/g, " ");
 
@@ -145,25 +156,36 @@ export function TaskEditorDrawer({
     if (!t) return null;
 
     if (/^https?:\/\//i.test(t)) return t;
-    if (/^www\./i.test(t)) return `https://${t}`;
-
-    // If it looks like a domain (with optional path), assume https.
-    if (/^[a-z0-9-]+(\.[a-z0-9-]+)+([/?#].*)?$/i.test(t) && !/\s/.test(t)) {
-      return `https://${t}`;
-    }
+    // If it looks like a domain (with optional path), keep as-typed (no forced scheme).
+    if (/^[a-z0-9-]+(\.[a-z0-9-]+)+([/?#].*)?$/i.test(t) && !/\s/.test(t)) return t;
 
     // Reject whitespace-containing tokens.
     if (/\s/.test(t)) return null;
-    return `https://${t}`;
+    return t;
+  };
+
+  const shortLinkText = (href: string): string => href.replace(/^https?:\/\//i, "");
+
+  const formatLinksForInput = (tokens: string[] | undefined | null): string => {
+    const parts = (tokens ?? []).map((tok) => {
+      const { href, label } = splitLinkStoredToken(tok);
+      const displayHref = shortLinkText(href);
+      return label ? `${label} | ${displayHref}` : displayHref;
+    });
+    return parts.join("\n");
   };
 
   const parseLinkAliasToken = (raw: string): { href: string; label?: string } | null => {
     const t = raw.trim();
     if (!t) return null;
-    const arrowIdx = t.indexOf("=>");
-    if (arrowIdx >= 0) {
-      const labelRaw = t.slice(0, arrowIdx).trim();
-      const hrefRaw = t.slice(arrowIdx + 2).trim();
+    // Accept multiple alias separators for UX:
+    // - `Label=>https://...` (canonical stored format)
+    // - `Label -> https://...`
+    // - `Label | https://...`
+    const m = t.match(/^\s*(.*?)\s*(=>|->|\|)\s*(\S.*?)\s*$/);
+    if (m) {
+      const labelRaw = (m[1] ?? "").trim();
+      const hrefRaw = (m[3] ?? "").trim();
       if (!hrefRaw) return null;
       const href = normalizeLinkHref(hrefRaw);
       if (!href) return null;
@@ -178,7 +200,12 @@ export function TaskEditorDrawer({
 
   const normalizeLinkToken = (raw: string): string | null => {
     const parsed = parseLinkAliasToken(raw);
-    if (!parsed) return null;
+    if (!parsed) {
+      // Allow non-hyperlink tokens (plain text “references”) in the Links field.
+      // These render as non-clickable chips in the UI and can be combined with real hyperlinks.
+      const t = raw.trim().replace(/\s+/g, " ");
+      return t ? t : null;
+    }
     if (parsed.label) return `${parsed.label}=>${parsed.href}`;
     return parsed.href;
   };
@@ -194,69 +221,109 @@ export function TaskEditorDrawer({
     return { href: t };
   };
 
-  const linkHrefKey = (token: string): string => {
-    const { href } = splitLinkStoredToken(token);
-    return href.toLowerCase();
+  const linkTokenKey = (token: string): string => {
+    const parsed = parseLinkAliasToken(token);
+    if (parsed) return `href:${parsed.href.toLowerCase()}`;
+    return `text:${token.trim().replace(/\s+/g, " ").toLowerCase()}`;
   };
 
   const sortLinksAsc = (links: string[]) => {
     return links
       .slice()
-      .sort((a, b) => linkHrefKey(a).localeCompare(linkHrefKey(b)) || a.localeCompare(b));
+      .sort((a, b) => linkTokenKey(a).localeCompare(linkTokenKey(b)) || a.localeCompare(b));
   };
 
   const parseLinksInput = (raw: string): string[] => {
-    const cleaned = raw
-      .trim()
-      .replaceAll(";", ",")
-      .replaceAll("&", ",")
-      .replace(/\n+/g, ",");
+    const cleaned = raw.trim();
     if (!cleaned) return [];
 
-    const parts = cleaned
-      .split(",")
-      .map((p) => p.trim())
-      .filter(Boolean)
-      .slice(0, 12);
+    // Split links by separators WITHOUT breaking aliases.
+    // - Separators: comma, semicolon, newline
+    // - Allow escaping separators inside aliases with backslash: `\,` or `\;`
+    // - IMPORTANT: do NOT treat `&` as a separator; users often want it in aliases.
+    const parts: string[] = [];
+    let cur = "";
+    let escaping = false;
+    for (let i = 0; i < cleaned.length; i++) {
+      const ch = cleaned[i]!;
+      if (escaping) {
+        cur += ch;
+        escaping = false;
+        continue;
+      }
+      if (ch === "\\") {
+        escaping = true;
+        continue;
+      }
+      if (ch === "," || ch === ";" || ch === "\n" || ch === "\r") {
+        const t = cur.trim();
+        if (t) parts.push(t);
+        cur = "";
+        continue;
+      }
+      cur += ch;
+    }
+    const tail = cur.trim();
+    if (tail) parts.push(tail);
+
+    // If a user accidentally pressed Enter inside an alias label (e.g. "Cover\nLetter=>url"),
+    // join the split pieces back together when the combined token becomes a valid alias token.
+    const mergedParts: string[] = [];
+    for (let i = 0; i < parts.length; i++) {
+      const a = parts[i] ?? "";
+      const b = parts[i + 1] ?? "";
+      if (b) {
+        const aLooksStandalone =
+          !parseLinkAliasToken(a) && normalizeLinkHref(a) === null && !/[|]/.test(a);
+        const combined = `${a.trim()} ${b.trim()}`.trim();
+        if (aLooksStandalone && parseLinkAliasToken(combined)) {
+          mergedParts.push(combined);
+          i++; // consume b
+          continue;
+        }
+      }
+      mergedParts.push(a);
+    }
 
     const out: string[] = [];
-    const seenByHref = new Map<string, string>(); // hrefKey -> stored token
-    for (const p of parts) {
+    const seen = new Map<string, string>(); // tokenKey -> stored token
+    for (const p of mergedParts.slice(0, 12)) {
       const norm = normalizeLinkToken(p);
       if (!norm) continue;
-      const parsed = splitLinkStoredToken(norm);
-      const key = parsed.href.toLowerCase();
-      // If label exists, prefer it.
-      if (parsed.label) {
-        seenByHref.set(key, norm);
-      } else if (!seenByHref.has(key)) {
-        seenByHref.set(key, norm);
+      const key = linkTokenKey(norm);
+      // If the user provided a labeled link, prefer it over plain URL for same href.
+      const hasLabel = norm.includes("=>");
+      if (hasLabel) {
+        // For labeled links, dedupe by href rather than full token.
+        const parsed = parseLinkAliasToken(norm);
+        const hrefKey = parsed ? `href:${parsed.href.toLowerCase()}` : key;
+        seen.set(hrefKey, norm);
+      } else if (!seen.has(key)) {
+        seen.set(key, norm);
       }
     }
-    for (const token of seenByHref.values()) out.push(token);
+    for (const token of seen.values()) out.push(token);
     return sortLinksAsc(out);
   };
 
   const mergeLinkTokens = (existing: string[], incoming: string[]): string[] => {
-    const map = new Map<string, string>(); // hrefKey -> stored token
+    const map = new Map<string, string>(); // tokenKey -> stored token
     for (const e of existing ?? []) {
-      const parsed = splitLinkStoredToken(e);
-      if (!parsed.href) continue;
-      map.set(parsed.href.toLowerCase(), e);
+      const norm = normalizeLinkToken(e);
+      if (!norm) continue;
+      map.set(linkTokenKey(norm), norm);
     }
 
     for (const rawToken of incoming) {
       const norm = normalizeLinkToken(rawToken);
       if (!norm) continue;
-      const parsed = splitLinkStoredToken(norm);
-      const key = parsed.href.toLowerCase();
-
-      const hasLabel = !!parsed.label;
-      if (hasLabel) {
-        map.set(key, norm);
-      } else if (!map.has(key)) {
-        map.set(key, norm);
+      const parsedHref = parseLinkAliasToken(norm);
+      if (parsedHref?.label) {
+        map.set(`href:${parsedHref.href.toLowerCase()}`, norm);
+        continue;
       }
+      const key = linkTokenKey(norm);
+      if (!map.has(key)) map.set(key, norm);
     }
 
     return sortLinksAsc(Array.from(map.values()));
@@ -286,35 +353,83 @@ export function TaskEditorDrawer({
   };
 
   const parseLocationsInput = (raw: string): string[] => {
-    const cleaned = raw
-      .trim()
-      // Allow many common separators.
-      .replaceAll("|", ",")
-      .replaceAll(";", ",")
-      .replaceAll("&", ",")
-      .replace(/\n+/g, ",");
+    const cleaned = raw.trim();
     if (!cleaned) return [];
 
-    const parts = cleaned
-      .split(",")
-      .map((p) => p.trim())
-      .filter(Boolean)
-      .slice(0, 12);
+    // Split locations by separators WITHOUT breaking labels.
+    // - Separators: comma, semicolon, newline
+    // - Allow escaping separators inside labels with backslash: `\,` or `\;`
+    // - Do NOT treat `&` as a separator; it can be part of a label.
+    const parts: string[] = [];
+    let cur = "";
+    let escaping = false;
+    for (let i = 0; i < cleaned.length; i++) {
+      const ch = cleaned[i]!;
+      if (escaping) {
+        cur += ch;
+        escaping = false;
+        continue;
+      }
+      if (ch === "\\") {
+        escaping = true;
+        continue;
+      }
+      if (ch === "," || ch === ";" || ch === "\n" || ch === "\r") {
+        const t = cur.trim();
+        if (t) parts.push(t);
+        cur = "";
+        continue;
+      }
+      cur += ch;
+    }
+    const tail = cur.trim();
+    if (tail) parts.push(tail);
+
+    const parseLocationAliasInputToken = (
+      token: string
+    ): { query: string; label?: string } | null => {
+      const t = token.trim();
+      if (!t) return null;
+      const m = t.match(/^\s*(.*?)\s*(=>|->|\|)\s*(\S.*?)\s*$/);
+      if (m) {
+        const labelRaw = (m[1] ?? "").trim();
+        const queryRaw = (m[3] ?? "").trim();
+        if (!queryRaw) return null;
+        const query = normalizeSingleLocation(queryRaw);
+        if (!query) return null;
+        const label = labelRaw ? normalizeSingleLocation(labelRaw) : undefined;
+        return { query, label };
+      }
+      const query = normalizeSingleLocation(t);
+      if (!query) return null;
+      return { query };
+    };
+
+    // If a user accidentally pressed Enter inside an alias label (e.g. "Coffee\nShop | Jakarta"),
+    // join the split pieces back together when the combined token becomes a valid alias token.
+    const mergedParts: string[] = [];
+    for (let i = 0; i < parts.length; i++) {
+      const a = parts[i] ?? "";
+      const b = parts[i + 1] ?? "";
+      if (b) {
+        const aParsed = parseLocationAliasInputToken(a);
+        const aLooksStandalone = !!aParsed && !aParsed.label && aParsed.query === a.trim();
+        const combined = `${a.trim()} ${b.trim()}`.trim();
+        if (aLooksStandalone && parseLocationAliasInputToken(combined)?.label) {
+          mergedParts.push(combined);
+          i++; // consume b
+          continue;
+        }
+      }
+      mergedParts.push(a);
+    }
 
     const outByQuery = new Map<string, string>(); // queryKey -> stored token
-    for (const p of parts) {
-      const arrowIdx = p.indexOf("=>");
-      let label: string | undefined;
-      let query = p;
-      if (arrowIdx >= 0) {
-        const labelRaw = p.slice(0, arrowIdx).trim();
-        const queryRaw = p.slice(arrowIdx + 2).trim();
-        if (labelRaw) label = normalizeSingleLocation(labelRaw);
-        query = queryRaw;
-      }
-
-      query = normalizeSingleLocation(query);
-      if (!query) continue;
+    for (const p of mergedParts.slice(0, 12)) {
+      const parsed = parseLocationAliasInputToken(p);
+      if (!parsed) continue;
+      const label = parsed.label;
+      const query = parsed.query;
 
       const queryKey = query.toLowerCase();
       const storedToken = label ? `${label}=>${query}` : query;
@@ -325,6 +440,27 @@ export function TaskEditorDrawer({
     }
 
     return Array.from(outByQuery.values());
+  };
+
+  const splitLocationStoredToken = (token: string): { query: string; label?: string } => {
+    const t = token.trim();
+    const idx = t.indexOf("=>");
+    if (idx >= 0) {
+      const label = t.slice(0, idx).trim();
+      const query = t.slice(idx + 2).trim();
+      return { query: query || t, label: label || undefined };
+    }
+    return { query: t };
+  };
+
+  const formatLocationsForInput = (raw: string | undefined | null): string => {
+    const tokens = deserializeLocationTokens(raw);
+    return tokens
+      .map((tok) => {
+        const { label, query } = splitLocationStoredToken(tok);
+        return label ? `${label} | ${query}` : query;
+      })
+      .join("\n");
   };
 
   const mergeLocationTokens = (existing: string[], incoming: string[]): string[] => {
@@ -344,12 +480,12 @@ export function TaskEditorDrawer({
     for (const rawToken of incoming) {
       const t0 = rawToken.trim();
       if (!t0) continue;
-      const arrowIdx = t0.indexOf("=>");
+      const m = t0.match(/^\s*(.*?)\s*(=>|->|\|)\s*(\S.*?)\s*$/);
       let label: string | undefined;
       let query = t0;
-      if (arrowIdx >= 0) {
-        const labelRaw = t0.slice(0, arrowIdx).trim();
-        const queryRaw = t0.slice(arrowIdx + 2).trim();
+      if (m) {
+        const labelRaw = (m[1] ?? "").trim();
+        const queryRaw = (m[3] ?? "").trim();
         if (labelRaw) label = normalizeSingleLocation(labelRaw);
         query = queryRaw;
       }
@@ -393,6 +529,35 @@ export function TaskEditorDrawer({
     const maybeUrl = normalizeMaybeUrl(query);
     if (maybeUrl) return { href: maybeUrl, kind: "url" };
     return null;
+  };
+
+  const renderTokenPreview = (
+    tokens: Array<{ key: string; text: string; href?: string }>
+  ) => {
+    if (tokens.length === 0) return null;
+    return (
+      <div className="task-hovercard-labels" style={{ marginTop: "0.45rem" }} aria-label="Preview">
+        {tokens.map((t) =>
+          t.href ? (
+            <a
+              key={t.key}
+              className="task-hovercard-chip task-link-chip"
+              href={t.href}
+              target="_blank"
+              rel="noreferrer"
+              onClick={(e) => e.stopPropagation()}
+              title={t.href}
+            >
+              {t.text}
+            </a>
+          ) : (
+            <span key={t.key} className="task-hovercard-chip">
+              {t.text}
+            </span>
+          )
+        )}
+      </div>
+    );
   };
 
   useEffect(() => {
@@ -479,9 +644,10 @@ export function TaskEditorDrawer({
   };
 
   useEffect(() => {
-    setDurationUIFromMinutes(task?.durationMinutes);
+    const t0 = Array.isArray(task) ? task[0] ?? null : task;
+    setDurationUIFromMinutes(t0?.durationMinutes);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [task?.id]);
+  }, [Array.isArray(task) ? task[0]?.id : task?.id]);
 
   // Keep Duration UI in sync even when voice updates draft.durationMinutes.
   useEffect(() => {
@@ -521,6 +687,35 @@ export function TaskEditorDrawer({
     if (!draft || draft.id === "new") return;
     onLinksDraftChange(draft.link ?? []);
   }, [onLinksDraftChange, draft?.id, (draft?.link ?? []).join("|")]);
+
+  // Keep raw token inputs editable (don't fight the user's typing).
+  useEffect(() => {
+    if (!draft) return;
+    if (createMode !== "single") return;
+    setLabelsInput(formatLabelsForInput(draft.labels));
+    setLocationInput(formatLocationsForInput(draft.location));
+    setLinksInput(formatLinksForInput(draft.link));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [draft?.id, createMode]);
+
+  useEffect(() => {
+    if (createMode !== "multiple") return;
+    const row = batchItems[batchActiveIdx];
+    if (!row) return;
+    setBatchLabelsInputByIdx((prev) => ({
+      ...prev,
+      [batchActiveIdx]: prev[batchActiveIdx] ?? formatLabelsForInput(row.labels)
+    }));
+    setBatchLocationInputByIdx((prev) => ({
+      ...prev,
+      [batchActiveIdx]: prev[batchActiveIdx] ?? formatLocationsForInput(row.location)
+    }));
+    setBatchLinksInputByIdx((prev) => ({
+      ...prev,
+      [batchActiveIdx]: prev[batchActiveIdx] ?? formatLinksForInput(row.link)
+    }));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [createMode, batchActiveIdx, batchItems.length]);
 
   if (!draft) return null;
 
@@ -1463,6 +1658,7 @@ export function TaskEditorDrawer({
                                   )
                                 );
                               }}
+                              title="Repeat interval count (e.g. every 2 weeks)."
                             />
                           </label>
                           <label className="field">
@@ -1477,6 +1673,7 @@ export function TaskEditorDrawer({
                                   )
                                 );
                               }}
+                              title="Repeat interval unit."
                             >
                               <option value="day">Day(s)</option>
                               <option value="week">Week(s)</option>
@@ -1508,6 +1705,7 @@ export function TaskEditorDrawer({
                                 prev.map((p, i) => (i === batchActiveIdx ? { ...p, dueDate: v } : p))
                               );
                             }}
+                            title="Due date (optional)."
                           />
                         </label>
                         <label className="field">
@@ -1521,6 +1719,7 @@ export function TaskEditorDrawer({
                                 prev.map((p, i) => (i === batchActiveIdx ? { ...p, dueTime: v } : p))
                               );
                             }}
+                            title="Due time (optional)."
                           />
                         </label>
                       </div>
@@ -1548,6 +1747,7 @@ export function TaskEditorDrawer({
                               );
                             }}
                             placeholder="e.g. 30"
+                            title="Estimated duration amount (optional)."
                             style={{ flex: 1, minWidth: 140 }}
                           />
                           <select
@@ -1567,6 +1767,7 @@ export function TaskEditorDrawer({
                                 )
                               );
                             }}
+                            title="Duration unit."
                             style={{ width: 160 }}
                           >
                             <option value="minute">Minutes</option>
@@ -1581,7 +1782,7 @@ export function TaskEditorDrawer({
                         <div className="drawer-card-head" style={{ margin: "0.8rem 0 0.6rem" }}>
                           <div>
                             <div className="drawer-card-title">Organize</div>
-                            <div className="drawer-card-desc">Reminders, labels, and context.</div>
+                            <div className="drawer-card-desc">Labels, links, location, and reminders.</div>
                           </div>
                         </div>
                       <label className="field">
@@ -1601,6 +1802,7 @@ export function TaskEditorDrawer({
                               )
                             );
                           }}
+                          title="Notification timing before the task."
                         >
                           <option value="none">No reminder</option>
                           <option value="0">At start time</option>
@@ -1614,45 +1816,132 @@ export function TaskEditorDrawer({
                       </label>
 
                       <label className="field">
-                        <span>Labels (comma separated)</span>
-                        <input
-                          value={(row.labels ?? []).join(", ")}
+                        <span>Labels</span>
+                        <textarea
+                          value={
+                            batchLabelsInputByIdx[batchActiveIdx] ?? formatLabelsForInput(row.labels)
+                          }
                           onChange={(e) => {
-                            const tokens = parseLabelsInput(e.target.value);
+                            const raw = e.target.value;
+                            setBatchLabelsInputByIdx((prev) => ({ ...prev, [batchActiveIdx]: raw }));
+                            const tokens = parseLabelsInput(raw);
                             setBatchItems((prev) =>
                               prev.map((p, i) => (i === batchActiveIdx ? { ...p, labels: tokens } : p))
                             );
                           }}
-                          placeholder="Work, Deep focus, Errands"
+                          onBlur={() => {
+                            const raw = batchLabelsInputByIdx[batchActiveIdx] ?? "";
+                            const tokens = parseLabelsInput(raw);
+                            setBatchItems((prev) =>
+                              prev.map((p, i) => (i === batchActiveIdx ? { ...p, labels: tokens } : p))
+                            );
+                            setBatchLabelsInputByIdx((prev) => ({
+                              ...prev,
+                              [batchActiveIdx]: formatLabelsForInput(tokens)
+                            }));
+                          }}
+                          placeholder={"Work\nDeep focus\nErrands"}
+                          title="Multiple labels supported. Use one per line, or separate with commas/semicolons."
+                          rows={2}
+                          style={{ resize: "vertical" }}
                         />
                       </label>
 
                       <label className="field">
                         <span>Location</span>
-                        <input
-                          value={row.location ?? ""}
+                        <textarea
+                          value={
+                            batchLocationInputByIdx[batchActiveIdx] ?? formatLocationsForInput(row.location)
+                          }
                           onChange={(e) => {
-                            const v = e.target.value || undefined;
+                            const raw = e.target.value;
+                            setBatchLocationInputByIdx((prev) => ({ ...prev, [batchActiveIdx]: raw }));
+                            const tokens = parseLocationsInput(raw);
+                            const v = serializeLocationTokens(tokens);
                             setBatchItems((prev) =>
                               prev.map((p, i) => (i === batchActiveIdx ? { ...p, location: v } : p))
                             );
                           }}
-                          placeholder="Outdoor, Home, Alias=>https://example.com"
+                          onBlur={() => {
+                            const raw = batchLocationInputByIdx[batchActiveIdx] ?? "";
+                            const tokens = parseLocationsInput(raw);
+                            const v = serializeLocationTokens(tokens);
+                            setBatchItems((prev) =>
+                              prev.map((p, i) => (i === batchActiveIdx ? { ...p, location: v } : p))
+                            );
+                            setBatchLocationInputByIdx((prev) => ({
+                              ...prev,
+                              [batchActiveIdx]: formatLocationsForInput(v)
+                            }));
+                          }}
+                          placeholder={"Outdoor\nHome\nAlias=>https://example.com"}
+                          title="Multiple locations supported. Use one per line, or separate with commas/semicolons. Aliases: Label=>value, Label -> value, or Label | value. URL-like values become clickable in the preview."
+                          rows={2}
+                          style={{ resize: "vertical" }}
                         />
+                        {renderTokenPreview(
+                          (() => {
+                            const raw = batchLocationInputByIdx[batchActiveIdx] ?? "";
+                            const tokens = parseLocationsInput(raw);
+                            return tokens.map((tok) => {
+                              const { label, query } = splitLocationStoredToken(tok);
+                              const meta = locationHrefMetaForToken(tok);
+                              return { key: tok, text: label ?? query, href: meta?.href };
+                            });
+                          })()
+                        )}
                       </label>
 
                       <label className="field">
-                        <span>Link</span>
-                        <input
-                          value={(row.link ?? []).join(", ")}
+                        <span>Links</span>
+                        <textarea
+                          value={batchLinksInputByIdx[batchActiveIdx] ?? formatLinksForInput(row.link)}
                           onChange={(e) => {
-                            const tokens = parseLinksInput(e.target.value);
-                            setBatchItems((prev) =>
-                              prev.map((p, i) => (i === batchActiveIdx ? { ...p, link: tokens.length ? tokens : undefined } : p))
-                            );
+                            const raw = e.target.value;
+                            setBatchLinksInputByIdx((prev) => ({ ...prev, [batchActiveIdx]: raw }));
+                            const tokens = parseLinksInput(raw);
+                            // Only commit parsed tokens when we have a valid link or the user cleared the field.
+                            if (tokens.length > 0 || raw.trim().length === 0) {
+                              setBatchItems((prev) =>
+                                prev.map((p, i) =>
+                                  i === batchActiveIdx ? { ...p, link: tokens.length ? tokens : undefined } : p
+                                )
+                              );
+                            }
                           }}
-                          placeholder="Alias=>URL or URL (comma/newline separated)"
+                          onBlur={() => {
+                            const raw = batchLinksInputByIdx[batchActiveIdx] ?? "";
+                            const tokens = parseLinksInput(raw);
+                            setBatchItems((prev) =>
+                              prev.map((p, i) =>
+                                i === batchActiveIdx ? { ...p, link: tokens.length ? tokens : undefined } : p
+                              )
+                            );
+                            setBatchLinksInputByIdx((prev) => ({
+                              ...prev,
+                              [batchActiveIdx]: formatLinksForInput(tokens)
+                            }));
+                          }}
+                          placeholder={"Cover Letter=>https://...\nResume=>https://...\nOr plain text notes"}
+                          title="Multiple entries supported. Use one per line, or separate with commas/semicolons. Supports plain text, URL, or aliases (Label=>URL, Label -> URL, Label | URL). Clickable preview below."
+                          rows={2}
+                          style={{ resize: "vertical" }}
                         />
+                        {renderTokenPreview(
+                          (() => {
+                            const raw = batchLinksInputByIdx[batchActiveIdx] ?? "";
+                            const tokens = parseLinksInput(raw);
+                            return tokens.map((tok) => {
+                              const parsed = parseLinkAliasToken(tok);
+                              if (!parsed) return { key: tok, text: tok };
+                              return {
+                                key: tok,
+                                text: parsed.label ?? shortLinkText(parsed.href),
+                                href: parsed.href
+                              };
+                            });
+                          })()
+                        )}
                       </label>
                       </div>
                     </>
@@ -1856,37 +2145,103 @@ export function TaskEditorDrawer({
 
               <label className="field">
                 <span>Labels</span>
-                <input
-                  value={(draft.labels ?? []).join(", ")}
-                  onChange={(e) => setDraft({ ...draft, labels: parseLabelsInput(e.target.value) })}
-                  placeholder="Work, Deep focus, Errands"
-                  title="Comma-separated labels."
+                <textarea
+                  value={labelsInput}
+                  onChange={(e) => {
+                    const raw = e.target.value;
+                    setLabelsInput(raw);
+                    const tokens = parseLabelsInput(raw);
+                    setDraft({ ...draft, labels: tokens });
+                  }}
+                  onBlur={() => {
+                    const tokens = parseLabelsInput(labelsInput);
+                    setDraft({ ...draft, labels: tokens });
+                    setLabelsInput(formatLabelsForInput(tokens));
+                  }}
+                  placeholder={"Work\nDeep focus\nErrands"}
+                  title="Multiple labels supported. Use one per line, or separate with commas/semicolons."
+                  rows={2}
+                  style={{ resize: "vertical" }}
                 />
               </label>
 
               <label className="field">
                 <span>Location</span>
-                <input
-                  value={draft.location ?? ""}
-                  onChange={(e) =>
-                    setDraft({ ...draft, location: e.target.value.trim() ? e.target.value : undefined })
-                  }
-                  placeholder="Outdoor, Home, Alias=>https://example.com"
-                  title="Optional location."
+                <textarea
+                  value={locationInput}
+                  onChange={(e) => {
+                    const raw = e.target.value;
+                    setLocationInput(raw);
+                    const tokens = parseLocationsInput(raw);
+                    const v = serializeLocationTokens(tokens);
+                    setDraft({ ...draft, location: v });
+                  }}
+                  onBlur={() => {
+                    const tokens = parseLocationsInput(locationInput);
+                    const v = serializeLocationTokens(tokens);
+                    setDraft({ ...draft, location: v });
+                    setLocationInput(formatLocationsForInput(v));
+                  }}
+                  placeholder={"Outdoor\nHome\nAlias=>https://example.com"}
+                  title="Multiple locations supported. Use one per line, or separate with commas/semicolons. Aliases: Label=>value, Label -> value, or Label | value. URL-like values become clickable in the preview."
+                  rows={2}
+                  style={{ resize: "vertical" }}
                 />
+                {renderTokenPreview(
+                  (() => {
+                    const tokens = parseLocationsInput(locationInput);
+                    return tokens.map((tok) => {
+                      const { label, query } = splitLocationStoredToken(tok);
+                      const meta = locationHrefMetaForToken(tok);
+                      return {
+                        key: tok,
+                        text: label ?? query,
+                        href: meta?.href
+                      };
+                    });
+                  })()
+                )}
               </label>
 
               <label className="field">
                 <span>Links</span>
-                <input
-                  value={(draft.link ?? []).join(", ")}
+                <textarea
+                  value={linksInput}
                   onChange={(e) => {
-                    const tokens = parseLinksInput(e.target.value);
-                    setDraft({ ...draft, link: tokens.length ? tokens : undefined });
+                    const raw = e.target.value;
+                    setLinksInput(raw);
+                    const tokens = parseLinksInput(raw);
+                    // Only commit parsed tokens when we have a valid link or the user cleared the field.
+                    if (tokens.length > 0 || raw.trim().length === 0) {
+                      setDraft({ ...draft, link: tokens.length ? tokens : undefined });
+                    }
                   }}
-                  placeholder="Alias=>URL or URL"
-                  title="Comma or newline separated."
+                  onBlur={() => {
+                    const tokens = parseLinksInput(linksInput);
+                    setDraft({ ...draft, link: tokens.length ? tokens : undefined });
+                    setLinksInput(formatLinksForInput(tokens));
+                  }}
+                  placeholder={"Cover Letter=>https://...\nResume=>https://...\nOr plain text notes"}
+                  title="Multiple entries supported. Use one per line, or separate with commas/semicolons. Supports plain text, URL, or aliases (Label=>URL, Label -> URL, Label | URL). Clickable preview below."
+                  rows={3}
+                  style={{ resize: "vertical" }}
                 />
+                {renderTokenPreview(
+                  (() => {
+                    const tokens = parseLinksInput(linksInput);
+                    return tokens.map((tok) => {
+                      const parsed = parseLinkAliasToken(tok);
+                      if (!parsed) {
+                        return { key: tok, text: tok };
+                      }
+                      return {
+                        key: tok,
+                        text: parsed.label ?? shortLinkText(parsed.href),
+                        href: parsed.href
+                      };
+                    });
+                  })()
+                )}
               </label>
 
               <label className="field">
@@ -1982,7 +2337,7 @@ export function TaskEditorDrawer({
                       if (!item.source) next.projectId = base.projectId;
                       return next;
                     })
-                    .filter((x): x is Task => Boolean(x) && Boolean(x.title.trim()));
+                    .filter((x): x is Task => x !== null && x.title.trim().length > 0);
 
                   if (out.length === 0) return;
                   onSave(out);
