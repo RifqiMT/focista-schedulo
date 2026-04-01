@@ -7,6 +7,41 @@ This changelog tracks meaningful product, engineering, and documentation changes
 
 ---
 
+## [2026-04-01] Documentation pack — code alignment, Badges, and repo accuracy
+
+### Changed
+
+- **Progress day (canonical):** All product and variable docs now match `completionDateIsoLocalForTask()` in `backend/src/index.ts`: attribute completed work to **`dueDate`** when set; otherwise the **local calendar date** from **`completedAt`**. Updated `README.md`, `docs/PRD.md`, `docs/VARIABLES.md`, `docs/API_CONTRACTS.md`, `docs/ARCHITECTURE.md`, `docs/GUARDRAILS.md`, `docs/PRODUCT_DOCUMENTATION_STANDARD.md`, `docs/USER_STORIES.md`, `docs/USER_PERSONAS.md`, `docs/PRODUCT_METRICS.md`, `docs/README.md`, `docs/DOCS_CODE_CROSSWALK.md`.
+- **Badges:** Documented full-viewport portaled Badges experience (`GamificationPanel`, `BadgesModalDialogBody`, `.badge-fs-pa-layer`), shared chrome patterns with Productivity Analysis, `.pa-close-round` close control, and `GET /api/stats` → `milestoneAchievements` data dependency. Added **US-7a**, **FR-12**, traceability row, design guidelines section, variables relationship chart updates.
+- **API / ops:** Documented **10 MB** JSON body limit for admin/import flows (`docs/API_CONTRACTS.md`, `docs/GUARDRAILS.md`).
+- **Repository:** Root `package.json` workspaces list corrected to **`backend`** and **`frontend`** only (removed unused `shared` entry). **Frontend** tech stack in `README.md` no longer lists Zod (backend retains Zod for validation).
+
+### Docs
+
+- Comprehensive pass on enterprise traceability, personas, stories, metrics data-quality checks, and crosswalk claims to reflect current UI and server behavior.
+- Metadata consistency: root **README** uses the same top-of-file **Last updated** / **Owner** pattern as `docs/` plus the standard HTML footer; **ARCHITECTURE** header punctuation aligned; **API_CONTRACTS** and **DOCS_CODE_CROSSWALK** include the standard footer note.
+
+---
+
+## [2026-04-01] Backend ESLint (flat config) and lint-driven cleanup
+
+### Added
+
+- **`backend/eslint.config.mjs`** — ESLint 9 flat configuration with `@typescript-eslint` (recommended) and Node globals; devDependency **`globals`** for `eslint.config.mjs`.
+
+### Changed
+
+- **`npm run lint` (backend):** script is `eslint src` (no deprecated `--ext`).
+- **`readJsonFilesFromDataDir`:** JSON parse typing uses `unknown` plus `isLooseProjectArray` / `isLooseTaskArray` guards instead of `any`.
+- **CSV import:** `repeat` / `repeatUnit` cells parsed via **`parseCsvRepeat`** / **`parseCsvRepeatUnit`** (typed; invalid values fall back safely before Zod).
+- Removed unused private helpers **`allocateNextParentId`**, **`seriesKeyIgnoringProject`**, **`syncSeriesIdentityAndDuration`** (superseded by deterministic rebuild / other paths).
+
+### Docs
+
+- **`docs/ARCHITECTURE.md`** — notes `eslint.config.mjs` under `backend/`.
+
+---
+
 ## [2026-03-31] Project association integrity for series (parent/child consistency)
 
 ### Changed
@@ -36,25 +71,12 @@ This changelog tracks meaningful product, engineering, and documentation changes
 
 ---
 
-## [2026-04-01] Comprehensive documentation audit (product + engineering)
+## [2026-03-31] Progress attribution (historical note)
 
 ### Changed
 
-- Refreshed **README.md**, **docs/README.md** (coverage table), **PRODUCT_DOCUMENTATION_STANDARD.md** (glossary: hovercard, **Progress day**), **PRD.md** (gamification: progress-day + cache invalidation), **ARCHITECTURE.md** (stats/productivity cache lifecycle; productivity row bucketing), **API_CONTRACTS.md** (cache + field descriptions for `completedToday` / streak / `pointsToday`), **VARIABLES.md** (mermaid edge label; new **`task.completedAt`** and **`completionDateIsoLocalForTask`** entries), **DESIGN_GUIDELINES.md** (hovercard pointer-events), **GUARDRAILS.md** (overlay hit-testing), **TRACEABILITY_MATRIX.md** (Q4 recurring integrity row aligns with gap-fill + no forced re-complete), **USER_PERSONAS.md**, **USER_STORIES.md** (US-7), **PRODUCT_METRICS.md** (Q4 definition), **METRICS_AND_OKRS.md** (metadata date).
-- All “**Last updated**” stamps in this audit set normalized to **2026-04-01** where files were touched.
-
-### Docs
-
-- Single narrative across the doc pack: **completion-time-first** progress bucketing for day-scoped analytics (local day from `completedAt`, with `dueDate` as legacy fallback); **lifetime** points/level semantics unchanged; **API** cache cleared on persist start and after `loadData()`.
-
----
-
-## [2026-03-31] Progress attribution — due date first
-
-### Changed
-
-- **Backend:** `completionDateIsoLocalForTask` (used by `GET /api/stats` and `GET /api/productivity-insights`) now attributes completed tasks to the **local calendar day from `completedAt`** when available; legacy records fall back to **`dueDate`**.
-- **Docs:** Updated `VARIABLES.md`, `API_CONTRACTS.md`, `PRD.md` (FR-10), `GUARDRAILS.md`, `ARCHITECTURE.md`, `PRODUCT_DOCUMENTATION_STANDARD.md` to match.
+- **Backend:** `completionDateIsoLocalForTask` attributes day-scoped analytics to **`dueDate`** when present; otherwise the **local calendar date** from **`completedAt`** (see function comment in `backend/src/index.ts`).
+- **Docs (2026-04-01):** Product documentation was reconciled to this behavior across `VARIABLES.md`, `API_CONTRACTS.md`, `PRD.md`, `GUARDRAILS.md`, `ARCHITECTURE.md`, and related files (see top changelog entry).
 
 ---
 
@@ -107,7 +129,7 @@ This changelog tracks meaningful product, engineering, and documentation changes
   - `frontend/src/components/GamificationPanel.tsx`
   - `backend/src/index.ts`
 - Recurrence model updated to horizon-based virtual occurrence generation with interaction-time materialization and deduplicated in-flight writes.
-- Stats semantics clarified and hardened to use completion-date (`completedAt`) local-day precedence with fallback handling for legacy records.
+- Stats semantics clarified and hardened: **progress day** uses **`dueDate`** when set, else local calendar date from **`completedAt`** (`completionDateIsoLocalForTask`).
 
 ### Fixed
 

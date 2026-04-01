@@ -1,7 +1,7 @@
 # Architecture — Focista Schedulo
 
-**Last updated**: 2026-04-01  
-**Owner**: Engineering  
+**Last updated:** 2026-04-01  
+**Owner:** Engineering  
 
 ## Overview
 
@@ -9,21 +9,23 @@ Focista Schedulo is a TypeScript monorepo with:
 
 - **Backend**: Node.js + Express REST API with JSON-file persistence
 - **Frontend**: React + Vite SPA with list + calendar views
-- **Shared**: reserved workspace entry for shared types/utilities (currently minimal)
-
 ## Repository structure
 
 - `backend/`
   - `src/index.ts`: Express server, schemas, persistence, migrations, recurrence identity rules, stats
+  - `eslint.config.mjs`: ESLint 9 flat config for `src/**/*.ts` (aligned with frontend tooling)
   - `data/tasks.json`, `data/projects.json`: persisted data (dev/local)
 - `frontend/`
   - `src/App.tsx`: app shell/branding, cross-component refresh triggers
   - `src/components/TaskBoard.tsx`: list, calendar month view, day agenda view, export, task actions
   - `src/components/TaskEditorDrawer.tsx`: task edit/create + voice parsing
   - `src/components/ProjectSidebar.tsx`: project CRUD + change events
-  - `src/components/GamificationPanel.tsx`: `/api/stats` display; entry to Productivity Analysis
+  - `src/components/GamificationPanel.tsx`: `/api/stats`, Badges entry (full-viewport portaled overlay), opens Productivity Analysis
+  - `src/components/BadgesModalDialogBody.tsx`: milestone badge grids and hover detail (rendered inside gamification portaled shell)
   - `src/components/ProductivityAnalysisModal.tsx`: productivity charts, fullscreen, `/api/productivity-insights`
-  - `src/styles.css`: global theme + component styles (Indonesian palette; productivity analysis `pa-*` classes)
+  - `src/components/Toaster.tsx`: app-level toasts (`pst:toast`); suppressed during in-app “true fullscreen” overlays when configured
+  - `src/fullscreenApi.ts`, `src/productivityAnalysisFullscreen.ts`, `src/badgeFullscreen.ts`: fullscreen / overlay helpers and toasts
+  - `src/styles.css`: global theme + component styles (Indonesian palette; `pa-*` productivity shell; `badge-fs-pa-layer` Badges overlay)
 
 ## Runtime topology
 
@@ -98,15 +100,16 @@ Deletion behavior is primarily persisted deletion/materialization-aware mutation
 - `GET /api/tasks?projectId=P1` (optional filter)
 - `POST /api/tasks` (create)
 - `PUT /api/tasks/:id` (update)
+- `PATCH /api/tasks/:id/complete` (toggle completed + `completedAt`)
 - `DELETE /api/tasks/:id` (delete; recurring tasks may be cancelled instead depending on UI behavior)
 
 ### Stats
 
-- `GET /api/stats` → stats used by Progress panel (points, level, streak, last7Days, achievements, milestoneAchievements). Day-based metrics use **completion-time-first** progress bucketing: local day from `completedAt` when available; fall back to `dueDate` for legacy records missing `completedAt`. Responses are cached in memory; caches are **cleared at the start of** `persistTasks` / `persistProjects` and **after** `loadData()` completes so clients never read stale aggregates while in-memory `tasks` already reflect mutations.
+- `GET /api/stats` → stats used by Progress panel (points, level, streak, last7Days, achievements, milestoneAchievements). Day-based metrics use **progress day** from `completionDateIsoLocalForTask` (**`dueDate`** when set; else local date from **`completedAt`**). Responses are cached in memory; caches are **cleared at the start of** `persistTasks` / `persistProjects` and **after** `loadData()` completes so clients never read stale aggregates while in-memory `tasks` already reflect mutations.
 
 ### Productivity insights
 
-- `GET /api/productivity-insights` → `{ rows: ProductivityRow[] }` daily series for **completed** tasks only: same **progress-day** bucketing as stats (`completedAt` local day first, then `dueDate` as legacy fallback). Includes per-day counts, cumulative completions, per-day and cumulative XP (same priority weights as stats), implied level from cumulative XP, and cumulative milestone “unlocks” along the timeline. Cached and invalidated like `/api/stats`.
+- `GET /api/productivity-insights` → `{ rows: ProductivityRow[], projectBreakdown? }` daily series for **completed** tasks only: same **progress-day** bucketing as stats. Includes per-day counts, cumulative completions, per-day and cumulative XP (same priority weights as stats), implied level from cumulative XP, and cumulative milestone “unlocks” along the timeline. Cached and invalidated like `/api/stats`.
 
 ### Admin
 
@@ -154,3 +157,4 @@ This reduces “stale association” issues (e.g., project rename reflected on t
 - End-to-end traceability: `docs/TRACEABILITY_MATRIX.md`
 - API contracts: `docs/API_CONTRACTS.md`
 
+<!-- Last updated is listed at the top of this document. -->

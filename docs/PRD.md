@@ -125,7 +125,8 @@ Unless otherwise stated, sections under **“Current Scope (Shipped)”** descri
 
 - `/api/stats` provides: completedToday, pointsToday, totalPoints, level, xpToNext, streakDays, last7Days, achievements and milestoneAchievements (streak, tasks completed, XP, levels).
 - Points per priority: low=1, medium=2, high=3, urgent=4.
-- **Progress day:** Day-scoped fields (e.g. completedToday, streak, last7Days, achievement thresholds tied to “today”) bucket each **completed** task by the **local calendar day** of **`completedAt`** when available; if `completedAt` is missing (legacy records), fall back to **`dueDate`**. **totalPoints** and **level** remain lifetime aggregates over all completed tasks.
+- **Progress day:** Day-scoped fields (e.g. `completedToday`, streak, `last7Days`, achievement thresholds tied to “today”) bucket each **completed** task using **`dueDate`** when it is set; if there is **no** `dueDate`, use the **local calendar date** from **`completedAt`**. **totalPoints** and **level** remain lifetime aggregates over all completed tasks.
+- **Badges (milestone UI):** From the progress panel, **Badges** opens in a **full-viewport** portaled overlay (`.pa-fs-overlay.badge-fs-pa-layer` + `.pa-fs-chrome`) so content uses the same fullscreen-style shell patterns as Productivity Analysis charts; dismiss via backdrop, **Escape**, or the header close control (`.pa-close-round`, consistent with Productivity Analysis).
 - Responses are cached in memory and invalidated when task/project data is persisted or reloaded from disk.
 - UI updates via `pst:tasks-changed` events and focus/visibility refresh patterns.
 
@@ -178,8 +179,9 @@ Unless otherwise stated, sections under **“Current Scope (Shipped)”** descri
 | FR-7 | Gamification stats and real-time updates. |
 | FR-8 | Task hovercard with full details and clickable links/locations; portaled rendering; pointer-aligned placement with viewport clamping; suppressed for row checkbox and action buttons. |
 | FR-9 | Multi-link and multi-location (UI) with normalization and alias support where applicable. |
-| FR-10 | Streak/day metrics and progress charts attribute completions to **`completedAt`** (local day) when available; legacy records fall back to **`dueDate`**. |
+| FR-10 | Streak/day metrics and progress charts attribute completions using **progress day**: **`dueDate`** when set; else local date from **`completedAt`**. |
 | FR-11 | Productivity Analysis modal consuming `/api/productivity-insights` with range controls, aggregations, fullscreen charts, and non-clipped chart tooltips. |
+| FR-12 | Badges milestone experience in a full-viewport portaled layer with scrollable sections, hover detail, and close/dismiss behavior aligned with Productivity Analysis chrome patterns. |
 
 ---
 
@@ -235,7 +237,7 @@ A release is considered ready only when:
 1. Scope requirements are verified in both UI and API behavior.
 2. Data integrity checks pass (schema validity, recurrence consistency, no duplicate IDs).
 3. Core metrics remain correct (`completedToday`, `streakDays`, `level`, `xpToNext`, milestone progress).
-4. Productivity insights rows stay consistent with **completion-time-first** progress bucketing and priority-point rules.
+4. Productivity insights rows stay consistent with **progress-day** bucketing (`dueDate` first, else `completedAt` local day) and priority-point rules.
 5. Export paths (JSON/CSV) remain reliable.
 6. Related product documentation is updated in the same release train.
 

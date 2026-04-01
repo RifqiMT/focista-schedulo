@@ -165,6 +165,13 @@ Priorities are visually distinct in task pills, calendar items, day agenda, and 
 - **Design tokens:** Should follow the existing red/gold brand palette; error states should be readable and not rely on color alone.
 - **Design-to-code mapping:** `frontend/src/components/Toaster.tsx` + `.toaster`, `.toast`, `.toast--*` styles in `frontend/src/styles.css`.
 
+### Badges (full-viewport overlay)
+
+- **Shell:** Portaled to `document.body` as `.pa-fs-overlay.pa-pro-shell.badge-fs-pa-layer` with inner `.pa-fs-chrome` (same structural pattern as Productivity Analysis chart fullscreen for consistent spacing, safe-area padding, and backdrop).
+- **Panel:** `.badge-modal.badge-modal--viewport-expanded` fills the chrome; body content scrolls inside `.badge-modal-body`.
+- **Close:** `.pa-close-round` with **×** glyph and `aria-label` (matches Productivity Analysis header close).
+- **Design-to-code:** `GamificationPanel.tsx` (portal + open state), `BadgesModalDialogBody.tsx`, `styles.css` (`.badge-fs-pa-layer`, `.pa-fs-chrome` overrides for this layer).
+
 ### Productivity Analysis (modal)
 
 - **Shell:** `.pa-pro-shell`, `.badge-modal.productivity-modal` — maps accent tokens to `:root` **red / gold** palette (`--pa-accent`, `--pa-chart-secondary` for secondary series).
@@ -208,6 +215,7 @@ Priorities are visually distinct in task pills, calendar items, day agenda, and 
 | Task editor drawer, form fields, chips | `frontend/src/components/TaskEditorDrawer.tsx` + drawer and form classes in `styles.css` |
 | Projects sidebar | `frontend/src/components/ProjectSidebar.tsx` + `.sidebar*` in `styles.css` |
 | Progress panel | `frontend/src/components/GamificationPanel.tsx` + `.gamification-panel` in `styles.css` |
+| Badges milestone overlay | `frontend/src/components/GamificationPanel.tsx`, `BadgesModalDialogBody.tsx` + `.badge-fs-pa-layer`, `.badge-modal--viewport-expanded` in `styles.css` |
 | Productivity Analysis modal | `frontend/src/components/ProductivityAnalysisModal.tsx` + `.pa-*`, `.productivity-modal*` in `styles.css` |
 | Priority and status colors | `frontend/src/styles.css` (`.priority-*`, `.task-hovercard[data-priority]`, `.task-filter-active`, etc.) |
 

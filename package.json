@@ -2,11 +2,7 @@
   "name": "focista-schedulo",
   "version": "0.1.0",
   "private": true,
-  "workspaces": [
-    "backend",
-    "frontend",
-    "shared"
-  ],
+  "workspaces": ["backend", "frontend"],
   "scripts": {
     "dev": "npm-run-all -p dev:backend dev:frontend",
     "dev:backend": "npm --workspace backend run dev",

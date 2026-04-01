@@ -1,5 +1,5 @@
 import { Task } from "./TaskBoard";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 
 interface TaskEditorDrawerProps {
   task: Task | Task[] | null;
@@ -306,29 +306,6 @@ export function TaskEditorDrawer({
     return sortLinksAsc(out);
   };
 
-  const mergeLinkTokens = (existing: string[], incoming: string[]): string[] => {
-    const map = new Map<string, string>(); // tokenKey -> stored token
-    for (const e of existing ?? []) {
-      const norm = normalizeLinkToken(e);
-      if (!norm) continue;
-      map.set(linkTokenKey(norm), norm);
-    }
-
-    for (const rawToken of incoming) {
-      const norm = normalizeLinkToken(rawToken);
-      if (!norm) continue;
-      const parsedHref = parseLinkAliasToken(norm);
-      if (parsedHref?.label) {
-        map.set(`href:${parsedHref.href.toLowerCase()}`, norm);
-        continue;
-      }
-      const key = linkTokenKey(norm);
-      if (!map.has(key)) map.set(key, norm);
-    }
-
-    return sortLinksAsc(Array.from(map.values()));
-  };
-
   const normalizeSingleLocation = (raw: string): string =>
     raw.trim().replace(/\s+/g, " ");
 
@@ -461,46 +438,6 @@ export function TaskEditorDrawer({
         return label ? `${label} | ${query}` : query;
       })
       .join("\n");
-  };
-
-  const mergeLocationTokens = (existing: string[], incoming: string[]): string[] => {
-    const getQueryKey = (token: string) => {
-      const idx = token.indexOf("=>");
-      const q = idx >= 0 ? token.slice(idx + 2) : token;
-      return q.trim().toLowerCase();
-    };
-
-    const map = new Map<string, string>(); // queryKey -> stored token
-    for (const e of existing ?? []) {
-      const t = normalizeSingleLocation(e);
-      if (!t) continue;
-      map.set(getQueryKey(t), t);
-    }
-
-    for (const rawToken of incoming) {
-      const t0 = rawToken.trim();
-      if (!t0) continue;
-      const m = t0.match(/^\s*(.*?)\s*(=>|->|\|)\s*(\S.*?)\s*$/);
-      let label: string | undefined;
-      let query = t0;
-      if (m) {
-        const labelRaw = (m[1] ?? "").trim();
-        const queryRaw = (m[3] ?? "").trim();
-        if (labelRaw) label = normalizeSingleLocation(labelRaw);
-        query = queryRaw;
-      }
-      query = normalizeSingleLocation(query);
-      if (!query) continue;
-
-      const queryKey = query.toLowerCase();
-      const storedToken = label ? `${label}=>${query}` : query;
-      const existingToken = map.get(queryKey);
-
-      // If incoming provides a label, replace; otherwise keep existing label if any.
-      if (!existingToken || label) map.set(queryKey, storedToken);
-    }
-
-    return Array.from(map.values());
   };
 
   const normalizeMaybeUrl = (raw: string): string | null => {
@@ -652,7 +589,6 @@ export function TaskEditorDrawer({
   // Keep Duration UI in sync even when voice updates draft.durationMinutes.
   useEffect(() => {
     setDurationUIFromMinutes(draft?.durationMinutes);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [draft?.durationMinutes]);
 
   useEffect(() => {
@@ -1447,30 +1383,30 @@ export function TaskEditorDrawer({
                 </div>
               </div>
               <div className="drawer-voice-meta">
-                <button
-                  type="button"
-                  className="ghost-button"
-                  disabled={!voiceSupported || listening}
-                  onClick={() => startVoiceInput()}
-                  title={
-                    voiceSupported
-                      ? "Start voice input (auto-stops after 1 minute of silence)"
-                      : "Voice input not supported in this browser"
-                  }
-                >
-                  {listening ? "Listening…" : "Voice input"}
-                </button>
-                {listening && (
-                  <span className="pill subtle">
-                    Auto-stops when you finish speaking
-                  </span>
-                )}
-                {voiceError && <span className="pill subtle">Voice: {voiceError}</span>}
+            <button
+              type="button"
+              className="ghost-button"
+              disabled={!voiceSupported || listening}
+              onClick={() => startVoiceInput()}
+              title={
+                voiceSupported
+                  ? "Start voice input (auto-stops after 1 minute of silence)"
+                  : "Voice input not supported in this browser"
+              }
+            >
+              {listening ? "Listening…" : "Voice input"}
+            </button>
+            {listening && (
+              <span className="pill subtle">
+                Auto-stops when you finish speaking
+              </span>
+            )}
+            {voiceError && <span className="pill subtle">Voice: {voiceError}</span>}
               </div>
-            </div>
-            {listening && voiceTranscript && (
+          </div>
+          {listening && voiceTranscript && (
               <div className="drawer-transcript" aria-label="Live transcript">
-                {voiceTranscript}
+              {voiceTranscript}
               </div>
             )}
           </div>
@@ -1961,71 +1897,71 @@ export function TaskEditorDrawer({
                 </div>
               </div>
 
-              <label className="field">
-                <span>Title</span>
-                <input
-                  value={draft.title}
-                  onChange={(e) => setDraft({ ...draft, title: e.target.value })}
-                  placeholder="What do you want to accomplish?"
+          <label className="field">
+            <span>Title</span>
+            <input
+              value={draft.title}
+              onChange={(e) => setDraft({ ...draft, title: e.target.value })}
+              placeholder="What do you want to accomplish?"
                   title="Task title (required)."
-                />
-              </label>
+            />
+          </label>
 
-            <label className="field">
-              <span>Description</span>
-              <textarea
-                value={draft.description ?? ""}
+          <label className="field">
+            <span>Description</span>
+            <textarea
+              value={draft.description ?? ""}
                 onChange={(e) => setDraft({ ...draft, description: e.target.value })}
-                placeholder="Add more context, links, or notes."
-                rows={4}
+              placeholder="Add more context, links, or notes."
+              rows={4}
                 title="Optional description for additional context."
-              />
+            />
+          </label>
+
+          <div className="field-grid">
+            <label className="field">
+              <span>Priority</span>
+              <select
+                value={draft.priority}
+                onChange={(e) =>
+                  setDraft({
+                    ...draft,
+                    priority: e.target.value as Task["priority"]
+                  })
+                }
+                  title="Priority sets urgency and completion points (low=1, medium=2, high=3, urgent=4)."
+              >
+                <option value="low">Low</option>
+                <option value="medium">Medium</option>
+                <option value="high">High</option>
+                <option value="urgent">Urgent</option>
+              </select>
             </label>
 
-            <div className="field-grid">
-              <label className="field">
-                <span>Priority</span>
-                <select
-                  value={draft.priority}
-                  onChange={(e) =>
-                    setDraft({
-                      ...draft,
-                      priority: e.target.value as Task["priority"]
-                    })
-                  }
-                  title="Priority sets urgency and completion points (low=1, medium=2, high=3, urgent=4)."
-                >
-                  <option value="low">Low</option>
-                  <option value="medium">Medium</option>
-                  <option value="high">High</option>
-                  <option value="urgent">Urgent</option>
-                </select>
-              </label>
-
-              <label className="field">
-                <span>Repeat</span>
-                <select
-                  value={draft.repeat ?? "none"}
-                  onChange={(e) =>
-                    setDraft({
-                      ...draft,
-                      repeat: e.target.value as Task["repeat"]
-                    })
-                  }
+            <label className="field">
+              <span>Repeat</span>
+              <select
+                value={draft.repeat ?? "none"}
+                onChange={(e) =>
+                  setDraft({
+                    ...draft,
+                    repeat: e.target.value as Task["repeat"]
+                  })
+                }
                   title="Repeat pattern for recurring tasks."
-                >
-                  <option value="none">No repetition</option>
-                  <option value="daily">Daily</option>
-                  <option value="weekly">Weekly</option>
-                  <option value="weekdays">Weekdays (Mon–Fri)</option>
-                  <option value="weekends">Weekends (Sat–Sun)</option>
-                  <option value="monthly">Monthly</option>
-                  <option value="quarterly">Quarterly</option>
-                  <option value="yearly">Annually</option>
-                  <option value="custom">Custom…</option>
-                </select>
-              </label>
-            </div>
+              >
+                <option value="none">No repetition</option>
+                <option value="daily">Daily</option>
+                <option value="weekly">Weekly</option>
+                <option value="weekdays">Weekdays (Mon–Fri)</option>
+                <option value="weekends">Weekends (Sat–Sun)</option>
+                <option value="monthly">Monthly</option>
+                <option value="quarterly">Quarterly</option>
+                <option value="yearly">Annually</option>
+                <option value="custom">Custom…</option>
+              </select>
+            </label>
+          </div>
             </div>
           )}
 
@@ -2077,60 +2013,60 @@ export function TaskEditorDrawer({
                 </div>
               </div>
 
-              <div className="field-grid">
-                <label className="field">
-                  <span>Date</span>
-                  <input
-                    type="date"
-                    value={draft.dueDate ?? ""}
-                    onChange={(e) =>
-                      setDraft({
-                        ...draft,
-                        dueDate: e.target.value || undefined
-                      })
-                    }
-                  />
-                </label>
-                <label className="field">
-                  <span>Time</span>
-                  <input
-                    type="time"
-                    value={draft.dueTime ?? ""}
-                    onChange={(e) =>
-                      setDraft({
-                        ...draft,
-                        dueTime: e.target.value || undefined
-                      })
-                    }
-                  />
-                </label>
-              </div>
+          <div className="field-grid">
+            <label className="field">
+              <span>Date</span>
+              <input
+                type="date"
+                value={draft.dueDate ?? ""}
+                onChange={(e) =>
+                  setDraft({
+                    ...draft,
+                    dueDate: e.target.value || undefined
+                  })
+                }
+              />
+            </label>
+            <label className="field">
+              <span>Time</span>
+              <input
+                type="time"
+                value={draft.dueTime ?? ""}
+                onChange={(e) =>
+                  setDraft({
+                    ...draft,
+                    dueTime: e.target.value || undefined
+                  })
+                }
+              />
+            </label>
+          </div>
 
-              <label className="field">
-                <span>Duration</span>
+          <label className="field">
+            <span>Duration</span>
                 <div className="drawer-row">
-                  <input
-                    type="number"
-                    min={1}
-                    value={durationAmount}
-                    onChange={(e) => setDurationAmount(e.target.value)}
-                    placeholder="e.g. 30"
+              <input
+                type="number"
+                min={1}
+                value={durationAmount}
+                onChange={(e) => setDurationAmount(e.target.value)}
+                placeholder="e.g. 30"
                     style={{ flex: 1, minWidth: 140 }}
-                  />
-                  <select
-                    value={durationUnit}
-                    onChange={(e) => setDurationUnit(e.target.value as typeof durationUnit)}
+              />
+              <select
+                value={durationUnit}
+                onChange={(e) => setDurationUnit(e.target.value as typeof durationUnit)}
                     style={{ width: 160 }}
-                  >
-                    <option value="minute">Minutes</option>
-                    <option value="hour">Hours</option>
-                    <option value="day">Days</option>
-                  </select>
-                </div>
+              >
+                <option value="minute">Minutes</option>
+                <option value="hour">Hours</option>
+                <option value="day">Days</option>
+              </select>
+            </div>
                 <div className="muted small" style={{ marginTop: "0.35rem" }}>
-                  Voice examples: “for 30 minutes”, “selama 2 jam”, “durasi 2 hari”.
-                </div>
-              </label>
+              Voice examples: “for 30 minutes”, “selama 2 jam”, “durasi 2 hari”.
+            </div>
+          </label>
             </div>
           )}
 
@@ -2143,17 +2079,17 @@ export function TaskEditorDrawer({
                 </div>
               </div>
 
-              <label className="field">
+          <label className="field">
                 <span>Labels</span>
                 <textarea
                   value={labelsInput}
-                  onChange={(e) => {
+              onChange={(e) => {
                     const raw = e.target.value;
                     setLabelsInput(raw);
-                    const tokens = parseLabelsInput(raw);
+                const tokens = parseLabelsInput(raw);
                     setDraft({ ...draft, labels: tokens });
-                  }}
-                  onBlur={() => {
+              }}
+              onBlur={() => {
                     const tokens = parseLabelsInput(labelsInput);
                     setDraft({ ...draft, labels: tokens });
                     setLabelsInput(formatLabelsForInput(tokens));
@@ -2163,20 +2099,20 @@ export function TaskEditorDrawer({
                   rows={2}
                   style={{ resize: "vertical" }}
                 />
-              </label>
+          </label>
 
-              <label className="field">
-                <span>Location</span>
+          <label className="field">
+            <span>Location</span>
                 <textarea
                   value={locationInput}
-                  onChange={(e) => {
+              onChange={(e) => {
                     const raw = e.target.value;
                     setLocationInput(raw);
                     const tokens = parseLocationsInput(raw);
                     const v = serializeLocationTokens(tokens);
                     setDraft({ ...draft, location: v });
-                  }}
-                  onBlur={() => {
+              }}
+              onBlur={() => {
                     const tokens = parseLocationsInput(locationInput);
                     const v = serializeLocationTokens(tokens);
                     setDraft({ ...draft, location: v });
@@ -2201,9 +2137,9 @@ export function TaskEditorDrawer({
                     });
                   })()
                 )}
-              </label>
+          </label>
 
-              <label className="field">
+          <label className="field">
                 <span>Links</span>
                 <textarea
                   value={linksInput}
@@ -2215,8 +2151,8 @@ export function TaskEditorDrawer({
                     if (tokens.length > 0 || raw.trim().length === 0) {
                       setDraft({ ...draft, link: tokens.length ? tokens : undefined });
                     }
-                  }}
-                  onBlur={() => {
+              }}
+              onBlur={() => {
                     const tokens = parseLinksInput(linksInput);
                     setDraft({ ...draft, link: tokens.length ? tokens : undefined });
                     setLinksInput(formatLinksForInput(tokens));
@@ -2242,35 +2178,35 @@ export function TaskEditorDrawer({
                     });
                   })()
                 )}
-              </label>
+          </label>
 
-              <label className="field">
-                <span>Reminder</span>
-                <select
-                  value={
-                    draft.reminderMinutesBefore !== undefined
-                      ? String(draft.reminderMinutesBefore)
-                      : "none"
-                  }
-                  onChange={(e) =>
-                    setDraft({
-                      ...draft,
-                      reminderMinutesBefore:
+          <label className="field">
+            <span>Reminder</span>
+            <select
+              value={
+                draft.reminderMinutesBefore !== undefined
+                  ? String(draft.reminderMinutesBefore)
+                  : "none"
+              }
+              onChange={(e) =>
+                setDraft({
+                  ...draft,
+                  reminderMinutesBefore:
                         e.target.value === "none" ? undefined : Number(e.target.value)
-                    })
-                  }
+                })
+              }
                   title="Notification timing before the task."
-                >
-                  <option value="none">No reminder</option>
-                  <option value="0">At start time</option>
-                  <option value="5">5 minutes before</option>
-                  <option value="10">10 minutes before</option>
-                  <option value="15">15 minutes before</option>
-                  <option value="30">30 minutes before</option>
-                  <option value="60">1 hour before</option>
-                  <option value="1440">1 day before</option>
-                </select>
-              </label>
+            >
+              <option value="none">No reminder</option>
+              <option value="0">At start time</option>
+              <option value="5">5 minutes before</option>
+              <option value="10">10 minutes before</option>
+              <option value="15">15 minutes before</option>
+              <option value="30">30 minutes before</option>
+              <option value="60">1 hour before</option>
+              <option value="1440">1 day before</option>
+            </select>
+          </label>
             </div>
           )}
         </div>
@@ -2303,13 +2239,13 @@ export function TaskEditorDrawer({
           </div>
 
           <div className="drawer-footer-right">
-            <button className="ghost-button" onClick={onClose}>
-              Cancel
-            </button>
-            <button
-              className="primary-button"
-              onClick={() => {
-                if (!draft) return;
+          <button className="ghost-button" onClick={onClose}>
+            Cancel
+          </button>
+          <button
+            className="primary-button"
+            onClick={() => {
+              if (!draft) return;
                 if (multipleFlow) {
                   const out = batchItems
                     .slice(0, 50)
@@ -2352,7 +2288,7 @@ export function TaskEditorDrawer({
               }
             >
               {multipleFlow ? (isMultiEdit ? "Save changes" : "Create tasks") : "Save task"}
-            </button>
+          </button>
           </div>
         </footer>
       </aside>

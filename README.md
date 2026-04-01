@@ -1,5 +1,8 @@
 # Focista Schedulo
 
+**Last updated:** 2026-04-01  
+**Owner:** Engineering (with Product)
+
 **Plan with clarity, focus without noise, and celebrate what you complete.**
 
 Focista Schedulo is a cross-platform task and schedule management application built for professionals, students, and personal productivity users. It combines **rich task metadata**, **project grouping**, **recurring scheduling**, **calendar and day-agenda views**, **voice-to-form input**, **export**, and **lightweight gamification** in a single, focused experience.
@@ -27,8 +30,8 @@ Focista Schedulo helps users keep tasks **structured** (projects, priorities, re
 | **Calendar** | Month grid and day-agenda timeline (hourly). Multi-day tasks split into per-day segments. Click a day to open agenda. |
 | **Voice input** | One-button capture with auto-stop; transcript parsed to fill priority, date/time, duration, repeat, reminder, labels, location. |
 | **Export** | JSON (projects + tasks) or CSV (record type: project/task). |
-| **Gamification** | Points per completed task (low=1, medium=2, high=3, urgent=4), level and XP-to-next (lifetime `totalPoints`), streak days, achievements, and milestone tiers. **Day buckets** (today, streak, last 7 days, productivity charts) attribute each completion to the **local day of `completedAt`** when available; if `completedAt` is missing (legacy records), they fall back to **`dueDate`**. |
-| **Productivity Analysis** | Modal from the progress panel: time-range controls, daily/weekly/monthly/quarterly/annual views, multi-chart insights (`/api/productivity-insights`), fullscreen charts with keyboard navigation, rolling-average overlays where applicable. |
+| **Gamification** | Points per completed task (low=1, medium=2, high=3, urgent=4), level and XP-to-next (lifetime `totalPoints`), streak days, achievements, and milestone tiers. **Badges** opens as a **full-viewport** portaled layer (shared shell patterns with Productivity Analysis: `.pa-fs-overlay`, `.pa-fs-chrome`); milestone grids with expand/collapse; close control matches Productivity Analysis (round **×** via `.pa-close-round`). **Day buckets** (today, streak, last 7 days, productivity charts) use **progress day**: **`dueDate`** when set; if there is **no** due date, the **local calendar day of `completedAt`**. |
+| **Productivity Analysis** | Modal from the progress panel: time-range controls, daily/weekly/monthly/quarterly/annual views, multi-chart insights (`/api/productivity-insights`), optional per-project breakdown, fullscreen charts with keyboard navigation, rolling-average overlays where applicable. |
 | **Task details hover** | Large hovercard portaled to `document.body`, follows pointer with on-screen clamping; **does not open** over row checkbox or action buttons (Complete / Move / Delete); closes via global pointer logic when leaving task UI + hovercard. |
 
 ---
@@ -38,8 +41,8 @@ Focista Schedulo helps users keep tasks **structured** (projects, priorities, re
 | Layer | Technologies |
 |-------|----------------|
 | **Backend** | Node.js, Express, TypeScript, Zod (validation), JSON-file persistence |
-| **Frontend** | React 18, Vite 6, TypeScript, React Router, Zod |
-| **Workspaces** | npm workspaces: `backend`, `frontend`, optional `shared` |
+| **Frontend** | React 18, Vite 6, TypeScript, React Router |
+| **Workspaces** | npm workspaces: `backend`, `frontend` |
 
 ---
 
@@ -59,8 +62,11 @@ focista-schedulo/
 │   │       ├── TaskBoard.tsx           # List, calendar, day agenda, export, hovercard
 │   │       ├── TaskEditorDrawer.tsx   # Create/edit, voice, labels, links
 │   │       ├── ProjectSidebar.tsx
-│   │       ├── GamificationPanel.tsx  # Stats, milestones, opens Productivity Analysis
-│   │       └── ProductivityAnalysisModal.tsx  # Insights charts + fullscreen
+│   │       ├── GamificationPanel.tsx      # Stats, Badges, opens Productivity Analysis
+│   │       ├── BadgesModalDialogBody.tsx  # Badges grid + hovercard (full-viewport shell)
+│   │       ├── ProductivityAnalysisModal.tsx
+│   │       ├── Toaster.tsx
+│   │       └── (helpers) fullscreenApi.ts, productivityAnalysisFullscreen.ts, badgeFullscreen.ts
 │   └── index.html
 ├── docs/             # Product and engineering documentation
 └── package.json      # Root scripts (dev, build, lint)
@@ -138,7 +144,7 @@ Runs ESLint for backend and frontend.
 - **Voice input** — Speech-to-form autofill in the task editor (priority, date/time, duration, repeat, reminder, labels, location).
 - **Hovercard** — Portaled popover near the pointer with full task details (schedule, details, tags, identifiers) and clickable links/locations. Suppressed while using the row checkbox or action buttons (Complete / Move / Delete). The card uses non-blocking hit-testing so row actions remain clickable when the card overlaps them (links inside the card stay clickable).
 - **Productivity Analysis** — Charts over historical completion rows from `/api/productivity-insights` (tasks, XP, level, badge milestones), opened from the progress panel.
-- **Progress day** — For stats and productivity timelines, a completed task is counted on the **local calendar day derived from `completedAt`** when available; if `completedAt` is missing (legacy records), it falls back to **`dueDate`**. Lifetime **level** and **totalPoints** still sum all completed tasks regardless of which day they fall into.
+- **Progress day** — For `/api/stats` and `/api/productivity-insights`, each **completed** task is attributed to a calendar day using **`dueDate`** when it is set; if **`dueDate`** is absent, the app uses the **local calendar date** from **`completedAt`**. Tasks with neither date do not appear in day-scoped series but still contribute to lifetime **totalPoints** and **level**.
 - **Toast** — Lightweight, non-blocking notification used for success/error/info feedback (e.g., export, import, save, materialization). Implemented via the `pst:toast` event and displayed by the app-level `Toaster`.
 
 **Header:**
@@ -152,6 +158,4 @@ Runs ESLint for backend and frontend.
 
 Data is persisted to JSON files under `backend/data/`, so data survives restarts and the stack remains easy to read and extend.
 
----
-
-**Last updated:** 2026-04-01
+<!-- Last updated is listed at the top of this document. -->

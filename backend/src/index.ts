@@ -163,6 +163,55 @@ function parseIntOpt(v: string | undefined): number | undefined {
   return Math.trunc(n);
 }
 
+const CSV_REPEAT_VALUES = [
+  "none",
+  "daily",
+  "weekly",
+  "weekdays",
+  "weekends",
+  "monthly",
+  "quarterly",
+  "yearly",
+  "custom"
+] as const;
+
+function parseCsvRepeat(v: string | undefined): (typeof CSV_REPEAT_VALUES)[number] {
+  const s = (v ?? "none").trim();
+  return CSV_REPEAT_VALUES.includes(s as (typeof CSV_REPEAT_VALUES)[number])
+    ? (s as (typeof CSV_REPEAT_VALUES)[number])
+    : "none";
+}
+
+const CSV_REPEAT_UNITS = ["day", "week", "month", "quarter", "year"] as const;
+
+function parseCsvRepeatUnit(v: string | undefined): Task["repeatUnit"] | undefined {
+  const s = (v ?? "").trim();
+  if (!s) return undefined;
+  return (CSV_REPEAT_UNITS as readonly string[]).includes(s)
+    ? (s as NonNullable<Task["repeatUnit"]>)
+    : undefined;
+}
+
+function isLooseProjectArray(p: unknown): p is unknown[] {
+  return (
+    Array.isArray(p) &&
+    p.length > 0 &&
+    typeof p[0] === "object" &&
+    p[0] !== null &&
+    typeof (p[0] as Record<string, unknown>).name === "string"
+  );
+}
+
+function isLooseTaskArray(p: unknown): p is unknown[] {
+  return (
+    Array.isArray(p) &&
+    p.length > 0 &&
+    typeof p[0] === "object" &&
+    p[0] !== null &&
+    typeof (p[0] as Record<string, unknown>).priority === "string"
+  );
+}
+
 function parsePipeArray(v: string | undefined): string[] {
   const s = (v ?? "").trim();
   if (!s) return [];
@@ -256,20 +305,24 @@ async function readJsonFilesFromDataDir(): Promise<{
   for (const f of ordered) {
     const raw = await fs.readFile(f.full, "utf8").catch(() => "");
     if (!raw.trim()) continue;
-    let parsed: any = null;
+    let parsed: unknown;
     try {
       parsed = JSON.parse(raw);
     } catch {
       continue;
     }
-    const pArr = Array.isArray(parsed?.projects)
-      ? parsed.projects
-      : Array.isArray(parsed) && parsed.length && typeof parsed[0]?.name === "string"
+    const rec =
+      typeof parsed === "object" && parsed !== null && !Array.isArray(parsed)
+        ? (parsed as Record<string, unknown>)
+        : null;
+    const pArr = Array.isArray(rec?.projects)
+      ? rec.projects
+      : isLooseProjectArray(parsed)
         ? parsed
         : [];
-    const tArr = Array.isArray(parsed?.tasks)
-      ? parsed.tasks
-      : Array.isArray(parsed) && parsed.length && typeof parsed[0]?.priority === "string"
+    const tArr = Array.isArray(rec?.tasks)
+      ? rec.tasks
+      : isLooseTaskArray(parsed)
         ? parsed
         : [];
 
@@ -344,15 +397,13 @@ function parseIsoDateTimeToLocalDate(isoDateTime: string | undefined): string | 
   return isoDateLocal(d);
 }
 
-/** Calendar day used for progress (/api/stats, productivity, streaks): completion timestamp when available. */
+/** Calendar day used for progress (/api/stats, productivity, streaks): due date when set, else completion timestamp. */
 function completionDateIsoLocalForTask(t: Task): string | null {
   if (!t.completed) return null;
-  // Prefer the actual completion timestamp so charts reflect when work was done.
-  const completedIso = parseIsoDateTimeToLocalDate(t.completedAt);
-  if (completedIso) return completedIso;
-  // Backward compatible fallback: older data may not have completedAt.
+  // Primary semantics: progress is attributed to the scheduling intent (due date) when present.
   if (t.dueDate) return t.dueDate;
-  return null;
+  // Fallback: if undated, attribute to the local calendar day of completion time.
+  return parseIsoDateTimeToLocalDate(t.completedAt);
 }
 
 function fromIsoDateLocal(iso: string): Date {
@@ -454,23 +505,6 @@ function dateStrToYyyymmdd(dateStr: string | undefined): string | null {
   return `${m[1]}${m[2]}${m[3]}`;
 }
 
-function allocateNextParentId(now = new Date()): string {
-  const prefix = yyyymmddLocal(now);
-  const used = new Set(tasks.map((t) => t.parentId).filter((v): v is string => !!v));
-  const re = new RegExp(`^${prefix}-(\\d+)$`);
-  let max = 0;
-  for (const pid of used) {
-    const m = pid.match(re);
-    if (m) max = Math.max(max, Number(m[1]));
-  }
-  let candidate = `${prefix}-${max + 1}`;
-  while (used.has(candidate)) {
-    max += 1;
-    candidate = `${prefix}-${max + 1}`;
-  }
-  return candidate;
-}
-
 function allocateNextParentIdForPrefix(prefix: string): string {
   const used = new Set(tasks.map((t) => t.parentId).filter((v): v is string => !!v));
   const re = new RegExp(`^${prefix}-(\\d+)$`);
@@ -542,6 +576,13 @@ function syncProjectIdForParent(parentId: string) {
   tasks = tasks.map((t) => (t.parentId === parentId ? { ...t, projectId: canonical } : t));
 }
 
+function forceProjectIdForParent(parentId: string, projectId: string | null) {
+  // Explicit series move: if the user edits a single occurrence's project, the intent is that the
+  // whole parent group stays consistent (historical + future occurrences).
+  const canonical = hasProjectId(projectId) ? projectId : null;
+  tasks = tasks.map((t) => (t.parentId === parentId ? { ...t, projectId: canonical } : t));
+}
+
 function isRepeatingTask(t: Task): boolean {
   return !!t.repeat && t.repeat !== "none";
 }
@@ -592,35 +633,6 @@ function allocateNextChildId(parentId: string, seriesKey: string): string {
     if (Number.isFinite(n)) max = Math.max(max, n);
   }
   return String(max + 1);
-}
-
-function syncSeriesIdentityAndDuration(anchor: Task) {
-  if (!anchor.parentId) return;
-  if (!isRepeatingTask(anchor)) return;
-  if (anchor.durationMinutes === undefined) return;
-
-  const key = seriesKeyForTask(anchor);
-  const series = tasks.filter((t) => isRepeatingTask(t) && seriesKeyForTask(t) === key);
-  const sorted = series
-    .slice()
-    .sort((a, b) => (a.dueDate ?? "").localeCompare(b.dueDate ?? ""));
-
-  const idToChildId = new Map<string, string>();
-  sorted.forEach((t, idx) => {
-    if (t.childId) return;
-    idToChildId.set(t.id, String(idx + 1));
-  });
-
-  tasks = tasks.map((t) => {
-    if (!isRepeatingTask(t)) return t;
-    if (seriesKeyForTask(t) !== key) return t;
-    return {
-      ...t,
-      parentId: anchor.parentId,
-      durationMinutes: anchor.durationMinutes,
-      childId: t.childId ?? idToChildId.get(t.id)
-    };
-  });
 }
 
 async function rebuildParentAndChildIdsDeterministic(): Promise<void> {
@@ -713,6 +725,10 @@ async function enforceSequentialCompletionForRepeatingSeries(): Promise<boolean>
       .slice()
       .sort((a, b) => (a.dueDate ?? "").localeCompare(b.dueDate ?? ""));
     const template = sorted[0];
+    // Backfilled occurrences should inherit the canonical projectId for the series,
+    // not just the earliest template row (older data may have projectId only on later rows).
+    const canonicalProjectId =
+      sorted.find((t) => hasProjectId(t.projectId))?.projectId ?? null;
 
     const completedDueDates = sorted
       .filter((t) => t.completed && !!t.dueDate)
@@ -770,7 +786,7 @@ async function enforceSequentialCompletionForRepeatingSeries(): Promise<boolean>
           link: template.link,
           location: template.location,
           reminderMinutesBefore: template.reminderMinutesBefore,
-          projectId: template.projectId ?? null,
+          projectId: canonicalProjectId,
           completed: true,
           completedAt: new Date().toISOString(),
           parentId: template.parentId,
@@ -801,6 +817,33 @@ async function enforceSequentialCompletionForRepeatingSeries(): Promise<boolean>
   if (!changed) return false;
   await rebuildParentAndChildIdsDeterministic();
   return true;
+}
+
+function repairMissingProjectIdsForRepeatingSeries(): boolean {
+  // Only fill missing projectId within an existing parent group when the group already has
+  // exactly one non-empty projectId. Do NOT infer across different parentIds (titles can repeat).
+  const parentIds = new Set(tasks.map((t) => t.parentId).filter((v): v is string => !!v));
+  if (parentIds.size === 0) return false;
+
+  let changed = false;
+  for (const pid of parentIds) {
+    const members = tasks.filter((t) => t.parentId === pid && isRepeatingTask(t) && !t.cancelled);
+    if (members.length === 0) continue;
+    const ids = new Set(members.map((t) => t.projectId).filter(hasProjectId));
+    if (ids.size !== 1) continue;
+    const canonical = Array.from(ids)[0] ?? null;
+    if (!canonical) continue;
+    const hasMissing = members.some((t) => !hasProjectId(t.projectId));
+    if (!hasMissing) continue;
+    tasks = tasks.map((t) =>
+      t.parentId === pid && isRepeatingTask(t) && !t.cancelled && !hasProjectId(t.projectId)
+        ? { ...t, projectId: canonical }
+        : t
+    );
+    changed = true;
+  }
+
+  return changed;
 }
 
 async function ensureDataDir() {
@@ -1043,6 +1086,13 @@ async function loadData() {
   // suffixes are compact and sequential per date.
   await rebuildParentAndChildIdsDeterministic();
 
+  // Repair missing project association in repeating series (high confidence only).
+  // Keeps "Tasks completed by project" accurate for historical + backfilled occurrences.
+  const inferredProjectIds = repairMissingProjectIdsForRepeatingSeries();
+  if (inferredProjectIds) {
+    await persistTasks();
+  }
+
   // Enforce sequential completion for repeating series:
   // If a later occurrence is marked completed, we materialize any missing
   // earlier occurrences and mark them completed too so the UI has no "gaps".
@@ -1283,7 +1333,7 @@ app.put("/api/tasks/:id", async (req, res) => {
   if (index === -1) return res.sendStatus(404);
   const existing = tasks[index];
   const repeating = !!sortedParsedData.repeat && sortedParsedData.repeat !== "none";
-  const seriesKeyBefore = repeating ? seriesKeyForTask(existing) : undefined;
+  const parentIdBefore = repeating ? existing.parentId ?? null : null;
   const seriesKey = seriesKeyForFields({
     projectId: sortedParsedData.projectId,
     title: sortedParsedData.title,
@@ -1304,7 +1354,10 @@ app.put("/api/tasks/:id", async (req, res) => {
 
   const resolvedChildId =
     repeating && resolvedParentId
-      ? allocateNextChildId(resolvedParentId, seriesKey)
+      ? // Preserve existing childId when staying within the same parent group.
+        (resolvedParentId === existing.parentId && existing.childId
+          ? existing.childId
+          : allocateNextChildId(resolvedParentId, seriesKey))
       : sortedParsedData.childId ?? existing.childId;
 
   const next: Task = {
@@ -1325,14 +1378,8 @@ app.put("/api/tasks/:id", async (req, res) => {
 
   // Series-wide metadata propagation:
   // If this is a repeating series task, apply definition-level edits (title/labels/location/etc)
-  // to all occurrences that belong to the *original* series.
-  if (repeating && seriesKeyBefore) {
-    const memberIds = new Set(
-      tasks
-        .filter((t) => isRepeatingTask(t) && seriesKeyForTask(t) === seriesKeyBefore)
-        .map((t) => t.id)
-    );
-
+  // to all occurrences that belong to the *original parent group* (not a project-sensitive series key).
+  if (repeating && parentIdBefore) {
     const seriesMetadata: Partial<Task> = {
       title: next.title,
       description: next.description,
@@ -1349,7 +1396,7 @@ app.put("/api/tasks/:id", async (req, res) => {
     };
 
     tasks = tasks.map((t) => {
-      if (!memberIds.has(t.id)) return t;
+      if (t.parentId !== parentIdBefore) return t;
       return { ...t, ...seriesMetadata };
     });
   }
@@ -1362,11 +1409,22 @@ app.put("/api/tasks/:id", async (req, res) => {
   await persistTasks();
   // Ensure parentId/childId determinism even when dueDate changes series prefix.
   await rebuildParentAndChildIdsDeterministic();
-  if (tasks[index].parentId) {
-    syncProjectIdForParent(tasks[index].parentId!);
+
+  const updatedAfterRebuild = tasks.find((t) => t.id === id) ?? tasks[index];
+  const parentIdAfter = updatedAfterRebuild?.parentId ?? null;
+
+  // Ensure project association stays consistent across the entire parent group.
+  // If the edited occurrence changed project, treat that as an explicit "move series" action.
+  const projectChanged = (existing.projectId ?? null) !== (updatedAfterRebuild.projectId ?? null);
+  if (parentIdAfter) {
+    if (projectChanged) {
+      forceProjectIdForParent(parentIdAfter, updatedAfterRebuild.projectId ?? null);
+    } else {
+      syncProjectIdForParent(parentIdAfter);
+    }
     await persistTasks();
   }
-  const updated = tasks.find((t) => t.id === id) ?? tasks[index];
+  const updated = tasks.find((t) => t.id === id) ?? updatedAfterRebuild;
   res.json(updated);
 });
 
@@ -1392,6 +1450,8 @@ app.delete("/api/tasks/:id", async (req, res) => {
 });
 
 app.get("/api/stats", (_req, res) => {
+  // Ensure the Progress UI always gets fresh data (avoid intermediary caching).
+  res.setHeader("Cache-Control", "no-store");
   const cached = statsCache.get();
   if (cached) {
     res.json(cached);
@@ -1508,6 +1568,57 @@ app.get("/api/stats", (_req, res) => {
   const level = 1 + Math.floor(totalPoints / 50);
   const pointsIntoLevel = totalPoints % 50;
   const xpToNext = pointsIntoLevel === 0 ? 50 : 50 - pointsIntoLevel;
+
+  // Index completed tasks by their progress day (due date when set, else completion timestamp).
+  const completedTasksByDay = (() => {
+    const map = new Map<string, Task[]>();
+    for (const row of completedTasksWithDate) {
+      const iso = row.completionDateIso;
+      const arr = map.get(iso) ?? [];
+      arr.push(row.task);
+      map.set(iso, arr);
+    }
+    // Stable ordering for "evidence": earlier dueTime first, then title.
+    for (const [k, arr] of map.entries()) {
+      arr.sort((a, b) => {
+        const at = a.dueTime ?? "";
+        const bt = b.dueTime ?? "";
+        if (at !== bt) return at.localeCompare(bt);
+        return String(a.title ?? "").localeCompare(String(b.title ?? ""));
+      });
+      map.set(k, arr);
+    }
+    return map;
+  })();
+
+  type MilestoneUnlockEvidence = {
+    dateIso: string;
+    task?: {
+      id: string;
+      title: string;
+      dueDate?: string;
+      dueTime?: string;
+      projectId?: string | null;
+      projectName?: string;
+      priority?: string;
+    };
+  };
+
+  const taskEvidence = (dateIso: string): MilestoneUnlockEvidence["task"] => {
+    const t = completedTasksByDay.get(dateIso)?.[0];
+    if (!t) return undefined;
+    const projectName =
+      t.projectId != null ? projects.find((p) => p.id === t.projectId)?.name : undefined;
+    return {
+      id: t.id,
+      title: t.title,
+      dueDate: t.dueDate,
+      dueTime: t.dueTime,
+      projectId: t.projectId ?? null,
+      projectName,
+      priority: t.priority
+    };
+  };
 
   const streakDays = (() => {
     // Consecutive days ending today where the user completed >=1 task on that day.
@@ -1707,6 +1818,93 @@ app.get("/api/stats", (_req, res) => {
     const compact = (arr: number[], tail = 6) =>
       arr.length <= tail ? arr : arr.slice(-tail);
 
+    const unlocksForTasksCompleted = (() => {
+      const achieved = (tasksCompleted.achieved ?? []).slice().sort((a, b) => a - b);
+      const out: Record<string, MilestoneUnlockEvidence> = {};
+      if (achieved.length === 0) return out;
+
+      const rows = completedTasksWithDate
+        .slice()
+        .sort((a, b) => a.completionDateIso.localeCompare(b.completionDateIso));
+      let count = 0;
+      let i = 0;
+      for (const row of rows) {
+        count += 1;
+        while (i < achieved.length && count >= achieved[i]!) {
+          const m = achieved[i]!;
+          out[String(m)] = { dateIso: row.completionDateIso, task: taskEvidence(row.completionDateIso) };
+          i += 1;
+        }
+        if (i >= achieved.length) break;
+      }
+      return out;
+    })();
+
+    const unlocksForXp = (() => {
+      const achieved = (xp.achieved ?? []).slice().sort((a, b) => a - b);
+      const out: Record<string, MilestoneUnlockEvidence> = {};
+      if (achieved.length === 0) return out;
+
+      const rows = completedTasksWithDate
+        .slice()
+        .sort((a, b) => a.completionDateIso.localeCompare(b.completionDateIso));
+      let sum = 0;
+      let i = 0;
+      for (const row of rows) {
+        sum += scoreFor(row.task);
+        while (i < achieved.length && sum >= achieved[i]!) {
+          const m = achieved[i]!;
+          out[String(m)] = { dateIso: row.completionDateIso, task: taskEvidence(row.completionDateIso) };
+          i += 1;
+        }
+        if (i >= achieved.length) break;
+      }
+      return out;
+    })();
+
+    const unlocksForLevels = (() => {
+      const achieved = (levelsUp.achieved ?? []).slice().sort((a, b) => a - b);
+      const out: Record<string, MilestoneUnlockEvidence> = {};
+      if (achieved.length === 0) return out;
+
+      const rows = completedTasksWithDate
+        .slice()
+        .sort((a, b) => a.completionDateIso.localeCompare(b.completionDateIso));
+      let sum = 0;
+      let levelNow = 1;
+      let i = 0;
+      for (const row of rows) {
+        sum += scoreFor(row.task);
+        levelNow = 1 + Math.floor(sum / 50);
+        while (i < achieved.length && levelNow >= achieved[i]!) {
+          const m = achieved[i]!;
+          out[String(m)] = { dateIso: row.completionDateIso, task: taskEvidence(row.completionDateIso) };
+          i += 1;
+        }
+        if (i >= achieved.length) break;
+      }
+      return out;
+    })();
+
+    const unlocksForStreak = (() => {
+      // Streak badges are based on the current streak ending today, so the unlock day is deterministic:
+      // the day where the streak length first reached N.
+      const achieved = (streak.achieved ?? []).slice().sort((a, b) => a - b);
+      const out: Record<string, MilestoneUnlockEvidence> = {};
+      if (achieved.length === 0 || streakDays <= 0) return out;
+
+      const start = new Date(`${todayIso}T12:00:00`);
+      start.setDate(start.getDate() - (streakDays - 1));
+      for (const m of achieved) {
+        if (m <= 0 || m > streakDays) continue;
+        const d = new Date(start.getTime());
+        d.setDate(d.getDate() + (m - 1));
+        const iso = toIsoLocal(d);
+        out[String(m)] = { dateIso: iso, task: taskEvidence(iso) };
+      }
+      return out;
+    })();
+
     return {
       streakDays: {
         id: "streak_days",
@@ -1718,7 +1916,8 @@ app.get("/api/stats", (_req, res) => {
         achievedCount: streak.achievedCount,
         recentUnlocked: compact(streak.achieved),
         milestones: streakMilestonesFiltered,
-        achieved: streak.achieved
+        achieved: streak.achieved,
+        unlockDetails: unlocksForStreak
       },
       tasksCompleted: {
         id: "tasks_completed",
@@ -1730,7 +1929,8 @@ app.get("/api/stats", (_req, res) => {
         achievedCount: tasksCompleted.achievedCount,
         recentUnlocked: compact(tasksCompleted.achieved),
         milestones: tasksCompleted.milestones,
-        achieved: tasksCompleted.achieved
+        achieved: tasksCompleted.achieved,
+        unlockDetails: unlocksForTasksCompleted
       },
       xpGained: {
         id: "xp_gained",
@@ -1742,7 +1942,8 @@ app.get("/api/stats", (_req, res) => {
         achievedCount: xp.achievedCount,
         recentUnlocked: compact(xp.achieved),
         milestones: xp.milestones,
-        achieved: xp.achieved
+        achieved: xp.achieved,
+        unlockDetails: unlocksForXp
       },
       levelsUp: {
         id: "levels_up",
@@ -1754,7 +1955,8 @@ app.get("/api/stats", (_req, res) => {
         achievedCount: levelsUp.achievedCount,
         recentUnlocked: compact(levelsUp.achieved),
         milestones: levelsUp.milestones,
-        achieved: levelsUp.achieved
+        achieved: levelsUp.achieved,
+        unlockDetails: unlocksForLevels
       }
     };
   })();
@@ -1777,6 +1979,9 @@ app.get("/api/stats", (_req, res) => {
 });
 
 app.get("/api/productivity-insights", (_req, res) => {
+  // Ensure Productivity Analysis always reflects the latest completed-task data
+  // (avoid intermediary caching of this derived endpoint).
+  res.setHeader("Cache-Control", "no-store");
   const cached = productivityCache.get();
   if (cached) {
     res.json(cached);
@@ -1832,6 +2037,7 @@ app.get("/api/productivity-insights", (_req, res) => {
     string,
     Map<string, { completed: number; points: number }>
   >();
+  const UNASSIGNED_PROJECT_ID = "__unassigned__";
   for (const row of completedTasksWithDate) {
     const prev = completionsByDay.get(row.completionDateIso) ?? { completed: 0, points: 0 };
     completionsByDay.set(row.completionDateIso, {
@@ -1839,15 +2045,17 @@ app.get("/api/productivity-insights", (_req, res) => {
       points: prev.points + scoreFor(row.task)
     });
 
-    // Per-project breakdown (only tasks associated with a project).
-    if (row.task.projectId) {
-      const perDay =
-        completionsByDayProject.get(row.completionDateIso) ?? new Map<string, { completed: number; points: number }>();
-      const pid = row.task.projectId;
-      const prevP = perDay.get(pid) ?? { completed: 0, points: 0 };
-      perDay.set(pid, { completed: prevP.completed + 1, points: prevP.points + scoreFor(row.task) });
-      completionsByDayProject.set(row.completionDateIso, perDay);
-    }
+    // Per-project breakdown:
+    // - If a task has a projectId, count it there
+    // - Otherwise, count it under an explicit "Unassigned" bucket so exports/pivots match charts.
+    const perDay =
+      completionsByDayProject.get(row.completionDateIso) ??
+      new Map<string, { completed: number; points: number }>();
+    const pidRaw = typeof row.task.projectId === "string" ? row.task.projectId.trim() : "";
+    const pid = pidRaw ? pidRaw : UNASSIGNED_PROJECT_ID;
+    const prevP = perDay.get(pid) ?? { completed: 0, points: 0 };
+    perDay.set(pid, { completed: prevP.completed + 1, points: prevP.points + scoreFor(row.task) });
+    completionsByDayProject.set(row.completionDateIso, perDay);
   }
 
   const allDates = Array.from(completionsByDay.keys()).sort();
@@ -1973,7 +2181,13 @@ app.get("/api/productivity-insights", (_req, res) => {
   const projectBreakdown = {
     projects: Array.from(projectIdsSeen)
       .sort((a, b) => (projectsById.get(a) ?? a).localeCompare(projectsById.get(b) ?? b))
-      .map((id) => ({ id, name: projectsById.get(id) ?? "Unknown project" })),
+      .map((id) => ({
+        id,
+        name:
+          id === UNASSIGNED_PROJECT_ID
+            ? "Unassigned"
+            : projectsById.get(id) ?? "Unknown project"
+      })),
     rows: [] as {
       date: string;
       tasksCompletedByProject: Record<string, number>;
@@ -2175,9 +2389,9 @@ app.post("/api/admin/import", async (req, res) => {
             durationMinutes: parseIntOpt(r["durationMinutes"]),
             deadlineDate: (r["deadlineDate"] ?? "").trim() || undefined,
             deadlineTime: (r["deadlineTime"] ?? "").trim() || undefined,
-            repeat: ((r["repeat"] ?? "none").trim() as any) || "none",
+            repeat: parseCsvRepeat(r["repeat"]),
             repeatEvery: parseIntOpt(r["repeatEvery"]),
-            repeatUnit: (r["repeatUnit"] ?? "").trim() ? ((r["repeatUnit"] ?? "").trim() as any) : undefined,
+            repeatUnit: parseCsvRepeatUnit(r["repeatUnit"]),
             labels: parsePipeArray(r["labels"]),
             location: (r["location"] ?? "").trim() || undefined,
             link: (() => {

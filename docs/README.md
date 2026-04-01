@@ -1,6 +1,7 @@
 # Documentation Index — Focista Schedulo
 
-**Last updated:** 2026-04-01
+**Last updated:** 2026-04-01  
+**Owner:** Engineering (with Product)
 
 This folder contains product, design, and engineering documentation for Focista Schedulo. All documents are kept up to date with the current codebase and product scope.
 
@@ -67,7 +68,8 @@ This folder contains product, design, and engineering documentation for Focista 
 | Traceability matrix | Complete | New enterprise matrix added |
 | Guardrails and constraints | Complete | New business/technical guardrails added |
 | Recurrence and timeframe parity | Complete | Horizon-based recurrence + full timeframe taxonomy documented |
-| Progress-day / streak semantics | Complete | **Completion-time-first** bucketing for daily stats and productivity (`completedAt` local day, then `dueDate` as legacy fallback); lifetime points/level unchanged |
+| Progress-day / streak semantics | Complete | **Scheduled-day-first** bucketing (`dueDate` when set, else local day from `completedAt`) per `completionDateIsoLocalForTask()`; lifetime points/level unchanged |
+| Badges (milestone overlay) | Complete | Full-viewport portaled layer; data from `/api/stats` → `milestoneAchievements` |
 | Productivity insights API and charts | Complete | `/api/productivity-insights`, `ProductivityAnalysisModal`, variables documented |
 | Task hovercard portal + control suppression | Complete | Portaled hovercard; suppressed on checkbox/actions; **pointer-events** pass-through so row actions work when overlapped |
 

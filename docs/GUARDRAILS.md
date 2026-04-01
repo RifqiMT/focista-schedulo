@@ -56,7 +56,10 @@ This document defines the non-negotiable boundaries for product development, del
    - All API writes must pass Zod validation.
    - Backward-compatible migration behavior required for new fields.
 
-4. **Data repair safety**
+4. **Request size**
+   - JSON bodies are capped (currently **10 MB**) to support imports without risking unbounded memory; very large datasets should use chunked workflows or external tooling (planned if needed).
+
+5. **Data repair safety**
    - Repair logic may deduplicate invalid duplicates but must preserve user intent and avoid destructive field drops.
 
 ---
@@ -77,7 +80,7 @@ This document defines the non-negotiable boundaries for product development, del
 
 4. **Time semantics**
    - Day-based metrics and streak logic must use local calendar semantics.
-   - Progress-day bucketing for stats uses the **local day from `completedAt`** when available; otherwise it falls back to **`dueDate`** (legacy records). Tasks without either date are excluded from day buckets.
+   - **Progress day** for stats and productivity (`completionDateIsoLocalForTask`): use **`dueDate`** when set; otherwise the **local calendar date** from **`completedAt`**. Tasks without both are excluded from day buckets (lifetime points/level still count all completions).
    - UTC conversion must not silently shift daily outcomes.
 
 5. **Performance baseline**

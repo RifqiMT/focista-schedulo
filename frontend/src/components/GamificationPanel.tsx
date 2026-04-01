@@ -1,4 +1,12 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
+import { toastBadgesFullWindowLayout } from "../badgeFullscreen";
+import { BadgesModalDialogBody } from "./BadgesModalDialogBody";
+import {
+  exitBrowserFullscreenAll,
+  prefersCssOnlyElementFullscreen,
+  PST_TRUE_FULLSCREEN_CONTEXT_EVENT
+} from "../fullscreenApi";
 import { ProductivityAnalysisModal } from "./ProductivityAnalysisModal";
 
 interface Stats {
@@ -37,73 +45,62 @@ interface MilestoneBlock {
   recentUnlocked: number[];
   milestones?: number[];
   achieved?: number[];
+  unlockDetails?: Record<
+    string,
+    {
+      dateIso: string;
+      task?: {
+        id: string;
+        title: string;
+        dueDate?: string;
+        dueTime?: string;
+        projectId?: string | null;
+        projectName?: string;
+        priority?: string;
+      };
+    }
+  >;
 }
 
-function Icon({
-  name
-}: {
-  name: "streak" | "tasks" | "xp" | "levels" | "lock";
-}) {
-  const common = {
-    width: 18,
-    height: 18,
-    viewBox: "0 0 24 24",
-    fill: "none",
-    stroke: "currentColor",
-    strokeWidth: 1.9,
-    strokeLinecap: "round" as const,
-    strokeLinejoin: "round" as const
-  };
-  switch (name) {
-    case "streak":
-      return (
-        <svg {...common} aria-hidden="true">
-          {/* Modern flame (lucide-like) */}
-          <path d="M8.5 14.5c0-1.8 1-3.2 2.2-4.4 1.2-1.2 1.8-2.6 1.8-4.1 2.2 1.4 4 3.8 4 7.2 0 3.6-2.6 6.3-6 6.3s-6-2.6-6-5.5Z" />
-          <path d="M12 20c1.7 0 3-1.2 3-2.9 0-1.1-.6-1.9-1.2-2.6-.6-.6-.9-1.4-.9-2.2-1.4.9-2.5 2.3-2.5 4.1 0 2 1.1 3.6 1.6 3.6Z" />
-        </svg>
-      );
-    case "tasks":
-      return (
-        <svg {...common} aria-hidden="true">
-          {/* Clipboard check (cleaner) */}
-          <path d="M9 3h6" />
-          <path d="M9 3a2 2 0 0 0-2 2v0" />
-          <path d="M15 3a2 2 0 0 1 2 2v0" />
-          <path d="M8 7h10a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2V9a2 2 0 0 1 2-2Z" />
-          <path d="M9 12l2 2 4-4" />
-          <path d="M9 16h6" />
-        </svg>
-      );
-    case "xp":
-      return (
-        <svg {...common} aria-hidden="true">
-          {/* Bolt (sharp + modern) */}
-          <path d="M13 2 3 14h7l-1 8 12-14h-7l-1-6Z" />
-        </svg>
-      );
-    case "levels":
-      return (
-        <svg {...common} aria-hidden="true">
-          {/* Trophy (modern) */}
-          <path d="M8 4h8v3a4 4 0 0 1-8 0V4Z" />
-          <path d="M6 5H4v2a4 4 0 0 0 4 4" />
-          <path d="M18 5h2v2a4 4 0 0 1-4 4" />
-          <path d="M12 11v4" />
-          <path d="M9 21h6" />
-          <path d="M10 15h4l1 2H9l1-2Z" />
-        </svg>
-      );
-    case "lock":
-      return (
-        <svg {...common} aria-hidden="true">
-          {/* Lock */}
-          <path d="M8 11V8a4 4 0 0 1 8 0v3" />
-          <path d="M7 11h10v10H7V11Z" />
-          <path d="M12 16v2" />
-        </svg>
-      );
+function capMilestoneBadges(values: number[], maxBadges: number): number[] {
+  const uniqSorted = Array.from(new Set(values)).sort((a, b) => a - b);
+  if (uniqSorted.length === 0) return uniqSorted;
+
+  // If the source list is shorter, pad it so each section can show up to `maxBadges` tiers.
+  // This keeps the UI consistent (e.g. always "…/150") while still respecting the max cap.
+  if (uniqSorted.length < maxBadges) {
+    const padded = uniqSorted.slice();
+    const last = padded[padded.length - 1]!;
+    const prev = padded.length >= 2 ? padded[padded.length - 2]! : last;
+    const rawStep = last - prev;
+    const step = rawStep > 0 ? rawStep : 1;
+    while (padded.length < maxBadges) {
+      padded.push(padded[padded.length - 1]! + step);
+    }
+    return padded;
   }
+
+  if (uniqSorted.length === maxBadges) return uniqSorted;
+
+  // Keep early milestones dense, then down-sample the long tail (always include the last milestone).
+  const keepHead = Math.min(100, Math.max(50, Math.floor(maxBadges * 0.66)));
+  const head = uniqSorted.slice(0, keepHead);
+  const tail = uniqSorted.slice(keepHead);
+  const remaining = maxBadges - head.length;
+  if (remaining <= 0) return head.slice(0, maxBadges);
+
+  if (tail.length <= remaining) return head.concat(tail);
+
+  const step = Math.ceil(tail.length / remaining);
+  const sampledTail: number[] = [];
+  for (let i = 0; i < tail.length && sampledTail.length < remaining; i += step) {
+    sampledTail.push(tail[i]!);
+  }
+  const last = tail[tail.length - 1]!;
+  if (sampledTail[sampledTail.length - 1] !== last) {
+    sampledTail[sampledTail.length - 1] = last;
+  }
+  return head.concat(sampledTail).slice(0, maxBadges);
 }
 
 export function GamificationPanel() {
@@ -118,10 +115,19 @@ export function GamificationPanel() {
     subtitle: string;
     status: "Unlocked" | "Locked";
     progressLine: string;
-    x: number;
-    y: number;
+    metaLines?: string[];
+    progressPct?: number;
+    whenLine?: string;
+    taskLine?: string;
+    chips?: { label: string; value: string }[];
+    mouseX: number;
+    mouseY: number;
   } | null>(null);
+  const hovercardRef = useRef<HTMLDivElement | null>(null);
+  const [hovercardPos, setHovercardPos] = useState<{ left: number; top: number } | null>(null);
   const [expandedBadgeSections, setExpandedBadgeSections] = useState<Record<string, boolean>>({});
+  const badgePanelRef = useRef<HTMLDivElement | null>(null);
+  const badgesLayoutToastSentRef = useRef(false);
 
   useEffect(() => {
     const fetchStats = async () => {
@@ -132,7 +138,7 @@ export function GamificationPanel() {
       refreshInFlightRef.current = true;
       const fetchId = ++latestFetchIdRef.current;
       try {
-        const res = await fetch("/api/stats");
+        const res = await fetch("/api/stats", { cache: "no-store" });
         if (!res.ok) return;
         const data: Stats = await res.json();
         // Ignore late responses from older requests.
@@ -199,20 +205,57 @@ export function GamificationPanel() {
   const achievements = stats?.achievements ?? [];
   const milestones = stats?.milestoneAchievements ?? null;
 
+  const closeBadgesModal = useCallback(() => {
+    void exitBrowserFullscreenAll();
+    setBadgesOpen(false);
+  }, []);
+
   useEffect(() => {
     if (!badgesOpen) return;
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") setBadgesOpen(false);
+      if (e.key !== "Escape") return;
+      closeBadgesModal();
+      e.preventDefault();
     };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
+    window.addEventListener("keydown", onKey, true);
+    return () => window.removeEventListener("keydown", onKey, true);
+  }, [badgesOpen, closeBadgesModal]);
+
+  useEffect(() => {
+    window.dispatchEvent(new Event(PST_TRUE_FULLSCREEN_CONTEXT_EVENT));
   }, [badgesOpen]);
 
   useEffect(() => {
     if (badgesOpen) return;
-    // Always reset to defaults when closing.
+    void exitBrowserFullscreenAll();
     setExpandedBadgeSections({});
     setHoveredBadge(null);
+  }, [badgesOpen]);
+
+  /*
+   * Scroll lock only on iOS-like UAs (CSS-only expanded). On desktop, locking `html`/`body` breaks or
+   * blocks element fullscreen in Chromium/WebKit; the portaled overlay already covers the viewport.
+   */
+  useEffect(() => {
+    if (!badgesOpen || !prefersCssOnlyElementFullscreen()) return;
+    const prevHtml = document.documentElement.style.overflow;
+    const prevBody = document.body.style.overflow;
+    document.documentElement.style.overflow = "hidden";
+    document.body.style.overflow = "hidden";
+    return () => {
+      document.documentElement.style.overflow = prevHtml;
+      document.body.style.overflow = prevBody;
+    };
+  }, [badgesOpen]);
+
+  useEffect(() => {
+    if (!badgesOpen) {
+      badgesLayoutToastSentRef.current = false;
+      return;
+    }
+    if (!prefersCssOnlyElementFullscreen() || badgesLayoutToastSentRef.current) return;
+    badgesLayoutToastSentRef.current = true;
+    toastBadgesFullWindowLayout();
   }, [badgesOpen]);
 
   const badgeSections = useMemo(() => {
@@ -224,6 +267,7 @@ export function GamificationPanel() {
       current: number;
       unit: string;
       milestones: number[];
+      unlockDetails?: MilestoneBlock["unlockDetails"];
       unlockedCount: number;
       percentUnlocked: number;
     }[] = [
@@ -233,12 +277,13 @@ export function GamificationPanel() {
         icon: "streak",
         current: milestones.streakDays.current,
         unit: "days",
-        milestones: milestones.streakDays.milestones ?? milestones.streakDays.recentUnlocked,
-        unlockedCount: milestones.streakDays.achieved?.length ?? milestones.streakDays.recentUnlocked.length,
-        percentUnlocked:
-          (100 *
-            (milestones.streakDays.achieved?.length ?? milestones.streakDays.recentUnlocked.length)) /
-          Math.max(1, (milestones.streakDays.milestones ?? milestones.streakDays.recentUnlocked).length)
+        milestones: capMilestoneBadges(
+          milestones.streakDays.milestones ?? milestones.streakDays.recentUnlocked,
+          150
+        ),
+        unlockDetails: milestones.streakDays.unlockDetails,
+        unlockedCount: 0,
+        percentUnlocked: 0
       },
       {
         key: "tasksCompleted",
@@ -246,14 +291,13 @@ export function GamificationPanel() {
         icon: "tasks",
         current: milestones.tasksCompleted.current,
         unit: "tasks",
-        milestones: milestones.tasksCompleted.milestones ?? milestones.tasksCompleted.recentUnlocked,
-        unlockedCount:
-          milestones.tasksCompleted.achieved?.length ?? milestones.tasksCompleted.recentUnlocked.length,
-        percentUnlocked:
-          (100 *
-            (milestones.tasksCompleted.achieved?.length ??
-              milestones.tasksCompleted.recentUnlocked.length)) /
-          Math.max(1, (milestones.tasksCompleted.milestones ?? milestones.tasksCompleted.recentUnlocked).length)
+        milestones: capMilestoneBadges(
+          milestones.tasksCompleted.milestones ?? milestones.tasksCompleted.recentUnlocked,
+          150
+        ),
+        unlockDetails: milestones.tasksCompleted.unlockDetails,
+        unlockedCount: 0,
+        percentUnlocked: 0
       },
       {
         key: "xpGained",
@@ -261,12 +305,13 @@ export function GamificationPanel() {
         icon: "xp",
         current: milestones.xpGained.current,
         unit: "XP",
-        milestones: milestones.xpGained.milestones ?? milestones.xpGained.recentUnlocked,
-        unlockedCount: milestones.xpGained.achieved?.length ?? milestones.xpGained.recentUnlocked.length,
-        percentUnlocked:
-          (100 *
-            (milestones.xpGained.achieved?.length ?? milestones.xpGained.recentUnlocked.length)) /
-          Math.max(1, (milestones.xpGained.milestones ?? milestones.xpGained.recentUnlocked).length)
+        milestones: capMilestoneBadges(
+          milestones.xpGained.milestones ?? milestones.xpGained.recentUnlocked,
+          150
+        ),
+        unlockDetails: milestones.xpGained.unlockDetails,
+        unlockedCount: 0,
+        percentUnlocked: 0
       },
       {
         key: "levelsUp",
@@ -274,15 +319,20 @@ export function GamificationPanel() {
         icon: "levels",
         current: milestones.levelsUp.current,
         unit: "levels",
-        milestones: milestones.levelsUp.milestones ?? milestones.levelsUp.recentUnlocked,
-        unlockedCount: milestones.levelsUp.achieved?.length ?? milestones.levelsUp.recentUnlocked.length,
-        percentUnlocked:
-          (100 *
-            (milestones.levelsUp.achieved?.length ?? milestones.levelsUp.recentUnlocked.length)) /
-          Math.max(1, (milestones.levelsUp.milestones ?? milestones.levelsUp.recentUnlocked).length)
+        milestones: capMilestoneBadges(
+          milestones.levelsUp.milestones ?? milestones.levelsUp.recentUnlocked,
+          150
+        ),
+        unlockDetails: milestones.levelsUp.unlockDetails,
+        unlockedCount: 0,
+        percentUnlocked: 0
       }
     ];
-    return sections;
+    return sections.map((s) => {
+      const unlockedCount = s.milestones.reduce((acc, m) => acc + (s.current >= m ? 1 : 0), 0);
+      const percentUnlocked = (100 * unlockedCount) / Math.max(1, s.milestones.length);
+      return { ...s, unlockedCount, percentUnlocked };
+    });
   }, [milestones]);
 
   useEffect(() => {
@@ -291,6 +341,78 @@ export function GamificationPanel() {
     window.addEventListener("scroll", onScroll, { passive: true, capture: true });
     return () => window.removeEventListener("scroll", onScroll, { capture: true } as any);
   }, [hoveredBadge]);
+
+  useLayoutEffect(() => {
+    if (!hoveredBadge) {
+      setHovercardPos(null);
+      return;
+    }
+    const el = hovercardRef.current;
+    if (!el) return;
+
+    const place = () => {
+      const rect = el.getBoundingClientRect();
+      const vw = window.innerWidth;
+      const vh = window.innerHeight;
+      const pad = 12;
+      // Small gap so the pointer sits just outside the tooltip corner (feels “attached” to the cursor).
+      const ox = 10;
+      const oy = 10;
+      const { mouseX, mouseY } = hoveredBadge;
+
+      // Default: top-left of tooltip slightly below/right of the pointer (standard hover follow).
+      let left = mouseX + ox;
+      let top = mouseY + oy;
+
+      if (left + rect.width > vw - pad) {
+        left = mouseX - rect.width - ox;
+      }
+      if (top + rect.height > vh - pad) {
+        top = mouseY - rect.height - oy;
+      }
+
+      left = Math.max(pad, Math.min(vw - rect.width - pad, left));
+      top = Math.max(pad, Math.min(vh - rect.height - pad, top));
+
+      setHovercardPos({ left, top });
+    };
+
+    // Measure after render.
+    const raf = window.requestAnimationFrame(place);
+    return () => window.cancelAnimationFrame(raf);
+  }, [hoveredBadge]);
+
+  const formatHoverDate = (dateIso: string): string =>
+    new Date(dateIso + "T12:00:00").toLocaleDateString(undefined, {
+      weekday: "short",
+      year: "numeric",
+      month: "short",
+      day: "2-digit"
+    });
+
+  const relativeDays = (dateIso: string): string => {
+    const d = new Date(dateIso + "T12:00:00").getTime();
+    const now = Date.now();
+    const days = Math.round((d - now) / 86_400_000);
+    const rtf = new Intl.RelativeTimeFormat(undefined, { numeric: "auto" });
+    return rtf.format(days, "day");
+  };
+
+  const priorityLabel = (p: string | undefined): string | null => {
+    if (!p) return null;
+    switch (p) {
+      case "urgent":
+        return "Urgent";
+      case "high":
+        return "High";
+      case "medium":
+        return "Medium";
+      case "low":
+        return "Low";
+      default:
+        return p;
+    }
+  };
 
   return (
     <section className="gamification-panel">
@@ -453,156 +575,39 @@ export function GamificationPanel() {
         )}
       </div>
 
-      {badgesOpen && (
-        <div
-          className="badge-modal-backdrop"
-          role="dialog"
-          aria-modal="true"
-          aria-label="Badges"
-          onClick={(e) => {
-            if (e.target === e.currentTarget) setBadgesOpen(false);
-          }}
-        >
-          <div className="badge-modal">
-            <div className="badge-modal-head">
-              <div>
-                <div className="badge-modal-title">Badges</div>
-                <div className="badge-modal-sub">
-                  Unlock badges by hitting milestone targets across streaks, tasks, XP, and levels.
-                </div>
-              </div>
-              <button className="ghost-button small" onClick={() => setBadgesOpen(false)}>
-                Close
-              </button>
-            </div>
-
-            {badgeSections.map((s) => (
-              <div key={s.key} className={`badge-section badge-section-${s.key}`}>
-                <div className="badge-section-head">
-                  <div className="badge-section-title">
-                    <span className="badge-section-icon" aria-hidden="true">
-                      <Icon name={s.icon} />
-                    </span>
-                    {s.title}
-                  </div>
-                  <div className="badge-section-actions">
-                    <div className="badge-section-meta">
-                      <span>
-                        Current: {s.current.toLocaleString()} {s.unit}
-                      </span>
-                      <span>
-                        · Badges: {s.unlockedCount}/{s.milestones.length} (
-                        {Math.round(s.percentUnlocked)}%)
-                      </span>
-                    </div>
-                    <button
-                      className="ghost-button small"
-                      onClick={() =>
-                        setExpandedBadgeSections((prev) => ({
-                          ...prev,
-                          [s.key]: !prev[s.key]
-                        }))
-                      }
-                    >
-                      {expandedBadgeSections[s.key] ? "Show less" : "Show more"}
-                    </button>
-                  </div>
-                </div>
-
-                <div className="badge-grid">
-                  {s.milestones
-                    .slice(0, expandedBadgeSections[s.key] ? 150 : 10)
-                    .map((m) => {
-                    const unlocked = s.current >= m;
-                    const label =
-                      s.key === "levelsUp"
-                        ? `Level ${m}`
-                        : `${m.toLocaleString()} ${s.unit}`;
-                    const title = unlocked ? "Unlocked" : "Locked";
-                    const idx = s.milestones.indexOf(m);
-                    const tier =
-                      idx < 1 ? 1 : idx < 3 ? 2 : idx < 6 ? 3 : idx < 10 ? 4 : 5;
-                    const stars = "★".repeat(tier);
-                    const remaining = Math.max(0, m - s.current);
-                    const progressLine = unlocked
-                      ? `You’ve reached ${label}.`
-                      : `Current: ${s.current.toLocaleString()} • Need: +${remaining.toLocaleString()}`;
-                    return (
-                      <div
-                        key={`${s.key}-${m}`}
-                        className={`badge-card badge-cat-${s.key} ${unlocked ? "unlocked" : "locked"} tier-${tier}`}
-                        title={`${title} • ${label}`}
-                        onMouseEnter={(ev) => {
-                          const vw = window.innerWidth;
-                          const vh = window.innerHeight;
-                          const cardW = 320;
-                          const cardH = 120;
-                          const pad = 12;
-                          const x = Math.max(pad, Math.min(vw - cardW - pad, ev.clientX + 14));
-                          const y = Math.max(pad, Math.min(vh - cardH - pad, ev.clientY + 14));
-                          setHoveredBadge({
-                            title: label,
-                            subtitle: s.title,
-                            status: unlocked ? "Unlocked" : "Locked",
-                            progressLine,
-                            x,
-                            y
-                          });
-                        }}
-                        onMouseMove={(ev) => {
-                          if (!hoveredBadge) return;
-                          const vw = window.innerWidth;
-                          const vh = window.innerHeight;
-                          const cardW = 320;
-                          const cardH = 120;
-                          const pad = 12;
-                          const x = Math.max(pad, Math.min(vw - cardW - pad, ev.clientX + 14));
-                          const y = Math.max(pad, Math.min(vh - cardH - pad, ev.clientY + 14));
-                          setHoveredBadge((prev) => (prev ? { ...prev, x, y } : prev));
-                        }}
-                        onMouseLeave={() => setHoveredBadge(null)}
-                      >
-                        <div className="badge-medal" aria-hidden="true">
-                          <div className="badge-topper" />
-                          <div className="badge-ribbon badge-ribbon-left" />
-                          <div className="badge-ribbon badge-ribbon-right" />
-                          <div className="badge-medal-inner">
-                            {unlocked ? <Icon name={s.icon} /> : <Icon name="lock" />}
-                          </div>
-                        </div>
-                        <div className="badge-content">
-                          <div className="badge-label">{label}</div>
-                          <div className="badge-stars" aria-hidden="true">
-                            {stars}
-                          </div>
-                          <div className="badge-state">{unlocked ? "Unlocked" : "Locked"}</div>
-                        </div>
-                      </div>
-                    );
-                  })}
-                </div>
-              </div>
-            ))}
-          </div>
-
-          {hoveredBadge && (
+      {badgesOpen
+        ? createPortal(
             <div
-              className="badge-hovercard"
-              style={{ left: hoveredBadge.x, top: hoveredBadge.y }}
-              role="tooltip"
+              data-badges-fullscreen-root=""
+              className="pa-fs-overlay pa-pro-shell badge-fs-pa-layer"
+              role="dialog"
+              aria-modal="true"
+              aria-label="Badges"
+              onClick={(e) => {
+                if (e.target !== e.currentTarget) return;
+                closeBadgesModal();
+              }}
             >
-              <div className="badge-hovercard-top">
-                <div className="badge-hovercard-title">{hoveredBadge.title}</div>
-                <div className={`badge-hovercard-pill ${hoveredBadge.status === "Unlocked" ? "ok" : "muted"}`}>
-                  {hoveredBadge.status}
-                </div>
+              <div className="pa-fs-chrome" onClick={(e) => e.stopPropagation()}>
+                <BadgesModalDialogBody
+                  panelRef={badgePanelRef}
+                  closeBadgesModal={closeBadgesModal}
+                  badgeSections={badgeSections}
+                  expandedBadgeSections={expandedBadgeSections}
+                  setExpandedBadgeSections={setExpandedBadgeSections}
+                  hoveredBadge={hoveredBadge}
+                  setHoveredBadge={setHoveredBadge}
+                  hovercardRef={hovercardRef}
+                  hovercardPos={hovercardPos}
+                  formatHoverDate={formatHoverDate}
+                  relativeDays={relativeDays}
+                  priorityLabel={priorityLabel}
+                />
               </div>
-              <div className="badge-hovercard-sub">{hoveredBadge.subtitle}</div>
-              <div className="badge-hovercard-body">{hoveredBadge.progressLine}</div>
-            </div>
-          )}
-        </div>
-      )}
+            </div>,
+            document.body
+          )
+        : null}
 
       <ProductivityAnalysisModal open={analysisOpen} onClose={() => setAnalysisOpen(false)} />
     </section>

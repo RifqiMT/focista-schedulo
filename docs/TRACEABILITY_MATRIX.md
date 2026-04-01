@@ -38,7 +38,8 @@ This matrix provides end-to-end traceability from customer intent to product out
 | Personal Planner | US-10 | Historical/current/future/custom timeframe parity | `TaskBoard.tsx`, `App.tsx` | `TimeScope` values + derived range boundaries | filter consistency across list/calendar | A2, KR-1.x | I | Engineering + Product |
 | Project Operator | US-5 | Manage projects and task associations | `ProjectSidebar.tsx`, `TaskBoard.tsx` | `GET/POST/PUT/DELETE /api/projects` | project lifecycle, cascade delete behavior | E2, KR-1.x | I | Engineering |
 | Project Operator | US-2/US-5 | Project association integrity across parent/child tasks | `backend/src/index.ts`, `TaskBoard.tsx` | `TaskSchema` (`projectId`, `parentId`) | parent/child project drift prevention; filter correctness | Q1 (integrity), KR2.3 | I | Engineering |
-| Personal Planner | US-7 | Motivation loop (streak/XP/levels/badges) | `GamificationPanel.tsx`, `backend/src/index.ts` | `GET /api/stats` | formula correctness, realtime refresh | R2, KR-3.x | I | Product + Engineering |
+| Personal Planner | US-7 | Motivation loop (streak/XP/levels) | `GamificationPanel.tsx`, `backend/src/index.ts` | `GET /api/stats` | formula correctness, realtime refresh | R2, KR-3.x | I | Product + Engineering |
+| Personal Planner | US-7a | Milestone Badges (full-viewport UI) | `GamificationPanel.tsx`, `BadgesModalDialogBody.tsx`, `styles.css` (`.badge-fs-pa-layer`) | `GET /api/stats` → `milestoneAchievements` | overlay dismiss, scroll, hover detail | R2, KR-3.x | I | Product + Engineering |
 | Personal Planner | US-12 | Data export (JSON/CSV) | `TaskBoard.tsx` (export) | client export from task/project datasets | export accuracy, format integrity | Q3, KR-4.x | I | Engineering |
 | Personal Planner | US-12a | Data import (JSON/CSV) with normalization | `App.tsx`, `backend/src/index.ts` | `POST /api/admin/import` | validation, merge/dedupe, series normalization | Q3, KR4.2 | I | Engineering |
 | Multi-persona | US-3 | Voice input to autofill task form | `TaskEditorDrawer.tsx` | browser speech + parser outputs | parser precision, fallback safety | E4, KR-1.x | I | Product + Engineering |
@@ -55,7 +56,7 @@ This matrix provides end-to-end traceability from customer intent to product out
 | Projects | Grouping, filtering, lifecycle operations | `ProjectSidebar.tsx`, `TaskBoard.tsx`, `backend/src/index.ts` |
 | Recurrence | Stable series identity and predictable occurrence logic | `backend/src/index.ts`, `TaskBoard.tsx` |
 | Calendar | Month context and day execution view | `TaskBoard.tsx` |
-| Gamification | XP, level, streak, milestones, achievements | `GamificationPanel.tsx`, `backend/src/index.ts` |
+| Gamification | XP, level, streak, milestones, achievements, Badges UI | `GamificationPanel.tsx`, `BadgesModalDialogBody.tsx`, `backend/src/index.ts` |
 | Productivity Analysis | Historical completion / XP / level / milestone charts | `ProductivityAnalysisModal.tsx`, `backend/src/index.ts` (`/api/productivity-insights`) |
 | Export | User data ownership and portability | `TaskBoard.tsx` |
 

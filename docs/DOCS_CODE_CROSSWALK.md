@@ -45,6 +45,11 @@ This document is a **claim-by-claim crosswalk** between the documentation set an
   - **Backend**: `GET /api/productivity-insights` in `backend/src/index.ts`
   - **Frontend**: `frontend/src/components/ProductivityAnalysisModal.tsx`
 
+- **Badges (milestone UI)**
+  - **Docs**: `docs/PRD.md` (Gamification / FR-12), `docs/DESIGN_GUIDELINES.md`
+  - **Backend**: `GET /api/stats` → `milestoneAchievements` in `backend/src/index.ts`
+  - **Frontend**: `frontend/src/components/GamificationPanel.tsx`, `frontend/src/components/BadgesModalDialogBody.tsx`, `frontend/src/styles.css` (`.badge-fs-pa-layer`, `.pa-fs-chrome`)
+
 ---
 
 ## Data ownership (Import / Sync / Save / Export)
@@ -75,7 +80,7 @@ This document is a **claim-by-claim crosswalk** between the documentation set an
 - **Progress day definition**
   - **Docs**: `docs/PRODUCT_DOCUMENTATION_STANDARD.md` (glossary), `docs/VARIABLES.md`
   - **Backend**: `completionDateIsoLocalForTask()` in `backend/src/index.ts`
-  - **Rule**: use **local day from `completedAt`** when available; fall back to **`dueDate`** for legacy records
+  - **Rule**: use **`dueDate`** when set; otherwise **local calendar date** from **`completedAt`** (see `completionDateIsoLocalForTask()`)
 
 - **Stats endpoint**
   - **Docs**: `docs/API_CONTRACTS.md` (`/api/stats`), `docs/VARIABLES.md` (`stats.*`)
@@ -116,3 +121,4 @@ Run these after changing code or docs:
    - Productivity Analysis: “Tasks completed by project” legend Hide all / Show all and stats pills update live.
    - List view: multi-day tasks display date ranges consistently with calendar segmentation.
 
+<!-- Last updated is listed at the top of this document. -->

@@ -11,6 +11,7 @@ This document summarizes REST endpoints, request and response shapes, and valida
 ## Conventions
 
 - **Content-Type:** `application/json` for bodies; JSON responses unless noted.
+- **Body size:** JSON request bodies are accepted up to **10 MB** (supports large import payloads); see `express.json({ limit: "10mb" })` in `backend/src/index.ts`.
 - **Errors:** `4xx` / `5xx` with JSON `{ ok?: boolean, error?: string }` where applicable; some deletes return `204 No Content`.
 - **Caching:** `GET /api/stats` and `GET /api/productivity-insights` use in-memory caches. Caches are cleared **before** awaited file writes in `persistTasks` / `persistProjects`, and again at the **end** of `loadData()`, so responses never lag behind in-memory task state after mutations or disk reload.
 
@@ -95,8 +96,8 @@ Full validation: `TaskSchema` in `backend/src/index.ts`.
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `completedToday` | `number` | Completed tasks whose **progress day** is local today (local day from `completedAt` when available; otherwise fallback to `dueDate` for legacy records) |
-| `streakDays` | `number` | Consecutive days ending today with ≥1 task counting on that day (same progress-day rule) |
+| `completedToday` | `number` | Completed tasks whose **progress day** is local today (`dueDate` when set; else local date from `completedAt`) |
+| `streakDays` | `number` | Consecutive days ending today with ≥1 attributed completion (same **progress-day** rule) |
 | `level` | `number` | `1 + floor(totalPoints / 50)` |
 | `pointsToday` | `number` | Sum of priority points for tasks whose progress day is today |
 | `totalPoints` | `number` | Lifetime sum of priority points |
@@ -108,7 +109,7 @@ Full validation: `TaskSchema` in `backend/src/index.ts`.
 
 **Priority points:** low=1, medium=2, high=3, urgent=4.
 
-**Progress day (stats & productivity buckets):** Use the local calendar day from **`completedAt`** when available; fall back to **`dueDate`** only for legacy records missing `completedAt`.
+**Progress day (stats & productivity buckets):** Use **`dueDate`** when present; otherwise the **local calendar date** parsed from **`completedAt`**. Tasks without both are excluded from day buckets (lifetime points/level still include all completed tasks).
 
 ---
 
@@ -205,3 +206,5 @@ Synces from JSON files in `backend/data/` into the server’s in-memory state, t
 ## Versioning
 
 - Breaking changes to field names or enum values require a **major** bump in release notes, `CHANGELOG.md`, and updates to `VARIABLES.md` and this file.
+
+<!-- Last updated is listed at the top of this document. -->

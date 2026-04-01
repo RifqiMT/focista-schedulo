@@ -84,9 +84,20 @@ As a user, I want to see my progress so I feel motivated to continue.
 
 **Acceptance criteria:**
 
-- Progress panel shows tasks **counted today** (by **progress day**: local day from `completedAt` when available; otherwise `dueDate` as legacy fallback), streak, level, and XP toward the next level.
+- Progress panel shows tasks **counted today** (by **progress day**: **`dueDate`** when set; otherwise local day from **`completedAt`**), streak, level, and XP toward the next level.
 - Points per completed task: low=1, medium=2, high=3, urgent=4. Lifetime **level** / **totalPoints** reflect all completed tasks.
 - Stats update when tasks change (events + cache invalidation on persist; no manual refresh required for typical flows).
+
+### US-7a Explore milestone badges
+
+As a user, I want to browse my achievement milestones so I can see how streaks, completions, XP, and levels map to badge tiers.
+
+**Acceptance criteria:**
+
+- User opens **Badges** from the progress panel.
+- Badges opens in a **full-viewport** portaled layer (consistent chrome with Productivity Analysis shell classes: overlay + chrome).
+- Sections show streak, tasks completed, experience, and levels with expandable grids and hover detail where implemented.
+- User can dismiss via **Close** (`.pa-close-round`), **Escape**, or backdrop click.
 
 ---
 
@@ -193,7 +204,7 @@ As a user, I want to see how my completions, experience, level, and milestones e
 |-----------|-------------------|----------------------------|
 | US-1, US-2, US-4 | Core task lifecycle and details visibility (incl. portaled hover) | `TaskEditorDrawer.tsx`, `TaskBoard.tsx`, `POST/PUT /api/tasks` |
 | US-5 | Project lifecycle and task grouping | `ProjectSidebar.tsx`, `/api/projects` |
-| US-6, US-7, US-14 | Completion, motivation loop, productivity trends | `TaskBoard.tsx`, `GamificationPanel.tsx`, `ProductivityAnalysisModal.tsx`, `/api/tasks/:id/complete`, `/api/stats`, `/api/productivity-insights` |
+| US-6, US-7, US-7a, US-14 | Completion, motivation loop, badges, productivity trends | `TaskBoard.tsx`, `GamificationPanel.tsx`, `BadgesModalDialogBody.tsx`, `ProductivityAnalysisModal.tsx`, `/api/tasks/:id/complete`, `/api/stats`, `/api/productivity-insights` |
 | US-8, US-9 | Recurrence and occurrence management | `TaskBoard.tsx`, `backend/src/index.ts` recurrence logic |
 | US-10 | Calendar and day-agenda planning | `TaskBoard.tsx` calendar/day agenda rendering |
 | US-11, US-12 | Context and data ownership | links/locations UI, export workflow |
@@ -203,14 +214,14 @@ As a user, I want to see how my completions, experience, level, and milestones e
 
 ## Coverage Status
 
-- Implemented: US-1 through US-14
+- Implemented: US-1 through US-14, US-7a (Badges)
 - Highest regression sensitivity: US-6, US-8, US-9, US-10
 - Verification priority per release:
   1. Complete/reactivate (including future recurring occurrences)
   2. Recurrence identity and expansion behavior
   3. Calendar rendering and day-agenda segmentation
   4. Export integrity (JSON/CSV)
-  5. Productivity insights parity with stats priority weights and completion-time-first progress bucketing
+  5. Productivity insights parity with stats priority weights and **progress-day** bucketing (`dueDate` first, else `completedAt` local day)
 
 ---
 

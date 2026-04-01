@@ -1,9 +1,13 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { TaskBoard } from "./components/TaskBoard";
 import { ProjectSidebar } from "./components/ProjectSidebar";
 import { GamificationPanel } from "./components/GamificationPanel";
 import Logo from "./assets/focista-schedulo-logo.png";
 import { Toast, Toaster } from "./components/Toaster";
+import {
+  isAppTrueFullscreenActive,
+  PST_TRUE_FULLSCREEN_CONTEXT_EVENT
+} from "./fullscreenApi";
 
 type TimeScope =
   | "all"
@@ -32,24 +36,63 @@ export function App() {
   const [importError, setImportError] = useState<string | null>(null);
   const [importOkMsg, setImportOkMsg] = useState<string | null>(null);
   const [toasts, setToasts] = useState<Toast[]>([]);
+  /** Bumps when native fullscreen or overlay DOM may have changed (re-run {@link isAppTrueFullscreenActive}). */
+  const [, setTrueFsContextEpoch] = useState(0);
+  const prevTrueFsRef = useRef(false);
 
   const pushToast = (t: Omit<Toast, "id" | "createdAt">) => {
+    if (isAppTrueFullscreenActive() && !t.bypassTrueFullscreen) return;
     const id = `${Date.now()}-${Math.random().toString(16).slice(2, 8)}`;
     setToasts((prev) => [{ ...t, id, createdAt: Date.now() }, ...prev].slice(0, 4));
   };
 
   useEffect(() => {
+    const bumpContext = () => setTrueFsContextEpoch((n) => n + 1);
+    const fsEvents = [
+      "fullscreenchange",
+      "webkitfullscreenchange",
+      "mozfullscreenchange",
+      "MSFullscreenChange"
+    ] as const;
+    fsEvents.forEach((ev) => document.addEventListener(ev, bumpContext));
+    window.addEventListener(PST_TRUE_FULLSCREEN_CONTEXT_EVENT, bumpContext);
+    bumpContext();
+    return () => {
+      fsEvents.forEach((ev) => document.removeEventListener(ev, bumpContext));
+      window.removeEventListener(PST_TRUE_FULLSCREEN_CONTEXT_EVENT, bumpContext);
+    };
+  }, []);
+
+  const trueFullscreenActive = isAppTrueFullscreenActive();
+
+  useEffect(() => {
+    if (trueFullscreenActive && !prevTrueFsRef.current) {
+      setToasts([]);
+    }
+    prevTrueFsRef.current = trueFullscreenActive;
+  }, [trueFullscreenActive]);
+
+  useEffect(() => {
     const onToast = (ev: Event) => {
+      if (isAppTrueFullscreenActive()) return;
       const e = ev as CustomEvent<Partial<Omit<Toast, "id" | "createdAt">>>;
       const detail = e.detail ?? {};
       const title = typeof detail.title === "string" ? detail.title : "Activity";
       const kind = detail.kind === "success" || detail.kind === "error" || detail.kind === "info" ? detail.kind : "info";
-      pushToast({
-        kind,
-        title,
-        message: typeof detail.message === "string" ? detail.message : undefined,
-        durationMs: typeof detail.durationMs === "number" ? detail.durationMs : undefined
-      });
+      const id = `${Date.now()}-${Math.random().toString(16).slice(2, 8)}`;
+      setToasts((prev) =>
+        [
+          {
+            kind,
+            title,
+            message: typeof detail.message === "string" ? detail.message : undefined,
+            durationMs: typeof detail.durationMs === "number" ? detail.durationMs : undefined,
+            id,
+            createdAt: Date.now()
+          },
+          ...prev
+        ].slice(0, 4)
+      );
     };
     window.addEventListener("pst:toast", onToast as any);
     return () => window.removeEventListener("pst:toast", onToast as any);
@@ -207,7 +250,12 @@ export function App() {
 
   return (
     <div className="app-shell">
-      <Toaster toasts={toasts} onDismiss={(id) => setToasts((prev) => prev.filter((t) => t.id !== id))} />
+      <Toaster
+        toasts={
+          trueFullscreenActive ? toasts.filter((t) => t.bypassTrueFullscreen) : toasts
+        }
+        onDismiss={(id) => setToasts((prev) => prev.filter((t) => t.id !== id))}
+      />
       <header className="app-header">
         <div className="header-left">
           <div className="brand">

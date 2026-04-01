@@ -232,20 +232,10 @@ function stripDoubleColonSuffix(id: string | null | undefined): string {
   return id.split("::")[0];
 }
 
-function googleMapsUrlForLocation(location: string | undefined | null): string | null {
-  const raw = location?.trim();
-  if (!raw) return null;
-
-  // If it's already a URL, open it directly.
-  if (/^https?:\/\//i.test(raw)) return raw;
-
-  // If it's a lat,long pair, use a direct query.
-  if (/^-?\d+(\.\d+)?\s*,\s*-?\d+(\.\d+)?$/.test(raw)) {
-    return `https://www.google.com/maps?q=${encodeURIComponent(raw)}`;
-  }
-
-  // Otherwise treat it as an address/place search term.
-  return `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(raw)}`;
+function canonicalParentKey(task: Task): string {
+  // Parent/series identity should ignore any virtual or disambiguation suffixes.
+  // This prevents the list view from splitting occurrences across multiple groups.
+  return stripDoubleColonSuffix(getParentId(task));
 }
 
 function parseLocationTokens(location: string | undefined | null): string[] {
@@ -370,13 +360,10 @@ function formatDurationMinutesForOverview(minutes: number): string {
   if (m >= minutesPerMonth) {
     const months = Math.floor(m / minutesPerMonth);
     parts.push(plural(months, "month", "months"));
-    // remainder < 1 month
-    // eslint-disable-next-line no-param-reassign
   }
 
   let rem = m;
   if (m >= minutesPerMonth) {
-    const months = Math.floor(rem / minutesPerMonth);
     rem = rem % minutesPerMonth;
   }
 
@@ -767,6 +754,7 @@ export function TaskBoard({ selectedProjectId, timeScope, onTimeScopeChange }: T
   const tasksFetchInFlight = useRef(false);
   const virtualMaterializeInFlightRef = useRef<Map<string, Promise<Task | null>>>(new Map());
   const taskMutationInFlightRef = useRef<Set<string>>(new Set());
+  const bgRefreshTimerRef = useRef<number | null>(null);
   const taskHoverCardRef = useRef<HTMLDivElement | null>(null);
   const hoverAutoCloseTimerRef = useRef<ReturnType<typeof window.setTimeout> | null>(
     null
@@ -860,9 +848,9 @@ export function TaskBoard({ selectedProjectId, timeScope, onTimeScopeChange }: T
     });
   };
 
-  const notifyTasksChanged = () => {
+  const notifyTasksChanged = (source: "local" | "external" = "local") => {
     if (typeof window !== "undefined" && "dispatchEvent" in window) {
-      window.dispatchEvent(new Event("pst:tasks-changed"));
+      window.dispatchEvent(new CustomEvent("pst:tasks-changed", { detail: { source } }));
     }
   };
 
@@ -1079,10 +1067,10 @@ export function TaskBoard({ selectedProjectId, timeScope, onTimeScopeChange }: T
     };
   }, [expandedGroups.size]);
 
-  const refreshTasks = async () => {
+  const refreshTasks = async (opts?: { silent?: boolean }) => {
     if (tasksFetchInFlight.current) return;
     tasksFetchInFlight.current = true;
-    setLoading(true);
+    if (!opts?.silent) setLoading(true);
     const controller = new AbortController();
     const started = performance.now();
     try {
@@ -1090,10 +1078,35 @@ export function TaskBoard({ selectedProjectId, timeScope, onTimeScopeChange }: T
       if (selectedProjectId) {
         base.searchParams.set("projectId", selectedProjectId);
       }
-      // Default window: last 90 days from today for performance.
-      const since = new Date();
-      since.setDate(since.getDate() - 90);
-      base.searchParams.set("since", since.toISOString().slice(0, 10));
+      // Fetch window:
+      // - "All" should truly include historical tasks, so do not apply `since`.
+      // - For other timeframes, bound the fetch to the current range start (keeps large datasets snappy).
+      // Note: `customRange*` states are declared later in this file, so referencing them here
+      // would trigger TDZ at runtime. For custom scopes we fetch unbounded and rely on client
+      // filtering (still correct, and avoids blank-page crashes).
+      if (timeScope !== "all" && timeScope !== "custom") {
+        // `listRangeStartIso` is defined below this function, so we inline the same mapping here.
+        const sinceIso = (() => {
+          if (timeScope === "yesterday") return yesterdayIso;
+          if (timeScope === "today") return todayIso;
+          if (timeScope === "tomorrow") return tomorrowIso;
+          if (timeScope === "last_week") return lastWeekStartIso;
+          if (timeScope === "week") return startOfWeekMondayIso;
+          if (timeScope === "next_week") return nextWeekStartIso;
+          if (timeScope === "sprint") return startOfWeekMondayIso;
+          if (timeScope === "last_month") return lastMonthStartIso;
+          if (timeScope === "month") return thisMonthStartIso;
+          if (timeScope === "next_month") return nextMonthStartIso;
+          if (timeScope === "last_quarter") return lastQuarterStartIso;
+          if (timeScope === "quarter") return thisQuarterStartIso;
+          if (timeScope === "next_quarter") return nextQuarterStartIso;
+          // Fallback: last 90 days from today for any unexpected scope.
+          const d = new Date(todayIso + "T12:00:00");
+          d.setDate(d.getDate() - 90);
+          return toISODateLocal(d);
+        })();
+        base.searchParams.set("since", sinceIso);
+      }
 
       const res = await fetch(base.toString(), { signal: controller.signal });
       const elapsed = performance.now() - started;
@@ -1121,19 +1134,39 @@ export function TaskBoard({ selectedProjectId, timeScope, onTimeScopeChange }: T
       // ignore
     } finally {
       tasksFetchInFlight.current = false;
-      setLoading(false);
+      if (!opts?.silent) setLoading(false);
     }
   };
 
   useEffect(() => {
     void refreshTasks();
-  }, [selectedProjectId]);
+  }, [selectedProjectId, timeScope]);
 
   useEffect(() => {
-    const onTasksChanged = () => void refreshTasks();
+    const onTasksChanged = (e: Event) => {
+      const ce = e as CustomEvent | null;
+      const source = ce?.detail?.source;
+      if (source === "local") {
+        // UI already updated optimistically; avoid blocking the app with a full refetch/loading state.
+        // Still do a gentle background refresh to reconcile any backend-side normalization.
+        if (bgRefreshTimerRef.current) window.clearTimeout(bgRefreshTimerRef.current);
+        bgRefreshTimerRef.current = window.setTimeout(() => {
+          bgRefreshTimerRef.current = null;
+          void refreshTasks({ silent: true });
+        }, 900);
+        return;
+      }
+      void refreshTasks();
+    };
     window.addEventListener("pst:tasks-changed", onTasksChanged);
-    return () => window.removeEventListener("pst:tasks-changed", onTasksChanged);
-  }, [selectedProjectId]);
+    return () => {
+      window.removeEventListener("pst:tasks-changed", onTasksChanged);
+      if (bgRefreshTimerRef.current) {
+        window.clearTimeout(bgRefreshTimerRef.current);
+        bgRefreshTimerRef.current = null;
+      }
+    };
+  }, [selectedProjectId, timeScope]);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -1258,8 +1291,45 @@ export function TaskBoard({ selectedProjectId, timeScope, onTimeScopeChange }: T
       });
       return;
     }
-    const allTasks: Task[] = await tasksRes.json();
+    const allTasksRaw: Task[] = await tasksRes.json();
     const allProjects: { id: string; name: string }[] = await projectsRes.json();
+
+    const isoWeekForDueDate = (dueDateIso: string | undefined): string => {
+      if (!dueDateIso) return "";
+      const m = dueDateIso.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+      if (!m) return "";
+      const y = Number(m[1]);
+      const mo = Number(m[2]);
+      const d = Number(m[3]);
+      if (!Number.isFinite(y) || !Number.isFinite(mo) || !Number.isFinite(d)) return "";
+      // ISO week in UTC (Mon-start), deterministic.
+      const dt = new Date(Date.UTC(y, mo - 1, d, 12, 0, 0, 0));
+      const weekdayMon0 = (dt.getUTCDay() + 6) % 7; // Mon=0..Sun=6
+      dt.setUTCDate(dt.getUTCDate() - weekdayMon0 + 3); // Thursday
+      const weekYear = dt.getUTCFullYear();
+      const jan4 = new Date(Date.UTC(weekYear, 0, 4, 12, 0, 0, 0));
+      const jan4Mon0 = (jan4.getUTCDay() + 6) % 7;
+      jan4.setUTCDate(jan4.getUTCDate() - jan4Mon0 + 3);
+      const diffWeeks = Math.round((dt.getTime() - jan4.getTime()) / (7 * 24 * 60 * 60 * 1000));
+      const week = 1 + diffWeeks;
+      const wk = String(Math.max(1, week)).padStart(2, "0");
+      return `${weekYear}-W${wk}`;
+    };
+
+    const byParentThenDueAsc = (a: Task, b: Task) => {
+      const ap = a.parentId ?? "";
+      const bp = b.parentId ?? "";
+      if (ap !== bp) return ap.localeCompare(bp);
+      const ad = a.dueDate ?? "";
+      const bd = b.dueDate ?? "";
+      if (ad !== bd) return ad.localeCompare(bd);
+      const ac = a.childId ?? "";
+      const bc = b.childId ?? "";
+      if (ac !== bc) return ac.localeCompare(bc);
+      return (a.id ?? "").localeCompare(b.id ?? "");
+    };
+
+    const allTasks = allTasksRaw.slice().sort(byParentThenDueAsc);
 
     const now = new Date();
     const stamp = [
@@ -1273,7 +1343,10 @@ export function TaskBoard({ selectedProjectId, timeScope, onTimeScopeChange }: T
 
     if (format === "json") {
       const sanitizedTasks = allTasks.map(({ deadlineDate: _dd, deadlineTime: _dt, ...rest }) =>
-        rest
+        ({
+          ...rest,
+          isoWeekDueDate: isoWeekForDueDate(rest.dueDate)
+        } as any)
       );
       const payload = {
         app: "focista-schedulo",
@@ -1310,6 +1383,7 @@ export function TaskBoard({ selectedProjectId, timeScope, onTimeScopeChange }: T
       "description",
       "priority",
       "dueDate",
+      "isoWeekDueDate",
       "dueTime",
       "repeat",
       "repeatEvery",
@@ -1348,6 +1422,7 @@ export function TaskBoard({ selectedProjectId, timeScope, onTimeScopeChange }: T
         description: t.description ?? "",
         priority: t.priority,
         dueDate: t.dueDate ?? "",
+        isoWeekDueDate: isoWeekForDueDate(t.dueDate),
         dueTime: t.dueTime ?? "",
         repeat: t.repeat ?? "none",
         repeatEvery: t.repeatEvery ?? "",
@@ -1851,8 +1926,9 @@ export function TaskBoard({ selectedProjectId, timeScope, onTimeScopeChange }: T
     if (timeScope === "yesterday" || timeScope === "today" || timeScope === "tomorrow") {
       return filteredTasksRaw;
     }
-    const startIso = timeScope === "all" ? todayIso : listRangeStartIso;
-    return collapseSeriesForList(filteredTasksRaw, startIso, listRangeEndIso);
+    // "All" should mean the full timeline for collapsing/representatives as well.
+    // This keeps recurring series aligned with the selected timeframe, instead of acting like "upcoming from today".
+    return collapseSeriesForList(filteredTasksRaw, listRangeStartIso, listRangeEndIso);
   }, [
     viewMode,
     completionFilter,
@@ -2298,7 +2374,7 @@ export function TaskBoard({ selectedProjectId, timeScope, onTimeScopeChange }: T
       // Only repeating series should be grouped by their Parent ID.
       // One-time (repeat: "none") tasks must stay ungrouped so they remain
       // easy to edit / mark complete / mark active (full task card actions).
-      const key = isRepeating(task) ? getParentId(task) : task.id;
+      const key = isRepeating(task) ? canonicalParentKey(task) : task.id;
       const existing = map.get(key);
       if (!existing) {
         map.set(key, { representative: task, count: 1, items: [task] });
@@ -2327,7 +2403,7 @@ export function TaskBoard({ selectedProjectId, timeScope, onTimeScopeChange }: T
     // Parent ID is always shown (never Child ID) to match the current UX spec.
     const task = _task;
     const idLabel = "Parent ID";
-    const idValue = shortId(getParentId(task));
+    const idValue = shortId(canonicalParentKey(task));
 
     return (
     <article
@@ -3075,16 +3151,6 @@ export function TaskBoard({ selectedProjectId, timeScope, onTimeScopeChange }: T
     return map;
   })();
 
-  const minutesFromTime = (time: string | undefined): number | null => {
-    if (!time) return null;
-    const m = time.match(/^(\d{1,2}):(\d{2})$/);
-    if (!m) return null;
-    const hh = Number(m[1]);
-    const mm = Number(m[2]);
-    if (!Number.isFinite(hh) || !Number.isFinite(mm)) return null;
-    return hh * 60 + mm;
-  };
-
   const renderDayAgenda = (dayIso: string) => {
     const items = (tasksByDate.get(dayIso) ?? []).slice();
     const allDay = items.filter((e) => e.isAllDay);
@@ -3542,44 +3608,8 @@ export function TaskBoard({ selectedProjectId, timeScope, onTimeScopeChange }: T
     const anchorMonth = calendarMonthAnchor.getMonth();
     const anchorYear = calendarMonthAnchor.getFullYear();
 
-    // Calendar week (ISO) display:
-    // - For week-like ranges (today/tomorrow/week/sprint), use the exact visible range.
-    // - For month-like ranges (this month/next month/all), use the *actual month boundaries*
-    //   (calendar grids include leading/trailing filler days, which can make CW misleading).
     const start = rangeDays[0];
     const end = rangeDays[rangeDays.length - 1];
-    const monthStart = new Date(
-      calendarMonthAnchor.getFullYear(),
-      calendarMonthAnchor.getMonth(),
-      1,
-      12,
-      0,
-      0,
-      0
-    );
-    const monthEnd = new Date(
-      calendarMonthAnchor.getFullYear(),
-      calendarMonthAnchor.getMonth() + 1,
-      0,
-      12,
-      0,
-      0,
-      0
-    );
-    const weekStartForDisplay =
-      timeScope === "month" ||
-      timeScope === "next_month" ||
-      timeScope === "last_month" ||
-      timeScope === "all"
-        ? monthStart
-        : start;
-    const weekEndForDisplay =
-      timeScope === "month" ||
-      timeScope === "next_month" ||
-      timeScope === "last_month" ||
-      timeScope === "all"
-        ? monthEnd
-        : end;
     const isoWeekYearAndNo = (d: Date) => {
       const tmp = new Date(Date.UTC(d.getFullYear(), d.getMonth(), d.getDate()));
       const dayNum = tmp.getUTCDay() || 7; // Mon=1 ... Sun=7
@@ -3594,41 +3624,6 @@ export function TaskBoard({ selectedProjectId, timeScope, onTimeScopeChange }: T
       const { isoYear, weekNo } = isoWeekYearAndNo(d);
       return `${String(weekNo).padStart(2, "0")}-${isoYear}`;
     };
-    const isoWeekMondayUtc = (d: Date) => {
-      const tmp = new Date(Date.UTC(d.getFullYear(), d.getMonth(), d.getDate(), 12, 0, 0, 0));
-      const dayNum = tmp.getUTCDay() || 7; // Mon=1 ... Sun=7
-      // Move to Monday of the same ISO week.
-      tmp.setUTCDate(tmp.getUTCDate() + (1 - dayNum));
-      return tmp;
-    };
-
-    const weekMonStart = isoWeekMondayUtc(weekStartForDisplay);
-    const weekInfos: { isoYear: number; weekNo: number }[] = [];
-    for (
-      let cur = weekMonStart;
-      cur.getTime() <= weekEndForDisplay.getTime();
-      cur = new Date(cur.getTime() + 7 * 86400000)
-    ) {
-      const info = isoWeekYearAndNo(cur);
-      weekInfos.push(info);
-    }
-
-    // Ensure uniqueness (can happen at boundaries if the loop overlaps).
-    const uniq = new Map<string, { isoYear: number; weekNo: number }>();
-    for (const w of weekInfos) uniq.set(`${w.isoYear}-${w.weekNo}`, w);
-    const weeksOrdered = Array.from(uniq.values()).sort((a, b) =>
-      a.isoYear !== b.isoYear ? a.isoYear - b.isoYear : a.weekNo - b.weekNo
-    );
-
-    const allSameYear = weeksOrdered.length > 0 && weeksOrdered.every((w) => w.isoYear === weeksOrdered[0].isoYear);
-    const calendarWeekDisplay = weeksOrdered
-      .map((w, idx) => {
-        const label = `W${String(w.weekNo).padStart(2, "0")}`;
-        if (!allSameYear) return `${w.isoYear}-${label}`;
-        if (idx === 0) return `${w.isoYear}-${label}`;
-        return label;
-      })
-      .join(", ");
 
     const rangeLabel = (() => {
       const sameMonth =
@@ -4793,7 +4788,7 @@ export function TaskBoard({ selectedProjectId, timeScope, onTimeScopeChange }: T
                 return renderTaskRow(task);
               }
 
-              const parentKey = getParentId(task);
+              const parentKey = canonicalParentKey(task);
 
               const inTimeScopeForList = (t: Task): boolean => {
                 if (!t.dueDate) return timeScope === "all";
@@ -4830,7 +4825,7 @@ export function TaskBoard({ selectedProjectId, timeScope, onTimeScopeChange }: T
               const showActiveOnly = completionFilter === "all" || completionFilter === "active";
 
               const occurrences = tasksWithRepeats
-                .filter((t) => isRepeating(t) && getParentId(t) === parentKey)
+                .filter((t) => isRepeating(t) && canonicalParentKey(t) === parentKey)
                 .filter((t) => !t.cancelled)
                 .filter((t) => (showActiveOnly ? !t.completed : t.completed))
                 .filter((t) => {
@@ -4857,7 +4852,7 @@ export function TaskBoard({ selectedProjectId, timeScope, onTimeScopeChange }: T
                         onClick={(e) => {
                           e.stopPropagation();
                           closeDropdownAndHover();
-                          toggleSingleExpandedGroup(parentKey);
+                            toggleSingleExpandedGroup(parentKey);
                         }}
                       >
                         {expanded ? "Hide" : "Show"} occurrences
@@ -4894,7 +4889,7 @@ export function TaskBoard({ selectedProjectId, timeScope, onTimeScopeChange }: T
                           </span>
                         )}
                         <span className="pill subtle">
-                          Parent ID: {shortId(getParentId(representative))}
+                          Parent ID: {shortId(canonicalParentKey(representative))}
                         </span>
                       </div>
                     </div>
@@ -4946,7 +4941,7 @@ export function TaskBoard({ selectedProjectId, timeScope, onTimeScopeChange }: T
                           </span>
                         )}
                         <span className="pill subtle">
-                          Parent ID: {shortId(getParentId(representative))}
+                          Parent ID: {shortId(canonicalParentKey(representative))}
                         </span>
                         {items.some((t) => t.durationMinutes !== undefined) && (
                           <span className="pill subtle">

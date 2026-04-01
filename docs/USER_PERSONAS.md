@@ -21,7 +21,7 @@ This document describes the primary user personas for Focista Schedulo. Personas
 
 - Creates tasks in batches per project.
 - Uses calendar and day agenda to decide what fits today vs. tomorrow.
-- Tracks completion and streaks for motivation (streaks follow **due-date-aligned** progress counting when tasks have due dates); opens **Productivity Analysis** when reviewing weekly or monthly trends.
+- Tracks completion and streaks for motivation (day-scoped stats use **progress day**: **`dueDate`** when set, else completion date); opens **Badges** for milestone detail and **Productivity Analysis** for long-range trends.
 - Uses bulk move and delete to keep lists manageable.
 
 **Pain points:**

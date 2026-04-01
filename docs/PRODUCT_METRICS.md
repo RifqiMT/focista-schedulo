@@ -173,7 +173,7 @@ Before metrics are consumed for decisions:
 
 1. Validate no duplicate task IDs in persisted data.
 2. Validate no duplicate recurring occurrences in the same series/date.
-3. Validate local-date correctness for daily calculations (`completedToday`, `streakDays`, `last7Days`).
+3. Validate local-date correctness for daily calculations (`completedToday`, `streakDays`, `last7Days`) against **`completionDateIsoLocalForTask`** (**`dueDate`** first, else **`completedAt`** local day).
 4. Validate milestone and level formulas in `/api/stats`.
 5. When validating analysis releases, confirm `/api/productivity-insights` series match the Productivity Analysis modal charts (same windows and field semantics as `VARIABLES.md`).
 

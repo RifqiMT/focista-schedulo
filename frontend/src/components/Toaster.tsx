@@ -9,6 +9,8 @@ export type Toast = {
   message?: string;
   durationMs?: number;
   createdAt: number;
+  /** When true, still show during app true-fullscreen modes (e.g. Badges critical hints). */
+  bypassTrueFullscreen?: boolean;
 };
 
 export function Toaster({

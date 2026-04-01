@@ -34,7 +34,8 @@ flowchart TB
     CE[CalendarEntry<br/>per-day segments]
     TE[TaskEditorDrawer]
     HC[Task hovercard<br/>portaled]
-    GP[GamificationPanel<br/>stats + modal trigger]
+    GP[GamificationPanel<br/>stats, Badges, PA entry]
+    BDM[BadgesModalDialogBody<br/>milestone grids]
     PAM[ProductivityAnalysisModal<br/>charts, fullscreen]
   end
 
@@ -42,6 +43,7 @@ flowchart TB
   T -->|priority + progress-day bucketing| S
   T -->|completed series simulation| PI
   S --> GP
+  GP --> BDM
   PI --> PAM
   T -->|filter, materialize| TB
   T -->|segment| CE
@@ -59,10 +61,11 @@ flowchart TB
 | `task.parentId` | `task.projectId` | **Invariant:** all tasks sharing the same parentId must share the same projectId (canonicalized per parent group). |
 | `task.dueDate` + `task.dueTime` + `task.durationMinutes` | `CalendarEntry` | Frontend segments tasks into per-day calendar blocks. |
 | `task.priority` | `stats` points | Points per completion: low=1, medium=2, high=3, urgent=4. |
-| `task.completed` + **`task.completedAt`** (else `task.dueDate` fallback) | `stats.completedToday`, `stats.pointsToday`, `stats.streakDays` | Day buckets use **completion time** (local day from `completedAt`) when available; legacy records fall back to due date. |
+| `task.completed` + **progress day** (`dueDate` or `completedAt`) | `stats.completedToday`, `stats.pointsToday`, `stats.streakDays` | Day buckets use **`dueDate`** when set; otherwise the **local calendar date** from **`completedAt`** (`completionDateIsoLocalForTask`). |
 | `task` (all fields) | Hovercard, Export | Full task data shown in hovercard and export output. |
 | `task` (completed, due date / completion day, priority) | `productivity-insights.rows[]` | Backend expands completions into a daily timeline with cumulative XP, level, and badge-milestone totals. |
 | `productivity-insights.rows[]` | Productivity Analysis charts | Frontend aggregates by timeframe (daily / weekly / …) for display. |
+| `stats.milestoneAchievements` | Badges UI | `GamificationPanel` + `BadgesModalDialogBody` render streak / tasks / XP / level milestone tiers from `/api/stats`. |
 
 ---
 
@@ -324,8 +327,8 @@ flowchart TB
 |-----------|--------|
 | **Variable name** | `task.completedAt` |
 | **Friendly name** | Completion timestamp |
-| **Definition** | ISO-8601 datetime when the task was marked completed (set on toggle/valid save paths). Used for audit and for **progress-day** fallback when **`dueDate`** is absent. |
-| **Location in app** | Backend store; optional display in exports; drives local calendar day when no due date. |
+| **Definition** | ISO-8601 datetime when the task was marked completed (set on toggle/valid save paths). Used for audit and, when **`dueDate`** is absent, as the **completion-time source** for **progress day** (local calendar date). |
+| **Location in app** | Backend store; optional display in exports; with `dueDate` unset, determines which calendar day receives the completion in stats and productivity. |
 | **Source of truth** | Backend. |
 | **Example** | `2026-04-01T14:22:10.123Z` |
 
@@ -336,10 +339,10 @@ flowchart TB
 | **Variable name** | `completionDateIsoLocalForTask(task)` |
 | **Friendly name** | Progress day (local) |
 | **Definition** | The local calendar date (`YYYY-MM-DD`) on which a **completed** task contributes to daily stats, streaks, last-seven-days charts, and productivity rows. |
-| **Formula** | If `task.completedAt` yields a valid local date → use that day. Else, if `task.dueDate` is set → use `task.dueDate` (legacy fallback). If neither yields a date → excluded from day buckets (still counts toward lifetime `totalPoints` / level). |
+| **Formula** | If `task.dueDate` is set → use `task.dueDate` (scheduled-day attribution). Else, if `task.completedAt` parses to a valid local calendar date → use that day. If neither yields a date → excluded from day buckets (still counts toward lifetime `totalPoints` / level). |
 | **Location in app** | Implemented in `backend/src/index.ts`; consumed by `GET /api/stats`, `GET /api/productivity-insights`, and `GET /api/tasks` optional `since` filter. |
 | **Source of truth** | Backend (derived at request time; not stored). |
-| **Example** | Task due `2026-04-05`, completed at `2026-04-03T09:15:00` (local) → progress day `2026-04-03`. |
+| **Example** | Task due `2026-04-05`, completed at `2026-04-03T09:15:00Z` → progress day `2026-04-05` (due wins). Task with no `dueDate`, completed at `2026-04-03T09:15:00Z` → progress day is the **local** calendar date of that completion. |
 
 #### `task.cancelled`
 
@@ -447,8 +450,8 @@ flowchart TB
 |-----------|--------|
 | **Variable name** | `stats.completedToday` |
 | **Friendly name** | Tasks completed today |
-| **Definition** | Count of completed tasks whose **progress day** is today (local): local day from `completedAt` when available; otherwise `dueDate` fallback for legacy records. |
-| **Formula** | Count of completed tasks where `completionDateIsoLocalForTask(task) === todayIso` (backend: `completedAt` local day first, then `dueDate` fallback for legacy records). |
+| **Definition** | Count of completed tasks whose **progress day** is today (local): **`dueDate`** when set; else local date from **`completedAt`**. |
+| **Formula** | Count of completed tasks where `completionDateIsoLocalForTask(task) === todayIso`. |
 | **Location in app** | `GET /api/stats`; Progress panel. |
 | **Source of truth** | Backend (derived from tasks). |
 | **Example** | `5` |
@@ -507,7 +510,7 @@ flowchart TB
 |-----------|--------|
 | **Variable name** | `stats.streakDays` |
 | **Friendly name** | Streak days |
-| **Definition** | Consecutive days ending today on which at least one completed task **counts** on that day (progress day = `completedAt` local day when available; otherwise `dueDate` fallback). |
+| **Definition** | Consecutive days ending today on which at least one completed task **counts** on that day (same **progress-day** rule: `dueDate` first, else `completedAt` local day). |
 | **Formula** | Count backward from today using `completionDateIsoLocalForTask`; stop on first day with zero attributed completions. |
 | **Location in app** | `/api/stats`; Progress panel. |
 | **Source of truth** | Backend. |
@@ -524,7 +527,7 @@ flowchart TB
 | **Variable name** | `stats.last7Days[]` |
 | **Friendly name** | Last 7 days completion series |
 | **Definition** | Rolling seven-day array containing date, completed count, and points for each day. |
-| **Formula** | For each day `d` in `[today-6, today]`: bucket by **progress day** (`completedAt` local day when available; otherwise `dueDate` fallback): `completed` count and `points` sum. |
+| **Formula** | For each day `d` in `[today-6, today]`: bucket by **progress day** (`dueDate` when set; else `completedAt` local day): `completed` count and `points` sum. |
 | **Location in app** | Progress panel -> Last 7 days mini-chart |
 | **Source of truth** | Backend (`GET /api/stats`) |
 | **Example** | `[{date:"2026-03-23", completed:5, points:9}, ...]` |
@@ -545,7 +548,7 @@ flowchart TB
 
 ## Productivity insights (`GET /api/productivity-insights`)
 
-Each **row** corresponds to a **local calendar day** from the first to the last day with at least one **completed** task in the persisted dataset (gaps may still appear as days with zero completions in the series builder). Only tasks with `completed === true` and `cancelled !== true` participate. Tasks are attributed to a day using the local calendar day of **`completedAt`** when available; legacy records fall back to **`dueDate`**.
+Each **row** corresponds to a **local calendar day** from the first to the last day with at least one **completed** task in the persisted dataset (gaps may still appear as days with zero completions in the series builder). Only tasks with `completed === true` and `cancelled !== true` participate. Tasks are attributed using the same **progress day** as `/api/stats`: **`dueDate`** when set; otherwise the local calendar date from **`completedAt`**.
 
 ### `projectBreakdown` (optional payload)
 
@@ -576,7 +579,7 @@ Each **row** corresponds to a **local calendar day** from the first to the last 
 |-----------|--------|
 | **Variable name** | `row.tasksCompleted` |
 | **Friendly name** | Tasks completed (day) |
-| **Definition** | Count of completed tasks attributed to this date (local day from `completedAt` when available; otherwise `dueDate` fallback for legacy records). |
+| **Definition** | Count of completed tasks attributed to this date (**`dueDate`** when set; else local day from **`completedAt`**). |
 | **Formula** | Count of qualifying tasks where `completionDateIsoLocalForTask(task) === row.date`. |
 | **Location in app** | “Tasks completed” chart (per period). |
 | **Example** | `4` |
