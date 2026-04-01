@@ -662,4 +662,4 @@ This lineage is the canonical path for debugging variable drift or stale values.
 
 ---
 
-**Last updated:** 2026-04-01
+<!-- Last updated is listed at the top of this document. -->

@@ -122,4 +122,4 @@ This document describes the primary user personas for Focista Schedulo. Personas
 
 ---
 
-**Last updated:** 2026-04-01
+<!-- Last updated is listed at the top of this document. -->

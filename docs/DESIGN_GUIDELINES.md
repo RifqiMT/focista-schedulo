@@ -254,4 +254,4 @@ Priorities are visually distinct in task pills, calendar items, day agenda, and 
 
 ---
 
-**Last updated:** 2026-04-01
+<!-- Last updated is listed at the top of this document. -->

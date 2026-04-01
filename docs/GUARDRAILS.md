@@ -137,4 +137,4 @@ Escalate to Product + Engineering lead when any proposal:
 
 ---
 
-**Last updated:** 2026-04-01
+<!-- Last updated is listed at the top of this document. -->

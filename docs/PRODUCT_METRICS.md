@@ -188,4 +188,4 @@ Before metrics are consumed for decisions:
 
 ---
 
-**Last updated:** 2026-04-01
+<!-- Last updated is listed at the top of this document. -->

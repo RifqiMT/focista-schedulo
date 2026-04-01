@@ -214,4 +214,4 @@ As a user, I want to see how my completions, experience, level, and milestones e
 
 ---
 
-**Last updated:** 2026-04-01
+<!-- Last updated is listed at the top of this document. -->

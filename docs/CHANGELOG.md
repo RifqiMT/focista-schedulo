@@ -155,4 +155,4 @@ This changelog tracks meaningful product, engineering, and documentation changes
 
 ---
 
-**Last updated:** 2026-04-01
+<!-- Last updated is listed at the top of this document. -->
