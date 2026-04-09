@@ -1,6 +1,6 @@
 # Variables Catalog — Focista Schedulo
 
-**Last updated:** 2026-04-01  
+**Last updated:** 2026-04-09  
 **Owner:** Product Analytics (with Engineering)
 
 This document defines the key **variables** used across the product: stored fields, derived values, and product metrics. Each variable is documented with a **variable name**, **friendly name**, **definition**, **formula** (when applicable), **location in the app**, **source of truth**, and **example** to align product, analytics, and engineering.
@@ -516,6 +516,27 @@ flowchart TB
 | **Source of truth** | Backend. |
 | **Example** | `7` |
 
+### `stats.achievements[]`
+
+| Attribute | Value |
+|-----------|--------|
+| **Variable name** | `stats.achievements[]` |
+| **Friendly name** | Challenge achievements |
+| **Definition** | List of “challenge-style” achievements shown in the Progress panel. Each achievement reports `progress` toward a `goal` and whether it is `achieved`. |
+| **Location in app** | `GET /api/stats` → Progress panel (`frontend/src/components/GamificationPanel.tsx`). |
+| **Source of truth** | Backend (derived from completed tasks). |
+| **Example** | `[{ id: "daily_grinding", progress: 5, goal: 5, achieved: true }, ...]` |
+
+#### `achievement.id` (shipped IDs)
+
+| ID | Name | Goal | Definition (summary) |
+|----|------|------|----------------------|
+| `early_starter` | Productive Day | 3 | Today: complete ≥3 tasks scheduled before 21:00 (tasks without `dueTime` count as “before 21:00”). |
+| `daily_grinding` | Daily Grinding | 5 | Today: gain ≥5 XP (sum of priority points for tasks attributed to today). |
+| `consistency_builder` | Consistency Builder | 7 | In the last 7 days: count how many days achieved **both** Productive Day and Daily Grinding; achieved when the count is 7. |
+| `monthly_grinding` | Monthly Grinding | 4 | In the current calendar month: count how many **Monday-start** weeks (Mon..Sun) have their **Monday** within the month and have **all 7 days** meeting the “Consistency Builder day” criteria (Productive Day + Daily Grinding). Achieved at 4. |
+| `yearly_grinding` | Yearly Grinding | 12 | In the current calendar year (Jan..Dec): count how many months hit **Monthly Grinding** (4/4); achieved when all 12 months qualify (12/12). |
+
 ---
 
 ## Additional Metrics Variables (Comprehensive)
@@ -543,6 +564,30 @@ flowchart TB
 | **Location in app** | Progress panel -> Milestones -> Levels up bar |
 | **Source of truth** | Backend |
 | **Example** | level=18, pointsIntoLevel=8, prev=10, next=20 -> `0.632` |
+
+### `stats.milestoneAchievements.badgesEarned.current`
+
+| Attribute | Value |
+|-----------|--------|
+| **Variable name** | `stats.milestoneAchievements.badgesEarned.current` |
+| **Friendly name** | Badges earned (count) |
+| **Definition** | Total number of **badge tiles unlocked** in the Badges modal: the four milestone families (streak, tasks completed, XP gained, levels up) **plus** the Badges-earned ladder itself. |
+| **Formula** | `baseUnlocked + floor(baseUnlocked/5)` where `baseUnlocked` is the total unlocked badges across the four milestone families, computed against the **displayed (capped)** milestone tiers. |
+| **Location in app** | Badges modal (new “Badges earned” section). |
+| **Source of truth** | Backend (`GET /api/stats`). |
+| **Example** | `47` |
+
+### `stats.milestoneAchievements.badgesEarned.milestones[]`
+
+| Attribute | Value |
+|-----------|--------|
+| **Variable name** | `stats.milestoneAchievements.badgesEarned.milestones[]` |
+| **Friendly name** | Badges-earned milestone tiers |
+| **Definition** | Badge-count milestone tiers, every **5 badges**, from **5** through **750** (aligns with the Badges modal maximum total tiles). |
+| **Formula** | `milestones = [5,10,15,...,750]` |
+| **Location in app** | Badges modal → Badges earned grid. |
+| **Source of truth** | Backend. |
+| **Example** | `[5,10,15,...,750]` |
 
 ---
 

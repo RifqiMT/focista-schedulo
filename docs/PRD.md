@@ -1,6 +1,6 @@
 # PRD — Focista Schedulo
 
-**Last updated:** 2026-04-01  
+**Last updated:** 2026-04-09  
 **Owner:** Product (with Engineering and Design)
 
 ---
@@ -114,6 +114,28 @@ Unless otherwise stated, sections under **“Current Scope (Shipped)”** descri
 ### Export
 
 - One-button export with format selection: JSON (projects + tasks) or CSV (recordType: project | task).
+
+### Gamification (Achievements)
+
+- The Progress panel includes challenge achievements returned by `GET /api/stats` → `achievements[]`.
+- Shipped achievements include:
+  - **Productive Day** (`early_starter`): complete 3 tasks scheduled before 21:00 (tasks without `dueTime` count as before 21:00).
+  - **Daily Grinding** (`daily_grinding`): gain at least 5 XP today (priority points).
+  - **Consistency Builder** (`consistency_builder`): in the last 7 days, count days that achieve both Productive Day and Daily Grinding; achieved when all 7 days qualify.
+  - **Monthly Grinding** (`monthly_grinding`): in a single calendar month, complete 4 **Monday-start** weeks (Mon..Sun) where the **Monday date** falls within the month and every day qualifies for the Consistency Builder day definition.
+  - **Yearly Grinding** (`yearly_grinding`): in a single calendar year (**January to December**), hit **Monthly Grinding** in **every month** (12/12).
+
+### Gamification (Milestones and Badges)
+
+- `GET /api/stats` returns `milestoneAchievements` for milestone families displayed in the **Badges** modal.
+- Shipped milestone families include:
+  - **Badges earned** (`badgesEarned`): badge tiles unlocked toward a max of **750** (aligns with the Badges modal maximum tiles across four milestone families plus the badges-earned ladder).
+  - **Day streaks** (`streakDays`)
+  - **Tasks completed** (`tasksCompleted`)
+  - **Experience gained** (`xpGained`)
+  - **Levels up** (`levelsUp`)
+- Badges modal supports per-badge hover detail (unlock date, “days ago”, evidence task where applicable).
+- Unlocked badges can be exported as **transparent PNG** from the Badges modal.
 
 ### Import and Save (Data ownership)
 

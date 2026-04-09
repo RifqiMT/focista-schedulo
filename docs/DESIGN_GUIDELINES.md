@@ -1,6 +1,6 @@
 # Design Guidelines — Focista Schedulo
 
-**Last updated:** 2026-04-01  
+**Last updated:** 2026-04-09  
 **Owner:** Design (with Engineering)
 
 This document describes the visual system used in the application and how to extend it consistently. It covers theme palettes, typography, components, accessibility, and design-to-code mapping.
@@ -171,6 +171,7 @@ Priorities are visually distinct in task pills, calendar items, day agenda, and 
 - **Panel:** `.badge-modal.badge-modal--viewport-expanded` fills the chrome; body content scrolls inside `.badge-modal-body`.
 - **Close:** `.pa-close-round` with **×** glyph and `aria-label` (matches Productivity Analysis header close).
 - **Design-to-code:** `GamificationPanel.tsx` (portal + open state), `BadgesModalDialogBody.tsx`, `styles.css` (`.badge-fs-pa-layer`, `.pa-fs-chrome` overrides for this layer).
+- **Badge export:** Each **unlocked** badge tile includes a small icon action to export the tile as a **high-resolution PNG** with **transparent background**. Export uses export-only layout rules (badge art dominant; name + star in one row; no “Unlocked” line) and excludes the export button from the output.
 
 ### Productivity Analysis (modal)
 

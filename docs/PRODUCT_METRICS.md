@@ -1,6 +1,6 @@
 # Product Metrics — Focista Schedulo
 
-**Last updated:** 2026-04-01  
+**Last updated:** 2026-04-09  
 **Owner:** Product Analytics
 
 This document defines the product metrics used to evaluate the health and growth of Focista Schedulo. For OKRs and product-team metrics, see `METRICS_AND_OKRS.md`. For variable definitions and formulas, see `VARIABLES.md`.

@@ -1,6 +1,6 @@
 # Metrics and OKRs — Focista Schedulo
 
-**Last updated:** 2026-04-01  
+**Last updated:** 2026-04-09  
 **Owner:** Product
 
 This document frames quarterly OKRs and the metrics used to measure them for the product team. Product metric definitions live in `PRODUCT_METRICS.md`. Variable definitions and formulas live in `VARIABLES.md`.
@@ -71,9 +71,9 @@ This document frames quarterly OKRs and the metrics used to measure them for the
 
 ### Inputs / Initiatives
 
-- Improve progress panel clarity and immediacy.
+- Improve progress panel clarity and immediacy (including real-time refresh via `GET /api/events` where available).
 - Keep productivity charts aligned with server-computed series so insights match live stats semantics.
-- Add meaningful badges or milestones (optional), based on consistent behavior patterns.
+- Add meaningful badges or milestones (optional), based on consistent behavior patterns (e.g. Monthly/Yearly Grinding; Badges-earned tiers).
 
 ---
 

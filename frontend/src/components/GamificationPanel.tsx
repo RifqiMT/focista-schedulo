@@ -25,8 +25,10 @@ interface Stats {
     progress: number;
     goal: number;
     achieved: boolean;
+    meta?: any;
   }[];
   milestoneAchievements?: {
+    badgesEarned: MilestoneBlock;
     streakDays: MilestoneBlock;
     tasksCompleted: MilestoneBlock;
     xpGained: MilestoneBlock;
@@ -58,6 +60,7 @@ interface MilestoneBlock {
         projectName?: string;
         priority?: string;
       };
+      source?: string;
     }
   >;
 }
@@ -108,6 +111,7 @@ export function GamificationPanel() {
   const latestFetchIdRef = useRef(0);
   const refreshInFlightRef = useRef(false);
   const refreshQueuedRef = useRef(false);
+  const sseRef = useRef<EventSource | null>(null);
   const [badgesOpen, setBadgesOpen] = useState(false);
   const [analysisOpen, setAnalysisOpen] = useState(false);
   const [hoveredBadge, setHoveredBadge] = useState<{
@@ -129,32 +133,32 @@ export function GamificationPanel() {
   const badgePanelRef = useRef<HTMLDivElement | null>(null);
   const badgesLayoutToastSentRef = useRef(false);
 
-  useEffect(() => {
-    const fetchStats = async () => {
-      if (refreshInFlightRef.current) {
-        refreshQueuedRef.current = true;
-        return;
+  const fetchStats = useCallback(async () => {
+    if (refreshInFlightRef.current) {
+      refreshQueuedRef.current = true;
+      return;
+    }
+    refreshInFlightRef.current = true;
+    const fetchId = ++latestFetchIdRef.current;
+    try {
+      const res = await fetch("/api/stats", { cache: "no-store" });
+      if (!res.ok) return;
+      const data: Stats = await res.json();
+      // Ignore late responses from older requests.
+      if (fetchId !== latestFetchIdRef.current) return;
+      setStats(data);
+    } catch {
+      // ignore transient network errors
+    } finally {
+      refreshInFlightRef.current = false;
+      if (refreshQueuedRef.current) {
+        refreshQueuedRef.current = false;
+        void fetchStats();
       }
-      refreshInFlightRef.current = true;
-      const fetchId = ++latestFetchIdRef.current;
-      try {
-        const res = await fetch("/api/stats", { cache: "no-store" });
-        if (!res.ok) return;
-        const data: Stats = await res.json();
-        // Ignore late responses from older requests.
-        if (fetchId !== latestFetchIdRef.current) return;
-        setStats(data);
-      } catch {
-        // ignore transient network errors
-      } finally {
-        refreshInFlightRef.current = false;
-        if (refreshQueuedRef.current) {
-          refreshQueuedRef.current = false;
-          void fetchStats();
-        }
-      }
-    };
+    }
+  }, []);
 
+  useEffect(() => {
     // Initial load
     void fetchStats();
 
@@ -182,14 +186,36 @@ export function GamificationPanel() {
       void fetchStats();
     }, 15_000);
 
+    // Real-time updates via SSE (fallback is the interval + events above).
+    try {
+      const es = new EventSource("/api/events");
+      sseRef.current = es;
+      es.addEventListener("dataVersion", () => {
+        void fetchStats();
+      });
+      es.addEventListener("error", () => {
+        // Browser will auto-retry based on server-sent `retry`.
+      });
+    } catch {
+      // ignore (SSE unsupported / blocked)
+    }
+
     return () => {
       window.clearInterval(intervalId);
+      if (sseRef.current) {
+        try {
+          sseRef.current.close();
+        } catch {
+          // ignore
+        }
+        sseRef.current = null;
+      }
       window.removeEventListener("pst:tasks-changed", onDataChanged);
       window.removeEventListener("pst:projects-changed", onDataChanged);
       document.removeEventListener("visibilitychange", onVisibilityChange);
       window.removeEventListener("focus", onFocus);
     };
-  }, []);
+  }, [fetchStats]);
 
   const completedToday = stats?.completedToday ?? 0;
   const streakDays = stats?.streakDays ?? 0;
@@ -263,7 +289,7 @@ export function GamificationPanel() {
     const sections: {
       key: string;
       title: string;
-      icon: "streak" | "tasks" | "xp" | "levels";
+      icon: "streak" | "tasks" | "xp" | "levels" | "badges";
       current: number;
       unit: string;
       milestones: number[];
@@ -324,6 +350,20 @@ export function GamificationPanel() {
           150
         ),
         unlockDetails: milestones.levelsUp.unlockDetails,
+        unlockedCount: 0,
+        percentUnlocked: 0
+      },
+      {
+        key: "badgesEarned",
+        title: "Badges earned",
+        icon: "badges",
+        current: milestones.badgesEarned.current,
+        unit: "badges",
+        milestones: capMilestoneBadges(
+          milestones.badgesEarned.milestones ?? milestones.badgesEarned.recentUnlocked,
+          150
+        ),
+        unlockDetails: milestones.badgesEarned.unlockDetails,
         unlockedCount: 0,
         percentUnlocked: 0
       }
@@ -525,7 +565,8 @@ export function GamificationPanel() {
                   milestones.streakDays,
                   milestones.tasksCompleted,
                   milestones.xpGained,
-                  milestones.levelsUp
+                  milestones.levelsUp,
+                  milestones.badgesEarned
                 ] as MilestoneBlock[]
               ).map((m) => {
                 const pct = Math.min(100, Math.round((m.progressToNext ?? 0) * 100));

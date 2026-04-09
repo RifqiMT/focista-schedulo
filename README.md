@@ -1,6 +1,6 @@
 # Focista Schedulo
 
-**Last updated:** 2026-04-01  
+**Last updated:** 2026-04-09  
 **Owner:** Engineering (with Product)
 
 **Plan with clarity, focus without noise, and celebrate what you complete.**
@@ -154,7 +154,11 @@ Runs ESLint for backend and frontend.
 - **Save** calls `POST /api/admin/save-data` to persist current in-memory state to `backend/data/*.json`, then reload + normalize.
 - **Export** dispatches `pst:open-export` for the task board export flow.
 
+**Real-time Progress:** The Progress panel refreshes via Server‑Sent Events `GET /api/events` (`dataVersion`) plus UI-driven refresh events, so updates are seamless after any persisted change (task/project CRUD, imports, sync-from-data, reloads).
+
 **API caching:** `GET /api/stats` and `GET /api/productivity-insights` use in-memory caches cleared when tasks/projects persist or when data is reloaded from disk, so the Progress panel stays aligned with the latest task state.
+
+**Badge export (PNG):** The Badges modal includes an **Export PNG** action for **unlocked** badges. Exports are high-resolution with **transparent background** and use export-only layout tweaks (badge art dominant; badge label + star number in one row; no “Unlocked” text).
 
 Data is persisted to JSON files under `backend/data/`, so data survives restarts and the stack remains easy to read and extend.
 

@@ -1,6 +1,6 @@
 # Changelog — Focista Schedulo
 
-**Last updated:** 2026-04-01  
+**Last updated:** 2026-04-09  
 **Owner:** Engineering (with Product)
 
 This changelog tracks meaningful product, engineering, and documentation changes.
@@ -22,6 +22,53 @@ This changelog tracks meaningful product, engineering, and documentation changes
 - Metadata consistency: root **README** uses the same top-of-file **Last updated** / **Owner** pattern as `docs/` plus the standard HTML footer; **ARCHITECTURE** header punctuation aligned; **API_CONTRACTS** and **DOCS_CODE_CROSSWALK** include the standard footer note.
 
 ---
+
+## [2026-04-09] Monthly Grinding achievement
+
+### Added
+
+- **Achievement:** Added **Monthly Grinding** (`monthly_grinding`) to `GET /api/stats` achievements. It is achieved when, within the current calendar month, the user completes **4 Monday-start weeks (Mon..Sun)** where the **Monday** falls within the month and **every day** meets the “Consistency Builder day” criteria (Productive Day + Daily Grinding). This avoids months where “4 full in-month weeks” is impossible.
+- **Backend test:** Added unit tests for month/week boundary behavior in `backend/src/monthlyGrinding.test.ts` (Vitest).
+
+### Docs
+
+- Updated `docs/VARIABLES.md`, `docs/API_CONTRACTS.md`, `docs/PRD.md`, `docs/USER_STORIES.md`, and `docs/TRACEABILITY_MATRIX.md` to include the new achievement and its definition.
+
+## [2026-04-09] Yearly Grinding achievement
+
+### Added
+
+- **Achievement:** Added **Yearly Grinding** (`yearly_grinding`) to `GET /api/stats` achievements. It tracks how many months in the current calendar year (**Jan..Dec**) hit **Monthly Grinding** (4/4), and is achieved at **12/12**.
+- **Backend test:** Added unit tests for year aggregation in `backend/src/yearlyGrinding.test.ts` (Vitest).
+
+### Docs
+
+- Updated `docs/PRD.md`, `docs/VARIABLES.md`, `docs/API_CONTRACTS.md`, and `docs/TRACEABILITY_MATRIX.md` to include the new achievement.
+
+## [2026-04-09] Badges earned milestone tiers (5..150)
+
+### Added
+
+- **Milestone family:** Added **Badges earned** (`milestoneAchievements.badgesEarned`) to `GET /api/stats`, with tiers every **5 badges** (`5..150`). The current value counts total unlocked milestone badges across streak, tasks, XP, and levels.
+
+### Changed
+
+- **Badges UI:** Added a “Badges earned” section to the Badges modal so users can track milestone tiers based on total badges unlocked.
+
+### Docs
+
+- Updated `docs/API_CONTRACTS.md`, `docs/VARIABLES.md`, and `docs/DOCS_CODE_CROSSWALK.md` to include the new milestone family.
+
+## [2026-04-09] Real-time Progress and badge PNG export
+
+### Added
+
+- **Real-time stats:** Added `GET /api/events` (Server‑Sent Events) emitting `dataVersion` on persisted changes so the Progress panel stays seamless without tight polling.
+- **Badge export (PNG):** Added per-badge **Export PNG** action for **unlocked** badges. Export uses DOM rendering (so the PNG matches the in-app badge), transparent background, and export-only layout adjustments (badge art dominant; badge name + star in one row; no “Unlocked” text; excludes export button from image).
+
+### Changed
+
+- **Badges earned milestone:** Extended the `badgesEarned` milestone ladder to align with Badges modal total tiles (**max 750**) and added unlock tooltip evidence (`unlockDetails.source`) to match other categories.
 
 ## [2026-04-01] Backend ESLint (flat config) and lint-driven cleanup
 

@@ -1,6 +1,6 @@
 # User Personas — Focista Schedulo
 
-**Last updated:** 2026-04-01  
+**Last updated:** 2026-04-09  
 **Owner:** Product
 
 This document describes the primary user personas for Focista Schedulo. Personas inform feature prioritization, UX decisions, and messaging.

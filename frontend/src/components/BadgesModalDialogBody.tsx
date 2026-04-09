@@ -1,9 +1,10 @@
 import type { Dispatch, RefObject, SetStateAction } from "react";
+import { exportBadgeCardPng } from "./badgePngExport";
 
 interface BadgesModalSection {
   key: string;
   title: string;
-  icon: "streak" | "tasks" | "xp" | "levels";
+  icon: "streak" | "tasks" | "xp" | "levels" | "badges";
   current: number;
   unit: string;
   milestones: number[];
@@ -20,6 +21,7 @@ interface BadgesModalSection {
         projectName?: string;
         priority?: string;
       };
+      source?: string;
     }
   >;
   unlockedCount: number;
@@ -43,7 +45,7 @@ type HoveredBadgeState = {
 function Icon({
   name
 }: {
-  name: "streak" | "tasks" | "xp" | "levels" | "lock";
+  name: "streak" | "tasks" | "xp" | "levels" | "badges" | "lock";
 }) {
   const common = {
     width: 18,
@@ -91,6 +93,14 @@ function Icon({
           <path d="M10 15h4l1 2H9l1-2Z" />
         </svg>
       );
+    case "badges":
+      return (
+        <svg {...common} aria-hidden="true">
+          <path d="M12 3l3 2 3 1-1 3 1 3-3 1-3 2-3-2-3-1 1-3-1-3 3-1 3-2Z" />
+          <path d="M9.5 14.5 8 21l4-2 4 2-1.5-6.5" />
+          <path d="M9.5 9.5l1.5 1.5 3.5-3.5" />
+        </svg>
+      );
     case "lock":
       return (
         <svg {...common} aria-hidden="true">
@@ -100,6 +110,16 @@ function Icon({
         </svg>
       );
   }
+}
+
+function DownloadIcon() {
+  return (
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+      <path d="M7 10l5 5 5-5" />
+      <path d="M12 15V3" />
+    </svg>
+  );
 }
 
 type BadgesModalDialogBodyProps = {
@@ -221,6 +241,9 @@ export function BadgesModalDialogBody({
                   const taskLine = unlocked && unlockMeta?.task?.title ? unlockMeta.task.title : undefined;
                   const chips = (() => {
                     const out: { label: string; value: string }[] = [];
+                    if (unlocked && unlockMeta?.source) {
+                      out.push({ label: "Unlocked by", value: unlockMeta.source });
+                    }
                     if (unlocked && unlockMeta?.task?.dueDate) {
                       out.push({
                         label: "Due",
@@ -272,6 +295,29 @@ export function BadgesModalDialogBody({
                       }}
                       onMouseLeave={() => setHoveredBadge(null)}
                     >
+                      {unlocked && (
+                        <button
+                          type="button"
+                          className="badge-export-btn"
+                          title="Export badge as PNG"
+                          aria-label="Export badge as PNG"
+                          onClick={(e) => {
+                            e.preventDefault();
+                            e.stopPropagation();
+                            const card = (e.currentTarget as HTMLElement).closest(
+                              ".badge-card"
+                            ) as HTMLElement | null;
+                            if (!card) return;
+                            void exportBadgeCardPng({
+                              node: card,
+                              filenameBase: `${s.title}_${label}_star_${badgeNumber}`,
+                              sizePx: 1600
+                            });
+                          }}
+                        >
+                          <DownloadIcon />
+                        </button>
+                      )}
                       <div className="badge-medal" aria-hidden="true">
                         <div className="badge-topper" />
                         <div className="badge-ribbon badge-ribbon-left" />

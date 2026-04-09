@@ -1,6 +1,6 @@
 # User Stories — Focista Schedulo
 
-**Last updated:** 2026-04-01  
+**Last updated:** 2026-04-09  
 **Owner:** Product
 
 User stories are written in the format: **As a [role], I want [goal] so that [benefit].** Acceptance criteria define when the story is done.
@@ -87,6 +87,8 @@ As a user, I want to see my progress so I feel motivated to continue.
 - Progress panel shows tasks **counted today** (by **progress day**: **`dueDate`** when set; otherwise local day from **`completedAt`**), streak, level, and XP toward the next level.
 - Points per completed task: low=1, medium=2, high=3, urgent=4. Lifetime **level** / **totalPoints** reflect all completed tasks.
 - Stats update when tasks change (events + cache invalidation on persist; no manual refresh required for typical flows).
+- Progress panel shows challenge achievements (e.g. Productive Day, Daily Grinding, Consistency Builder, Monthly Grinding) with `progress/goal` and a clear achieved/locked state.
+- Challenge achievements include Yearly Grinding (12/12 months hitting Monthly Grinding).
 
 ### US-7a Explore milestone badges
 
@@ -97,6 +99,7 @@ As a user, I want to browse my achievement milestones so I can see how streaks, 
 - User opens **Badges** from the progress panel.
 - Badges opens in a **full-viewport** portaled layer (consistent chrome with Productivity Analysis shell classes: overlay + chrome).
 - Sections show streak, tasks completed, experience, and levels with expandable grids and hover detail where implemented.
+- Sections also include **Badges earned** (5-step tiers up to 750) and allow exporting **unlocked** badges as transparent PNGs from each tile.
 - User can dismiss via **Close** (`.pa-close-round`), **Escape**, or backdrop click.
 
 ---

@@ -92,6 +92,18 @@ Full validation: `TaskSchema` in `backend/src/index.ts`.
 |--------|------|----------|
 | `GET` | `/api/stats` | See below |
 
+## Events (real-time)
+
+| Method | Path | Response |
+|--------|------|----------|
+| `GET` | `/api/events` | Server-Sent Events stream (`text/event-stream`) |
+
+### Event: `dataVersion`
+
+- Emitted whenever backend data is persisted (tasks/projects writes).
+- Payload: `{ version: number, at: number }`
+- Clients can use this to trigger a refresh of `GET /api/stats` and `GET /api/productivity-insights` for seamless Progress updates.
+
 ### Response shape (`GET /api/stats`)
 
 | Field | Type | Description |
@@ -104,8 +116,8 @@ Full validation: `TaskSchema` in `backend/src/index.ts`.
 | `xpToNext` | `number` | Points until next level boundary |
 | `last7Days` | `{ date, completed, points }[]` | Rolling seven-day series |
 | `pointsByPriority` | `{ low, medium, high, urgent }` | Lifetime points by priority weight |
-| `achievements` | `{ id, name, description, progress, goal, achieved }[]` | Challenge-style achievements |
-| `milestoneAchievements` | object | `streakDays`, `tasksCompleted`, `xpGained`, `levelsUp` blocks with milestones and progress |
+| `achievements` | `{ id, name, description, progress, goal, achieved, meta? }[]` | Challenge-style achievements (some may include a `meta` object for debugging/evidence). Shipped IDs include: `early_starter`, `daily_grinding`, `consistency_builder`, `monthly_grinding`, `yearly_grinding`. |
+| `milestoneAchievements` | object | `badgesEarned`, `streakDays`, `tasksCompleted`, `xpGained`, `levelsUp` blocks with milestones and progress |
 
 **Priority points:** low=1, medium=2, high=3, urgent=4.
 

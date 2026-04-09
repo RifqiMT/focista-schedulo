@@ -5662,6 +5662,11 @@ body {
 .badge-card.badge-cat-levelsUp .badge-medal-inner {
   color: rgba(16, 185, 129, 1);
 }
+.badge-section-badgesEarned .badge-section-icon,
+.badge-card.badge-cat-badgesEarned .badge-medal-inner {
+  /* Match the ribbon red tone */
+  color: rgba(206, 17, 38, 1);
+}
 
 .badge-section-meta {
   font-size: 0.78rem;
@@ -5688,6 +5693,34 @@ body {
     filter 0.15s ease;
   position: relative;
   overflow: hidden;
+}
+
+.badge-export-btn {
+  position: absolute;
+  top: 10px;
+  right: 10px;
+  width: 34px;
+  height: 34px;
+  border-radius: 999px;
+  border: 1px solid rgba(209, 213, 219, 0.9);
+  background: rgba(255, 255, 255, 0.92);
+  color: rgba(17, 24, 39, 0.78);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: 0 10px 22px rgba(17, 24, 39, 0.10);
+  cursor: pointer;
+  z-index: 2;
+}
+
+.badge-export-btn:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 14px 28px rgba(17, 24, 39, 0.12);
+  color: rgba(17, 24, 39, 0.92);
+}
+
+.badge-card.locked .badge-export-btn {
+  opacity: 0.85;
 }
 
 .badge-card::before {
@@ -5722,6 +5755,11 @@ body {
   background:
     radial-gradient(circle at 25% 10%, rgba(16, 185, 129, 0.18), transparent 46%),
     radial-gradient(circle at 85% 30%, rgba(34, 197, 94, 0.10), transparent 50%);
+}
+.badge-card.badge-cat-badgesEarned::before {
+  background:
+    radial-gradient(circle at 25% 10%, rgba(206, 17, 38, 0.20), transparent 46%),
+    radial-gradient(circle at 85% 30%, rgba(239, 68, 68, 0.10), transparent 50%);
 }
 
 .badge-card.unlocked {
@@ -5800,6 +5838,11 @@ body {
   background: radial-gradient(circle at 30% 25%, rgba(236, 253, 245, 1), rgba(16, 185, 129, 0.9));
   border-color: rgba(16, 185, 129, 0.55);
   clip-path: polygon(10% 70%, 20% 20%, 40% 40%, 50% 10%, 60% 40%, 80% 20%, 90% 70%, 50% 95%);
+}
+.badge-card.badge-cat-badgesEarned .badge-topper {
+  background: radial-gradient(circle at 30% 25%, rgba(254, 242, 242, 1), rgba(206, 17, 38, 0.9));
+  border-color: rgba(206, 17, 38, 0.55);
+  clip-path: polygon(50% 0%, 62% 18%, 82% 22%, 68% 40%, 72% 62%, 50% 52%, 28% 62%, 32% 40%, 18% 22%, 38% 18%);
 }
 
 .badge-medal::after {
@@ -5887,6 +5930,22 @@ body {
     8% 14%
   );
 }
+.badge-card.badge-cat-badgesEarned .badge-medal {
+  /* Badges = classic shield */
+  width: 76px;
+  height: 72px;
+  border-radius: 18px;
+  clip-path: polygon(
+    50% 0%,
+    88% 12%,
+    100% 34%,
+    100% 72%,
+    50% 100%,
+    0% 72%,
+    0% 34%,
+    12% 12%
+  );
+}
 
 /* Category-specific embossed patterns (inside the shield) */
 .badge-card.badge-cat-streakDays .badge-medal::after {
@@ -5938,6 +5997,26 @@ body {
     radial-gradient(circle at 64% 24%, rgba(0,0,0,0.12) 0 3px, transparent 4px);
   opacity: 0.5;
 }
+.badge-card.badge-cat-badgesEarned .badge-medal::after {
+  /* Rosette-style texture */
+  background:
+    radial-gradient(circle at 50% 18%, rgba(0,0,0,0.10), transparent 55%),
+    repeating-linear-gradient(
+      0deg,
+      rgba(0,0,0,0.08) 0px,
+      rgba(0,0,0,0.08) 6px,
+      transparent 6px,
+      transparent 12px
+    ),
+    repeating-linear-gradient(
+      90deg,
+      rgba(0,0,0,0.06) 0px,
+      rgba(0,0,0,0.06) 10px,
+      transparent 10px,
+      transparent 20px
+    );
+  opacity: 0.48;
+}
 
 /* Category-specific medal finishes */
 .badge-card.badge-cat-streakDays .badge-medal {
@@ -5955,6 +6034,10 @@ body {
 .badge-card.badge-cat-levelsUp .badge-medal {
   background: radial-gradient(circle at 30% 25%, rgba(236, 253, 245, 1), rgba(16, 185, 129, 0.78));
   border-color: rgba(16, 185, 129, 0.55);
+}
+.badge-card.badge-cat-badgesEarned .badge-medal {
+  background: radial-gradient(circle at 30% 25%, rgba(254, 242, 242, 1), rgba(206, 17, 38, 0.78));
+  border-color: rgba(206, 17, 38, 0.55);
 }
 
 .badge-card.locked .badge-medal {
@@ -5995,6 +6078,9 @@ body {
 }
 .badge-card.badge-cat-levelsUp .badge-ribbon {
   background: linear-gradient(180deg, rgba(16, 185, 129, 0.95), rgba(34, 197, 94, 0.70));
+}
+.badge-card.badge-cat-badgesEarned .badge-ribbon {
+  background: linear-gradient(180deg, rgba(206, 17, 38, 0.95), rgba(239, 68, 68, 0.70));
 }
 
 .badge-card.locked .badge-ribbon {

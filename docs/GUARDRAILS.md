@@ -1,6 +1,6 @@
 # Product and Technical Guardrails — Focista Schedulo
 
-**Last updated:** 2026-04-01  
+**Last updated:** 2026-04-09  
 **Owner:** Product + Engineering
 
 ---
@@ -86,6 +86,7 @@ This document defines the non-negotiable boundaries for product development, del
 5. **Performance baseline**
    - Primary views should remain responsive with hundreds of tasks.
    - Avoid heavy synchronous computation on each render.
+   - Real-time updates must not introduce tight polling loops; prefer push-based updates (SSE) with graceful fallback.
 
 6. **Observability readiness**
    - Critical flows must be testable and diagnosable with clear failure points.
@@ -109,11 +110,13 @@ This document defines the non-negotiable boundaries for product development, del
 3. **Error handling**
    - Failed writes should not appear as successful actions.
    - UI should recover to consistent state after transient failure.
+   - Export actions (e.g., badge PNG) must fail gracefully without blocking other UI; do not export secret data.
 
 4. **Overlays and popovers**
    - Task hovercards must use a portal root so they stack above the grid and avoid clipping.
    - Hovercards must not block checkbox toggles or row actions: suppress open behavior on those controls **and** use CSS passthrough (`pointer-events`) so overlapping card chrome does not eat clicks meant for row buttons.
    - Productivity Analysis and other modals must trap focus and restore focus on close.
+   - Badge export should not alter the live UI layout; export-only formatting must be applied on a cloned DOM tree.
 
 ---
 

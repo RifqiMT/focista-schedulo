@@ -1,6 +1,6 @@
 # Enterprise Traceability Matrix — Focista Schedulo
 
-**Last updated:** 2026-04-01  
+**Last updated:** 2026-04-09  
 **Owner:** Product Operations (with Engineering and QA)
 
 ---
@@ -39,7 +39,11 @@ This matrix provides end-to-end traceability from customer intent to product out
 | Project Operator | US-5 | Manage projects and task associations | `ProjectSidebar.tsx`, `TaskBoard.tsx` | `GET/POST/PUT/DELETE /api/projects` | project lifecycle, cascade delete behavior | E2, KR-1.x | I | Engineering |
 | Project Operator | US-2/US-5 | Project association integrity across parent/child tasks | `backend/src/index.ts`, `TaskBoard.tsx` | `TaskSchema` (`projectId`, `parentId`) | parent/child project drift prevention; filter correctness | Q1 (integrity), KR2.3 | I | Engineering |
 | Personal Planner | US-7 | Motivation loop (streak/XP/levels) | `GamificationPanel.tsx`, `backend/src/index.ts` | `GET /api/stats` | formula correctness, realtime refresh | R2, KR-3.x | I | Product + Engineering |
+| Routine Builder | US-7 | Monthly Grinding (4 full Consistency weeks in month) | `backend/src/index.ts`, `backend/src/monthlyGrinding.ts`, `GamificationPanel.tsx` | `GET /api/stats` → `achievements[]` | month-boundary correctness, Mon..Sun week containment, regression on existing achievements | R2, KR-3.x | I | Engineering |
+| Routine Builder | US-7 | Yearly Grinding (12/12 Monthly Grinding months) | `backend/src/index.ts`, `backend/src/yearlyGrinding.ts`, `backend/src/monthlyGrinding.ts`, `GamificationPanel.tsx` | `GET /api/stats` → `achievements[]` | year/month aggregation correctness, future dueDate attribution, regression on monthly logic | R2, KR-3.x | I | Engineering |
 | Personal Planner | US-7a | Milestone Badges (full-viewport UI) | `GamificationPanel.tsx`, `BadgesModalDialogBody.tsx`, `styles.css` (`.badge-fs-pa-layer`) | `GET /api/stats` → `milestoneAchievements` | overlay dismiss, scroll, hover detail | R2, KR-3.x | I | Product + Engineering |
+| Personal Planner | US-7a | Badge export (PNG) for unlocked tiles | `BadgesModalDialogBody.tsx`, `badgePngExport.ts`, `styles.css` (`.badge-export-btn`) | client-side export (DOM → PNG) | transparent background, 1:1 rendering fidelity, export-only formatting, graceful failure | Q3 | I | Engineering |
+| Personal Planner | US-7 | Real-time Progress refresh | `GamificationPanel.tsx`, `backend/src/index.ts` | `GET /api/events` (SSE `dataVersion`), `GET /api/stats` | refresh correctness, reconnect behavior, no polling regressions | R2 | I | Engineering |
 | Personal Planner | US-12 | Data export (JSON/CSV) | `TaskBoard.tsx` (export) | client export from task/project datasets | export accuracy, format integrity | Q3, KR-4.x | I | Engineering |
 | Personal Planner | US-12a | Data import (JSON/CSV) with normalization | `App.tsx`, `backend/src/index.ts` | `POST /api/admin/import` | validation, merge/dedupe, series normalization | Q3, KR4.2 | I | Engineering |
 | Multi-persona | US-3 | Voice input to autofill task form | `TaskEditorDrawer.tsx` | browser speech + parser outputs | parser precision, fallback safety | E4, KR-1.x | I | Product + Engineering |

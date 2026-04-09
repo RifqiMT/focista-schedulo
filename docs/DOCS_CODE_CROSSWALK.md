@@ -1,6 +1,6 @@
 # Docs → Code Crosswalk — Focista Schedulo
 
-**Last updated:** 2026-04-01  
+**Last updated:** 2026-04-09  
 **Owner:** Engineering (with Product)
 
 This document is a **claim-by-claim crosswalk** between the documentation set and the current codebase. Use it as a fast verification checklist after shipping changes, refactors, or bug fixes.
@@ -47,8 +47,8 @@ This document is a **claim-by-claim crosswalk** between the documentation set an
 
 - **Badges (milestone UI)**
   - **Docs**: `docs/PRD.md` (Gamification / FR-12), `docs/DESIGN_GUIDELINES.md`
-  - **Backend**: `GET /api/stats` → `milestoneAchievements` in `backend/src/index.ts`
-  - **Frontend**: `frontend/src/components/GamificationPanel.tsx`, `frontend/src/components/BadgesModalDialogBody.tsx`, `frontend/src/styles.css` (`.badge-fs-pa-layer`, `.pa-fs-chrome`)
+  - **Backend**: `GET /api/stats` → `milestoneAchievements` (includes `badgesEarned`) in `backend/src/index.ts`
+  - **Frontend**: `frontend/src/components/GamificationPanel.tsx`, `frontend/src/components/BadgesModalDialogBody.tsx`, `frontend/src/components/badgePngExport.ts`, `frontend/src/styles.css` (`.badge-fs-pa-layer`, `.pa-fs-chrome`, `.badge-export-btn`)
 
 ---
 
@@ -86,6 +86,7 @@ This document is a **claim-by-claim crosswalk** between the documentation set an
   - **Docs**: `docs/API_CONTRACTS.md` (`/api/stats`), `docs/VARIABLES.md` (`stats.*`)
   - **Backend**: `GET /api/stats` in `backend/src/index.ts`
   - **Frontend**: `frontend/src/components/GamificationPanel.tsx` fetches and displays stats
+  - **Notes**: Challenge achievements include `monthly_grinding` (see `backend/src/monthlyGrinding.ts` + `docs/VARIABLES.md`).
 
 - **Productivity insights endpoint**
   - **Docs**: `docs/API_CONTRACTS.md` (`/api/productivity-insights`), `docs/VARIABLES.md` (ProductivityRow)

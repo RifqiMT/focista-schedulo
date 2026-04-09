@@ -5,6 +5,10 @@ import { z } from "zod";
 import { promises as fs } from "fs";
 import { watch as fsWatch } from "fs";
 import path from "path";
+import { computeMonthlyGrinding } from "./monthlyGrinding";
+import { computeYearlyGrinding } from "./yearlyGrinding";
+import { buildBadgesEarnedMilestoneBlock } from "./badgesEarnedMilestone";
+import { capMilestoneBadges } from "./capMilestoneBadges";
 
 const app = express();
 app.use(cors());
@@ -348,8 +352,32 @@ type CachedValue<T> = {
 
 let dataVersion = 0;
 
+type SseClient = {
+  id: string;
+  res: import("express").Response;
+};
+
+const sseClients = new Map<string, SseClient>();
+
+function sseSend(res: import("express").Response, event: string, data: unknown) {
+  try {
+    res.write(`event: ${event}\n`);
+    res.write(`data: ${JSON.stringify(data)}\n\n`);
+  } catch {
+    // Ignore write failures; client cleanup happens on close.
+  }
+}
+
+function broadcastDataVersion() {
+  const payload = { version: dataVersion, at: Date.now() };
+  for (const c of sseClients.values()) {
+    sseSend(c.res, "dataVersion", payload);
+  }
+}
+
 function bumpDataVersion(): void {
   dataVersion += 1;
+  broadcastDataVersion();
 }
 
 function makeCache<T>() {
@@ -1160,6 +1188,37 @@ app.get("/health", (_req, res) => {
   res.json({ status: "ok", service: "focista-schedulo-backend" });
 });
 
+app.get("/api/events", (req, res) => {
+  res.setHeader("Content-Type", "text/event-stream");
+  res.setHeader("Cache-Control", "no-store");
+  res.setHeader("Connection", "keep-alive");
+  // If behind a proxy, prevent buffering so events flush immediately.
+  res.setHeader("X-Accel-Buffering", "no");
+
+  // Initial handshake.
+  res.write("retry: 2000\n\n");
+
+  const id = `${Date.now()}-${Math.random().toString(16).slice(2, 10)}`;
+  sseClients.set(id, { id, res });
+
+  // Send the current version immediately so clients can sync on connect.
+  sseSend(res, "dataVersion", { version: dataVersion, at: Date.now() });
+
+  const keepAlive = setInterval(() => {
+    // Comment ping keeps connections open through intermediaries.
+    try {
+      res.write(`: ping ${Date.now()}\n\n`);
+    } catch {
+      // ignore
+    }
+  }, 25_000);
+
+  req.on("close", () => {
+    clearInterval(keepAlive);
+    sseClients.delete(id);
+  });
+});
+
 app.get("/api/projects", (_req, res) => {
   res.json(projects);
 });
@@ -1691,6 +1750,25 @@ app.get("/api/stats", (_req, res) => {
     // Consistency Builder: last 7 days.
     const dailyXpTarget = 5;
 
+    // Shared per-day qualification logic (single source of truth):
+    // A day qualifies if it achieves BOTH:
+    // - Productive Day: >=3 tasks scheduled before 21:00 (or all-day)
+    // - Daily Grinding: >=5 XP (priority points)
+    const dayPoints = new Map<string, number>();
+    const dayProductiveCount = new Map<string, number>();
+    for (const row of completedTasksWithDate) {
+      const iso = row.completionDateIso;
+      dayPoints.set(iso, (dayPoints.get(iso) ?? 0) + scoreFor(row.task));
+      if (isBefore2100(row.task.dueTime)) {
+        dayProductiveCount.set(iso, (dayProductiveCount.get(iso) ?? 0) + 1);
+      }
+    }
+    const dayQualifies = (iso: string): boolean => {
+      const prod = dayProductiveCount.get(iso) ?? 0;
+      const pts = dayPoints.get(iso) ?? 0;
+      return prod >= 3 && pts >= dailyXpTarget;
+    };
+
     const weeklyProgress = (() => {
       // Number of days in the last 7 days where BOTH:
       // - "Productive Day" is achieved (>=3 tasks before 21:00)
@@ -1698,14 +1776,7 @@ app.get("/api/stats", (_req, res) => {
       let count = 0;
       for (const day of last7Days) {
         const dayIso = day.date;
-        const dayTasks = completedTasksWithDate.filter((t) => t.completionDateIso === dayIso);
-        const productiveCount = dayTasks.filter((t) => isBefore2100(t.task.dueTime)).length;
-        const dayPoints = dayTasks.reduce((sum, t) => sum + scoreFor(t.task), 0);
-
-        const hasProductiveDay = productiveCount >= 3;
-        const hasDailyGrinding = dayPoints >= dailyXpTarget;
-
-        if (hasProductiveDay && hasDailyGrinding) count += 1;
+        if (dayQualifies(dayIso)) count += 1;
       }
       return count;
     })();
@@ -1719,6 +1790,60 @@ app.get("/api/stats", (_req, res) => {
       achieved: weeklyProgress >= 7
     };
 
+    // Monthly Grinding: within this calendar month, complete 4 full weeks where
+    // every day in the week meets the "Consistency Builder day" definition.
+    const monthlyGrinding = (() => {
+      const dailyQualifies = new Map<string, boolean>();
+      for (const iso of new Set<string>([
+        ...Array.from(dayPoints.keys()),
+        ...Array.from(dayProductiveCount.keys())
+      ])) {
+        dailyQualifies.set(iso, dayQualifies(iso));
+      }
+
+      const result = computeMonthlyGrinding(now, dailyQualifies);
+      const progress = Math.min(4, result.weeksCompleted);
+      return {
+        id: "monthly_grinding",
+        name: "Monthly Grinding",
+        description:
+          "In a single month, complete 4 full weeks where every day achieves both “Productive Day” and “Daily Grinding”.",
+        progress,
+        goal: 4,
+        achieved: result.weeksCompleted >= 4,
+        meta: { month: result.monthKey, weeksCompleted: result.weeksCompleted, weekStarts: result.evidenceWeekStarts }
+      };
+    })();
+
+    // Yearly Grinding: within the calendar year (Jan..Dec), hit Monthly Grinding in every month.
+    const yearlyGrinding = (() => {
+      const dailyQualifies = new Map<string, boolean>();
+      for (const iso of new Set<string>([
+        ...Array.from(dayPoints.keys()),
+        ...Array.from(dayProductiveCount.keys())
+      ])) {
+        dailyQualifies.set(iso, dayQualifies(iso));
+      }
+
+      const year = now.getFullYear();
+      const result = computeYearlyGrinding(year, dailyQualifies);
+      const progress = Math.min(12, result.monthsCompleted);
+      return {
+        id: "yearly_grinding",
+        name: "Yearly Grinding",
+        description:
+          "In a single year (January to December), hit “Monthly Grinding” in every month.",
+        progress,
+        goal: 12,
+        achieved: result.monthsCompleted >= 12,
+        meta: {
+          year: result.year,
+          monthsCompleted: result.monthsCompleted,
+          months: result.evidenceMonths.map((m) => m.month)
+        }
+      };
+    })();
+
     // Daily XP: gain at least 5 experience points today.
     const dailyXp = {
       id: "daily_grinding",
@@ -1729,7 +1854,7 @@ app.get("/api/stats", (_req, res) => {
       achieved: pointsToday >= dailyXpTarget
     };
 
-    return [earlyStarter, consistency, dailyXp];
+    return [earlyStarter, dailyXp, consistency, monthlyGrinding, yearlyGrinding];
   })();
 
   const milestoneAchievements = (() => {
@@ -1776,6 +1901,7 @@ app.get("/api/stats", (_req, res) => {
       };
       return (streak.milestones ?? []).filter((m) => isAnnual(m) || nearestAnnualDelta(m) > NEAR_DAYS);
     })();
+    const streakAchievedFiltered = streakMilestonesFiltered.filter((m) => m <= streakDays);
     const tasksCompleted = buildMilestones({
       base: countBase,
       current: completedCount,
@@ -1905,7 +2031,93 @@ app.get("/api/stats", (_req, res) => {
       return out;
     })();
 
+    // "Badges earned" should match what the Badges modal displays (downsampled/capped tiers),
+    // not the raw achieved milestone counts.
+    const countUnlockedFromCapped = (milestones: number[], current: number) => {
+      const capped = capMilestoneBadges(milestones, 150);
+      return capped.reduce((acc, m) => acc + (current >= m ? 1 : 0), 0);
+    };
+
+    const baseBadgesUnlockedCount =
+      countUnlockedFromCapped(streakMilestonesFiltered, streakDays) +
+      countUnlockedFromCapped(tasksCompleted.milestones ?? [], completedCount) +
+      countUnlockedFromCapped(xp.milestones ?? [], xpGained) +
+      countUnlockedFromCapped(levelsUp.milestones ?? [], levelValue);
+
+    // Total "badges earned" should align with the Badges modal total tiles:
+    // - 4 milestone families * 150 tiers = 600
+    // - plus the Badges-earned ladder itself (every 5 badges, up to 750) = 150 more tiles
+    // The ladder unlock count is derived from the base unlocked count (meta progression).
+    const badgesEarnedLadderUnlockedCount = Math.min(150, Math.floor(baseBadgesUnlockedCount / 5));
+    const totalBadgesEarnedCount = baseBadgesUnlockedCount + badgesEarnedLadderUnlockedCount;
+
+    const badgesEarned = buildBadgesEarnedMilestoneBlock(totalBadgesEarnedCount);
+
+    const unlocksForBadgesEarned = (() => {
+      type UnlockMeta = MilestoneUnlockEvidence & { source?: string };
+      type UnlockEvent = {
+        dateIso: string;
+        task?: UnlockMeta["task"];
+        source: string;
+      };
+
+      const events: UnlockEvent[] = [];
+      const pushEvent = (source: string, meta: MilestoneUnlockEvidence | undefined) => {
+        if (!meta?.dateIso) return;
+        events.push({ dateIso: meta.dateIso, task: meta.task, source });
+      };
+
+      // Build chronological "base badge unlock" events from the four families.
+      for (const m of streakAchievedFiltered) {
+        pushEvent(`Streak days: ${m} days`, unlocksForStreak[String(m)]);
+      }
+      for (const m of tasksCompleted.achieved ?? []) {
+        pushEvent(`Tasks completed: ${m} tasks`, unlocksForTasksCompleted[String(m)]);
+      }
+      for (const m of xp.achieved ?? []) {
+        pushEvent(`XP gained: ${m} XP`, unlocksForXp[String(m)]);
+      }
+      for (const m of levelsUp.achieved ?? []) {
+        pushEvent(`Levels up: Level ${m}`, unlocksForLevels[String(m)]);
+      }
+
+      // Sort by date (stable tie-breaker by source string).
+      events.sort((a, b) => (a.dateIso !== b.dateIso ? a.dateIso.localeCompare(b.dateIso) : a.source.localeCompare(b.source)));
+
+      const thresholds = badgesEarned.milestones.slice().sort((a, b) => a - b);
+      const out: Record<string, UnlockMeta> = {};
+      let baseUnlocked = 0;
+      let ladderUnlocked = 0;
+      let cursor = 0;
+
+      const maybeFill = (ev: UnlockEvent) => {
+        const total = baseUnlocked + ladderUnlocked;
+        while (cursor < thresholds.length && total >= thresholds[cursor]!) {
+          const t = thresholds[cursor]!;
+          out[String(t)] = { dateIso: ev.dateIso, task: ev.task, source: ev.source };
+          cursor += 1;
+        }
+      };
+
+      // Each base event unlocks exactly 1 badge in base families.
+      for (const ev of events) {
+        baseUnlocked += 1;
+        const nextLadder = Math.min(150, Math.floor(baseUnlocked / 5));
+        if (nextLadder > ladderUnlocked) {
+          ladderUnlocked = nextLadder;
+        }
+        maybeFill(ev);
+        if (cursor >= thresholds.length) break;
+      }
+
+      return out;
+    })();
+
     return {
+      badgesEarned: {
+        ...badgesEarned,
+        unlockDetails: unlocksForBadgesEarned
+      },
       streakDays: {
         id: "streak_days",
         name: "Day streaks",
@@ -1916,7 +2128,7 @@ app.get("/api/stats", (_req, res) => {
         achievedCount: streak.achievedCount,
         recentUnlocked: compact(streak.achieved),
         milestones: streakMilestonesFiltered,
-        achieved: streak.achieved,
+        achieved: streakAchievedFiltered,
         unlockDetails: unlocksForStreak
       },
       tasksCompleted: {

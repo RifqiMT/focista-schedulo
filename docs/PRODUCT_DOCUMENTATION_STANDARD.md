@@ -1,6 +1,6 @@
 # Product Documentation Standard — Focista Schedulo
 
-**Last updated:** 2026-04-01  
+**Last updated:** 2026-04-09  
 **Owner:** Product (with Design and Engineering)
 
 ---
