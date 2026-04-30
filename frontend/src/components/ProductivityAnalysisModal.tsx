@@ -45,6 +45,8 @@ type ProjectBreakdownPayload = {
 interface Props {
   open: boolean;
   onClose: () => void;
+  activeProfileId: string | null;
+  activeProfileName: string | null;
 }
 
 interface ChartConfig {
@@ -3120,7 +3122,12 @@ function PaProjectSeriesTable({
   );
 }
 
-export function ProductivityAnalysisModal({ open, onClose }: Props) {
+export function ProductivityAnalysisModal({
+  open,
+  onClose,
+  activeProfileId,
+  activeProfileName
+}: Props) {
   const [data, setData] = useState<ProductivityRow[] | null>(null);
   const [projectBreakdown, setProjectBreakdown] = useState<ProjectBreakdownPayload | null>(null);
   const [loading, setLoading] = useState(false);
@@ -3251,19 +3258,29 @@ export function ProductivityAnalysisModal({ open, onClose }: Props) {
   useEffect(() => {
     if (!open) return;
     let cancelled = false;
+    let refreshDebounceTimer: number | null = null;
 
     const fetchData = async () => {
       setLoading(true);
       setError(null);
       const started = performance.now();
       try {
-        const res = await fetch("/api/productivity-insights", { cache: "no-store" });
+        const url = new URL("/api/productivity-insights", window.location.origin);
+        if (activeProfileId) url.searchParams.set("profileId", activeProfileId);
+        const res = await fetch(url.toString(), { cache: "no-store" });
         if (!res.ok) {
           throw new Error(`Request failed with status ${res.status}`);
         }
-        const body: { rows: ProductivityRow[]; projectBreakdown?: ProjectBreakdownPayload } =
+        const requestedProfileId = activeProfileId ?? null;
+        const body: {
+          profileId?: string | null;
+          rows: ProductivityRow[];
+          projectBreakdown?: ProjectBreakdownPayload;
+        } =
           await res.json();
         if (!cancelled) {
+          const responseProfileId = body.profileId ?? null;
+          if (responseProfileId !== requestedProfileId) return;
           setData(body.rows ?? []);
           setProjectBreakdown(body.projectBreakdown ?? null);
           const elapsed = performance.now() - started;
@@ -3307,7 +3324,11 @@ export function ProductivityAnalysisModal({ open, onClose }: Props) {
     void fetchData();
 
     const onDataChanged = () => {
-      void fetchData();
+      if (refreshDebounceTimer) window.clearTimeout(refreshDebounceTimer);
+      refreshDebounceTimer = window.setTimeout(() => {
+        refreshDebounceTimer = null;
+        void fetchData();
+      }, 220);
     };
     const onVisibilityChange = () => {
       if (document.visibilityState === "visible") void fetchData();
@@ -3323,12 +3344,22 @@ export function ProductivityAnalysisModal({ open, onClose }: Props) {
 
     return () => {
       cancelled = true;
+      if (refreshDebounceTimer) {
+        window.clearTimeout(refreshDebounceTimer);
+        refreshDebounceTimer = null;
+      }
       window.removeEventListener("pst:tasks-changed", onDataChanged);
       window.removeEventListener("pst:projects-changed", onDataChanged);
       document.removeEventListener("visibilitychange", onVisibilityChange);
       window.removeEventListener("focus", onFocus);
     };
-  }, [open]);
+  }, [open, activeProfileId]);
+
+  useEffect(() => {
+    // Reset chart payload on scope changes to avoid visual bleed across profiles.
+    setData(null);
+    setProjectBreakdown(null);
+  }, [activeProfileId]);
 
   useEffect(() => {
     if (!open) {
@@ -4033,6 +4064,9 @@ export function ProductivityAnalysisModal({ open, onClose }: Props) {
               <div className="badge-modal-sub pa-subtitle">
                 Explore trends with flexible timeframes. Rolling averages smooth day-to-day noise;
                 shift the window with Older / Newer.
+              </div>
+              <div className="badge-modal-sub pa-subtitle">
+                Profile: {activeProfileId ? (activeProfileName ?? "Selected profile") : "All profiles"}
               </div>
               {rangeHint && (
                 <div className="pa-range-pill" title="Data range in daily timeline">

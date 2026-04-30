@@ -1,79 +1,77 @@
-# Documentation Index — Focista Schedulo
+# Focista Schedulo Documentation Index
 
-**Last updated:** 2026-04-09  
-**Owner:** Engineering (with Product)
+**Last updated:** 2026-04-30  
+**Owner:** Product Operations
 
-This folder contains product, design, and engineering documentation for Focista Schedulo. All documents are kept up to date with the current codebase and product scope.
-
----
-
-## Start here
-
-- **[../README.md](../README.md)** — Product overview, benefits, features, tech stack, how to run the app, and key concepts.
+This index provides a complete map of product, engineering, design, analytics, and governance documentation for Focista Schedulo.
 
 ---
 
-## Product
+## Core Product Documents
 
-| Document | Description |
-|----------|-------------|
-| [PRD.md](PRD.md) | Product requirements: problem statement, target users, goals, current scope, functional and non-functional requirements, UX, risks, roadmap. |
-| [USER_PERSONAS.md](USER_PERSONAS.md) | Target user personas: Project Operator, Routine Builder, Personal Planner. |
-| [USER_STORIES.md](USER_STORIES.md) | User stories and acceptance criteria for capture, projects, completion, recurrence, calendar, export, and gamification. |
-| [PRODUCT_METRICS.md](PRODUCT_METRICS.md) | Product metrics: North Star (WCST), activation, engagement, retention, quality. |
-| [METRICS_AND_OKRS.md](METRICS_AND_OKRS.md) | OKRs and product-team metrics with key results and initiatives. |
-| [TRACEABILITY_MATRIX.md](TRACEABILITY_MATRIX.md) | Enterprise-style traceability across personas, stories, requirements, code modules, APIs, tests, and metrics/KRs. |
-| [GUARDRAILS.md](GUARDRAILS.md) | Business and technical guardrails: constraints, risk controls, data handling boundaries, and operating limits. |
-| [CHANGELOG.md](CHANGELOG.md) | Historical development log with major releases, fixes, and documentation milestones. |
+| File | Purpose |
+|---|---|
+| `PRD.md` | Product requirements, scope, goals, non-goals, release readiness. |
+| `USER_PERSONAS.md` | Persona archetypes, goals, pain points, success outcomes. |
+| `USER_STORIES.md` | Epic-based user stories and acceptance criteria. |
+| `PRODUCT_DOCUMENTATION_STANDARD.md` | Documentation governance, update policy, and quality standard. |
 
 ---
 
-## Design
+## Analytics and Metrics
 
-| Document | Description |
-|----------|-------------|
-| [DESIGN_GUIDELINES.md](DESIGN_GUIDELINES.md) | Design system: theme palettes (Indonesian Red/Gold), priority colors, typography, components (buttons, pills, task cards, hovercard, drawer, calendar), accessibility, design-to-code mapping. |
-
----
-
-## Engineering
-
-| Document | Description |
-|----------|-------------|
-| [ARCHITECTURE.md](ARCHITECTURE.md) | System architecture: repo structure, runtime topology, data model, persistence and migrations, recurrence and identity, API surface, frontend state sync, build and dev. |
-| [API_CONTRACTS.md](API_CONTRACTS.md) | API contracts: health, projects, tasks, stats, productivity insights, admin reload. |
-| [VARIABLES.md](VARIABLES.md) | Variable catalog: stored and derived variables with friendly name, definition, formula, location in app, source of truth, example; includes relationship chart. |
-| [DOCS_CODE_CROSSWALK.md](DOCS_CODE_CROSSWALK.md) | Claim-by-claim crosswalk mapping docs to current code artifacts and a repeatable verification checklist. |
+| File | Purpose |
+|---|---|
+| `VARIABLES.md` | Comprehensive variable catalog: names, definitions, formulas, locations, examples, and relationships. |
+| `PRODUCT_METRICS.md` | Product KPI dictionary and measurement model. |
+| `METRICS_AND_OKRS.md` | Team OKRs, targets, ownership, and review cadence. |
 
 ---
 
-## Standards
+## Design and UX Governance
 
-| Document | Description |
-|----------|-------------|
-| [PRODUCT_DOCUMENTATION_STANDARD.md](PRODUCT_DOCUMENTATION_STANDARD.md) | How we write and maintain product docs: document set, ownership, writing principles, required template sections, versioning, naming and terminology. |
-
----
-
-## Documentation Coverage and Status
-
-| Area | Coverage status | Notes |
-|------|------------------|-------|
-| Product overview and scope | Complete | Canonical source: `PRD.md` |
-| Personas and user stories | Complete | Aligned to shipped and near-term roadmap |
-| Variables and formulas | Complete | Includes relationship chart and app-location mapping |
-| Product metrics and OKRs | Complete | Includes operational definitions and ownership |
-| Design system and component guidance | Complete | Includes color palettes, states, and accessibility |
-| Architecture and API | Complete | Current backend/frontend implementation reflected |
-| Traceability matrix | Complete | New enterprise matrix added |
-| Guardrails and constraints | Complete | New business/technical guardrails added |
-| Recurrence and timeframe parity | Complete | Horizon-based recurrence + full timeframe taxonomy documented |
-| Progress-day / streak semantics | Complete | **Scheduled-day-first** bucketing (`dueDate` when set, else local day from `completedAt`) per `completionDateIsoLocalForTask()`; lifetime points/level unchanged |
-| Badges (milestone overlay) | Complete | Full-viewport portaled layer; data from `/api/stats` → `milestoneAchievements` |
-| Badge export (PNG) | Complete | Export unlocked badge tiles as high-resolution transparent PNGs from Badges modal |
-| Productivity insights API and charts | Complete | `/api/productivity-insights`, `ProductivityAnalysisModal`, variables documented |
-| Task hovercard portal + control suppression | Complete | Portaled hovercard; suppressed on checkbox/actions; **pointer-events** pass-through so row actions work when overlapped |
+| File | Purpose |
+|---|---|
+| `DESIGN_GUIDELINES.md` | Theme palettes, component standards, interaction patterns, accessibility. |
 
 ---
 
-<!-- Last updated is listed at the top of this document. -->
+## Engineering and Platform
+
+| File | Purpose |
+|---|---|
+| `ARCHITECTURE.md` | Current system architecture, runtime topology, data flow, persistence strategy. |
+| `API_CONTRACTS.md` | API endpoint contracts, request/response shapes, and integration notes. |
+| `DOCS_CODE_CROSSWALK.md` | Trace map between documentation claims and concrete code locations. |
+| `OPERATING_MODEL.md` | Team operating model for release governance, ownership, and decision rights. |
+| `TEST_STRATEGY.md` | Unit/integration/E2E expectations, regression gates, and quality evidence templates. |
+
+---
+
+## Governance and Compliance
+
+| File | Purpose |
+|---|---|
+| `TRACEABILITY_MATRIX.md` | Enterprise-style mapping from requirement to implementation and verification. |
+| `GUARDRAILS.md` | Technical/business constraints and safe-delivery boundaries. |
+| `CHANGELOG.md` | Historical development log and notable release changes. |
+| `RACI_MATRIX.md` | Responsibility assignment model across Product/Engineering/Design/Analytics/Ops. |
+| `RELEASE_CHECKLIST_TEMPLATE.md` | Standard release sign-off checklist template for quality and documentation completeness. |
+| `releases/` | Dedicated folder for serial release artifacts and draft/final release checklists. |
+
+---
+
+## Coverage Statement
+
+The documentation suite covers:
+
+- Product overview, business value, feature logic, and user impact
+- Runtime architecture, persistence strategy, and API behavior
+- Persona and story-driven product development
+- Metric/OKR frameworks with definitions and ownership
+- Variables and cross-variable lineage with relationship diagrams
+- Design system and UI/UX operating standards
+- Traceability and guardrails for enterprise-grade development discipline
+- Operating model, release accountability, and decision governance
+- Testing strategy, quality gates, and evidence expectations
+

@@ -1,187 +1,149 @@
-# Product Documentation Standard — Focista Schedulo
+# Product Documentation Standard
 
-**Last updated:** 2026-04-09  
-**Owner:** Product (with Design and Engineering)
+**Last updated:** 2026-04-30  
+**Owner:** Product (with Design + Engineering)
 
----
-
-## Purpose
-
-This standard defines how we write, structure, and maintain product documentation for **Focista Schedulo** so that it remains:
-
-- **Current** with the shipped product and codebase
-- **Readable** by product, design, and engineering
-- **Actionable** for decision-making, delivery, and onboarding
-
-All documentation should reflect the most up-to-date and comprehensive information about product overview, benefits, features, logic, business guidelines, tech guidelines, tech stack, and other important elements.
+This standard defines how product documentation is authored, reviewed, versioned, and maintained for Focista Schedulo.
 
 ---
 
-## Document Set and Responsibilities
+## 1) Documentation Objectives
 
-| Document | Audience | Ownership | Update cadence |
-|----------|----------|-----------|----------------|
-| `README.md` (root) | Everyone | Engineering | Every meaningful product or repo change |
-| `docs/README.md` | Everyone | Product | When doc set changes |
-| `docs/PRD.md` | Product, Design, Engineering | Product | Monthly and on major features |
-| `docs/USER_PERSONAS.md` | Product, Design | Product | Quarterly |
-| `docs/USER_STORIES.md` | Product, Engineering | Product | Sprint planning and feature release |
-| `docs/PRODUCT_METRICS.md` | Product, Analytics | Product Analytics | Monthly |
-| `docs/METRICS_AND_OKRS.md` | Product Leadership | Product | Quarterly |
-| `docs/DESIGN_GUIDELINES.md` | Design, Engineering | Design | Quarterly and on theme/component changes |
-| `docs/ARCHITECTURE.md` | Engineering | Engineering | On architectural or API changes |
-| `docs/API_CONTRACTS.md` | Engineering, integrators | Engineering | On any endpoint, schema, or caching-behavior change |
-| `docs/VARIABLES.md` | Product, Analytics, Engineering | Product Analytics | Monthly and on model/schema changes |
-| `docs/TRACEABILITY_MATRIX.md` | Product, Design, Engineering, QA | Product Ops | Every sprint and release |
-| `docs/GUARDRAILS.md` | Product, Engineering, Security | Product + Engineering | Quarterly and on major capability changes |
-| `docs/CHANGELOG.md` | Product, Engineering, Operations | Engineering | Every release |
-| `docs/PRODUCT_DOCUMENTATION_STANDARD.md` | All | Product | When standards change |
+All documentation must be:
+
+- **Accurate:** Reflect shipped behavior and active roadmap truthfully.
+- **Traceable:** Map business requirements to code, tests, and metrics.
+- **Actionable:** Enable PM, design, engineering, and QA decisions.
+- **Maintainable:** Structured for repeatable updates across releases.
 
 ---
 
-## Writing Principles
+## 2) Required Documentation Set
 
-1. **Single source of truth** — Every claim must map to the current UI, API, or a tracked plan in the PRD. Avoid contradicting the codebase.
-2. **Plain language** — Use short paragraphs, clear headings, and consistent terminology. Prefer active voice.
-3. **Define before use** — Every metric and variable is defined once in `docs/VARIABLES.md` with a friendly name, definition, formula (if derived), location in the app, and example.
-4. **Shipped vs planned** — Clearly separate:
-   - **Shipped:** Present in the current UI/API.
-   - **Planned:** Explicitly labeled (e.g., “Planned”, “In discovery”, “Roadmap”).
-5. **Avoid ambiguity** — Use examples and specify edge cases (time zones, recurring tasks, ID formats, multi-link and multi-location behavior).
-6. **Traceability** — Architecture and tech docs should reference key files and endpoints.
+The following files are mandatory and must remain current:
 
----
-
-## Required Template Sections
-
-### PRD (`docs/PRD.md`)
-
-- Product summary and problem statement
-- Target users (with pointer to personas)
-- Goals and non-goals
-- Scope (MVP / current shipped / next)
-- Core features and functional requirements
-- Non-functional requirements
-- User experience (primary flows, key UX principles)
-- Analytics and metrics (pointer to metrics docs)
-- Risks and mitigations
-- Open questions and roadmap
-
-### Variables (`docs/VARIABLES.md`)
-
-For every variable (field, metric, derived value):
-
-- **Variable name** (code / API)
-- **Friendly name**
-- **Definition**
-- **Formula** (if derived)
-- **Location in app** (UI sections and components)
-- **Source of truth** (backend vs frontend-derived)
-- **Example**
-- **Relationships** (e.g., used by which other variables or components); maintain a high-level relationship chart
-
-### Design Guidelines (`docs/DESIGN_GUIDELINES.md`)
-
-- Theme palettes (with hex codes and usage)
-- Typography (families, sizes, weights)
-- Component rules (buttons, pills, cards, drawers, calendar, hovercard)
-- Priority and status color mapping
-- Accessibility (contrast, focus, keyboard)
-- Interaction states (hover, active, disabled)
-
-### User Personas (`docs/USER_PERSONAS.md`)
-
-- Profile, primary goals, key behaviors
-- Pain points and what success looks like
-- Optional: quote or scenario
-
-### User Stories (`docs/USER_STORIES.md`)
-
-- Format: “As a [role], I want [goal] so that [benefit].”
-- Acceptance criteria per story
-- Grouped by epic/area (capture, projects, recurrence, calendar, export, gamification, etc.)
-
-### Product Metrics (`docs/PRODUCT_METRICS.md`)
-
-- North Star and key product metrics
-- Definitions, formulas, instrumentation notes
-- Pointers to VARIABLES.md for underlying fields
-
-### Metrics and OKRs (`docs/METRICS_AND_OKRS.md`)
-
-- Guiding principles (outcome over output, leading/lagging)
-- Objectives and key results
-- Inputs and initiatives
-
-### Traceability Matrix (`docs/TRACEABILITY_MATRIX.md`)
-
-- Explicit lineage from persona -> user story -> requirement -> code artifact -> API -> test -> metric/KR
-- Coverage status (implemented / partial / planned)
-- Release criticality and owner for each requirement group
-
-### Guardrails (`docs/GUARDRAILS.md`)
-
-- Product guardrails (scope boundaries, anti-goals, acceptable use)
-- Technical guardrails (performance, reliability, data integrity, security)
-- Operational guardrails (monitoring, rollback, incident response)
-- AI/voice guardrails (input quality, parsing ambiguity, fallback behavior)
-
-### Change Log (`docs/CHANGELOG.md`)
-
-- Date-based release history with version label and summary
-- Categories: Added / Changed / Fixed / Docs / Technical Debt
-- Cross-reference to major PRD, architecture, metric, and guardrail changes
-
-### Architecture (`docs/ARCHITECTURE.md`)
-
-- Overview and repository structure
-- Runtime topology (diagram)
-- Data model summary and persistence
-- Recurrence and identity strategy
-- API surface and frontend state synchronization
-- Build and dev commands
+- `README.md`
+- `docs/README.md`
+- `docs/PRD.md`
+- `docs/USER_PERSONAS.md`
+- `docs/USER_STORIES.md`
+- `docs/VARIABLES.md`
+- `docs/PRODUCT_METRICS.md`
+- `docs/METRICS_AND_OKRS.md`
+- `docs/DESIGN_GUIDELINES.md`
+- `docs/TRACEABILITY_MATRIX.md`
+- `docs/GUARDRAILS.md`
+- `docs/ARCHITECTURE.md`
+- `docs/API_CONTRACTS.md`
+- `docs/DOCS_CODE_CROSSWALK.md`
+- `docs/CHANGELOG.md`
+- `docs/OPERATING_MODEL.md`
+- `docs/TEST_STRATEGY.md`
+- `docs/RACI_MATRIX.md`
+- `docs/RELEASE_CHECKLIST_TEMPLATE.md`
 
 ---
 
-## Versioning and Change Management
+## 3) Structural Format Rules
 
-- Every document includes:
-  - **Last updated** date
-  - **Owner** (role or team)
-- If a doc conflicts with actual behavior:
-  - Fix the docs in the same change set as the code, or
-  - Add a “Known mismatch” note with a target fix date.
+Each document must include:
 
----
-
-## Naming and Terminology
-
-Use these canonical terms consistently:
-
-| Term | Definition |
-|------|-------------|
-| **Task** | A unit of work with optional scheduling and metadata. |
-| **Project** | A grouping container for tasks (e.g., Work, Personal). |
-| **Series** | A repeating task pattern (recurrence). |
-| **Occurrence** | A specific instance of a series (may have Child ID). |
-| **Parent ID** | Stable identifier for a task or series: `YYYYMMDD-N`. |
-| **Child ID** | Backend-normalized occurrence sequence ID (legacy formats may include `${parentId}-${index}`). |
-| **Calendar view** | Month grid plus day-agenda timeline. |
-| **Day agenda** | Hourly timeline for a single day. |
-| **Voice input** | Speech-to-form autofill in the task editor. |
-| **Hovercard** | Portaled popover near the pointer with full task details; suppressed on row checkbox and action buttons; pointer-events passthrough so row actions stay usable when overlapped. |
-| **Productivity Analysis** | Modal with historical charts from `/api/productivity-insights`. |
-| **Progress day** | Local date (`YYYY-MM-DD`) used to bucket a completed task in stats and productivity: **`dueDate`** when set; otherwise the **local calendar date** derived from **`completedAt`**. If neither applies, the task is omitted from day-scoped aggregates (lifetime points/level unchanged). |
-| **List view** | Task list with optional timeframe and status filters; repeating tasks can be expanded to show occurrences. |
-
-### Required Consistency Checks for Each Release
-
-- Timeframe taxonomy in docs must match shipped values in `TimeScope` and UI selectors.
-- Recurrence docs must reflect current horizon/materialization behavior (not legacy one-upcoming-only wording).
-- Day-based metrics docs must state **scheduled-day-first** progress bucketing (`dueDate` when present, else local day from `completedAt`) for streak, completed-today, and productivity timelines—matching `completionDateIsoLocalForTask()` in `backend/src/index.ts`.
-- Traceability rows must include any new reliability controls added in backend normalization and frontend mutation dedupe.
-- `docs/API_CONTRACTS.md` must match Zod schemas and route list in `backend/src/index.ts`.
+1. `Last updated` date
+2. Document `Owner`
+3. Purpose/scope section
+4. Clear headings and stable section hierarchy
+5. Cross-links to related docs where relevant
 
 ---
 
-<!-- Last updated is listed at the top of this document. -->
+## 4) Writing Quality Rules
+
+- Use precise, professional wording.
+- Distinguish clearly between:
+  - **Shipped behavior**
+  - **Planned behavior**
+- Avoid ambiguous phrases without scope/timeframe.
+- For formulas and metrics, include explicit definitions and examples.
+- For API behavior, include contract-level request/response summaries.
+
+---
+
+## 5) Change Management Policy
+
+When behavior changes in code:
+
+1. Update affected docs in the same delivery window.
+2. Add an entry in `CHANGELOG.md`.
+3. Update traceability links (requirements -> code -> verification).
+4. Reconcile variable and metric definitions if formulas changed.
+
+---
+
+## 6) Ownership and Cadence
+
+| Document Group | Primary Owner | Minimum Cadence |
+|---|---|---|
+| Product strategy and requirements | Product | Monthly or major release |
+| Design guidelines | Design | Quarterly or UI-system change |
+| Architecture/API | Engineering | Every architecture/API change |
+| Variables/metrics/OKRs | Product Analytics + Product | Monthly |
+| Governance/traceability/guardrails | Product Ops + Engineering | Every release |
+
+---
+
+## 7) Release Readiness Documentation Gate
+
+A release is not documentation-complete unless:
+
+- PRD reflects final shipped scope
+- API contracts reflect current route behaviors
+- Variables and metrics formulas match implementation
+- Traceability matrix includes changed requirements
+- Changelog records notable changes and impact
+
+---
+
+## 8) Professional Product Documentation Baseline
+
+The complete documentation suite must continuously cover:
+
+- Product overview and business benefit
+- Feature and workflow logic
+- Technical architecture and persistence model
+- Business/technical limitations and guardrails
+- KPI and OKR measurement logic
+- Requirement-to-implementation traceability
+
+---
+
+## 9) Error Communication Standard
+
+All user-facing failure communication must:
+
+- Explain probable root cause in plain language.
+- Include a safe next-step instruction (`retry`, `check password`, `validate file format`, etc.).
+- Avoid exposing only raw transport errors (for example, status-only messages without context).
+- Preserve security by excluding sensitive internals (tokens, hashes, stack traces).
+
+---
+
+## 10) Source-Code Documentation Expectations
+
+For complex logic paths, source files should include concise comments that clarify:
+
+- Why an invariant exists (for example, profile scoping, recurrence determinism, read-only constraints).
+- Why a fallback or recovery branch is necessary (import fallback, profile visibility bootstrap).
+- Why a tradeoff was chosen (non-monolith runtime persistence, batch mutation flow).
+
+---
+
+## 11) Release Artifact Checklist (Mandatory)
+
+Before considering a release documentation-complete, all of the following must exist and be updated:
+
+- Product and technical overview (`README.md`, `docs/ARCHITECTURE.md`, `docs/API_CONTRACTS.md`)
+- Product planning artifacts (`docs/PRD.md`, `docs/USER_PERSONAS.md`, `docs/USER_STORIES.md`)
+- Analytics artifacts (`docs/VARIABLES.md`, `docs/PRODUCT_METRICS.md`, `docs/METRICS_AND_OKRS.md`)
+- Governance artifacts (`docs/TRACEABILITY_MATRIX.md`, `docs/GUARDRAILS.md`, `docs/CHANGELOG.md`)
+- Operating-quality artifacts (`docs/OPERATING_MODEL.md`, `docs/TEST_STRATEGY.md`)
+

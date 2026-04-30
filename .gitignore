@@ -6,7 +6,7 @@ dist-ssr
 .env
 .env.local
 
-# Local persistence (never commit)
+# Local persistence (never commit, including unified data)
 backend/data/*.json
 
 # Vite cache (if present)

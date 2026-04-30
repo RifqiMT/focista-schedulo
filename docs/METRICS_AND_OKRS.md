@@ -1,140 +1,84 @@
-# Metrics and OKRs — Focista Schedulo
+# Metrics and OKRs
 
-**Last updated:** 2026-04-09  
+**Last updated:** 2026-04-30  
 **Owner:** Product
 
-This document frames quarterly OKRs and the metrics used to measure them for the product team. Product metric definitions live in `PRODUCT_METRICS.md`. Variable definitions and formulas live in `VARIABLES.md`.
-
 ---
 
-## Guiding Principles
-
-- **Outcome over output** — OKRs measure user impact and product health, not feature count.
-- **Leading and lagging** — Mix early behavior signals (e.g. calendar usage) with stable outcome metrics (e.g. WCST, streak).
-- **Quality gates** — Reliability of recurrence, IDs, and calendar is a foundation; issues can block growth and trust.
-
----
-
-## Objective 1 — Make planning-to-execution feel effortless
-
-**Rationale:** Users should be able to capture tasks quickly, plan in calendar context, and complete work consistently.
+## Objective 1: Make daily execution fast and reliable
 
 ### Key Results
 
-| ID | Key result | Measurement |
-|----|-------------|-------------|
-| KR1.1 | Increase Weekly Completed, Scheduled Tasks (WCST) by 30% from baseline to target. | WCST (see PRODUCT_METRICS.md). |
-| KR1.2 | At least 40% of active users open Day Agenda weekly (Calendar usage A2). | A2 metric. |
-| KR1.3 | Reduce “time to first structured task” to under 60 seconds for new users (A1). | A1 + time-to-first-structured-task. |
+- **KR1.1:** >= 90% of critical actions complete under 1 second in normal local usage.
+- **KR1.2:** Reduce recurrence-related defect reports by 50% from previous baseline.
+- **KR1.3:** Achieve >= 99% save/sync operation success in release validation.
 
-### Inputs / Initiatives
+### Supporting Metrics
 
-- Improve task editor defaults and quick actions.
-- Make calendar affordances clearer (hover states, entry legibility).
-- Continue improving voice parsing accuracy and auto-stop behavior.
+- PM-03 Recurrence Integrity Rate
+- PM-04 Action Latency Compliance
+- QM-01 Data Write Safety
 
 ---
 
-## Objective 2 — Make recurrence and calendar reliability world-class
-
-**Rationale:** Recurrence, IDs, and calendar are trust foundations; unreliability drives churn.
+## Objective 2: Strengthen profile-scoped planning trust
 
 ### Key Results
 
-| ID | Key result | Measurement |
-|----|-------------|-------------|
-| KR2.1 | Recurrence duplication rate ≤ 0.5% of sessions (Q1). | Q1 (PRODUCT_METRICS.md). |
-| KR2.2 | Calendar correctness rate ≥ 99% for multi-day tasks (Q2). | Q2. |
-| KR2.3 | Parent/child ID stability incidents reduced to near-zero (support/QA). | Incident tracking. |
-| KR2.4 | Recurring completion integrity meets Q4 targets (gap-fill materialization; no unintended revert of mark-active on reload). | Q4 + QA on partial-series completion. |
-| KR2.5 | Virtual materialization duplicate-write incidents = 0 per release window. | UI/API mutation telemetry + QA runs. |
+- **KR2.1:** Zero cross-profile data visibility regressions per release.
+- **KR2.2:** >= 95% profile flow success across create/edit/lock/unlock/export paths.
+- **KR2.3:** Profile-scoped progress reflects current state in <2 seconds post-mutation.
 
-### Inputs / Initiatives
+### Supporting Metrics
 
-- Regression tests for recurrence expansion and series normalization.
-- Fixtures for multi-day calendar segmentation.
-- Data migrations on startup remain deterministic and idempotent.
+- PM-02 Profile Scope Integrity
+- PM-06 Import Reliability
+- EM-01 Streak Continuity
 
 ---
 
-## Objective 3 — Strengthen motivation loops
-
-**Rationale:** Progress feedback supports daily engagement and habit formation.
+## Objective 3: Improve measurable productivity outcomes
 
 ### Key Results
 
-| ID | Key result | Measurement |
-|----|-------------|-------------|
-| KR3.1 | Increase average streakDays distribution median by 1 day. | stats.streakDays (VARIABLES.md). |
-| KR3.2 | Increase pointsToday median by 20% among weekly active users. | stats.pointsToday. |
-| KR3.3 | Increase weekly open rate of Productivity Analysis to a defined target once E5 baselining is available (e.g. ≥ 25% of WAU). | E5 (PRODUCT_METRICS.md); backed by `GET /api/productivity-insights`. |
+- **KR3.1:** Increase WCST by 20% quarter-over-quarter.
+- **KR3.2:** Increase median streak length by 1 day.
+- **KR3.3:** Increase productivity analysis feature adoption by 30%.
 
-### Inputs / Initiatives
+### Supporting Metrics
 
-- Improve progress panel clarity and immediacy (including real-time refresh via `GET /api/events` where available).
-- Keep productivity charts aligned with server-computed series so insights match live stats semantics.
-- Add meaningful badges or milestones (optional), based on consistent behavior patterns (e.g. Monthly/Yearly Grinding; Badges-earned tiers).
+- NSM-01 WCST
+- EM-01 Streak Continuity
+- EM-03 Productivity Insight Usage
 
 ---
 
-## Objective 4 — Improve portability and data ownership (planned)
-
-**Rationale:** Users want data to be exportable and eventually syncable.
+## Objective 4: Maintain enterprise-grade documentation and traceability
 
 ### Key Results
 
-| ID | Key result | Measurement |
-|----|-------------|-------------|
-| KR4.1 | Export success rate ≥ 99% (no corrupted downloads). | Q3 (PRODUCT_METRICS.md). |
-| KR4.2 | Add import flow with validation and conflict handling. | Feature shipped. |
+- **KR4.1:** 100% of major feature changes reflected in docs and changelog before release close.
+- **KR4.2:** 100% of functional requirements mapped in traceability matrix.
+- **KR4.3:** Zero unresolved doc-to-code mismatches in release audit.
 
-### Inputs / Initiatives
+### Supporting Metrics
 
-- Maintain reliable JSON/CSV export; add tests.
-- Design and implement import flow when prioritized.
-
----
-
-## Product Team Metrics Summary
-
-| Metric type | Examples |
-|-------------|----------|
-| **North Star** | WCST (Weekly Completed, Scheduled Tasks). |
-| **Activation** | A1 (first structured task), A2 (calendar usage). |
-| **Engagement** | Recurrence adoption, voice adoption, tasks per active day, Productivity Analysis (E5). |
-| **Retention** | 7-day return (planned), streak distribution. |
-| **Quality** | Recurrence duplication rate, calendar correctness, export success. |
-| **Motivation** | streakDays, pointsToday, level/XP. |
+- Documentation update SLA compliance
+- Traceability coverage completeness
+- Crosswalk discrepancy count
 
 ---
 
-## OKR Governance Model
+## Objective 5: Improve failure communication quality
 
-1. KR definitions must map to operational formulas in `PRODUCT_METRICS.md` and `VARIABLES.md`.
-2. KR status updates follow monthly operating review cadence.
-3. Any metric definition change requires versioned note in this document.
-4. Delivery initiatives must map to requirements in `TRACEABILITY_MATRIX.md`.
+### Key Results
 
----
+- **KR5.1:** 100% of top user-facing failure paths use friendly root-cause messages.
+- **KR5.2:** Reduce “unclear error” user feedback incidents by 60%.
+- **KR5.3:** Keep showcase profile mutation-block correctness at 100%.
 
-## Quarter Execution Rhythm (Recommended)
+### Supporting Metrics
 
-- Week 1: Baseline and target reaffirmation
-- Week 2-3: Initiative delivery and instrumentation validation
-- Week 4: KPI review, retrospective, and KR confidence scoring
+- PM-07 Error Clarity Coverage
+- PM-08 Showcase Integrity
 
----
-
-## Risk Signals for Escalation
-
-Escalate when one or more conditions hold for two consecutive reporting cycles:
-
-- Q1 recurrence duplication rate > 0
-- Q2 calendar correctness drops below target
-- R2 streak continuation trend declines with no corresponding scope change
-- E3 recurrence adoption declines after recurrence-related releases
-- E5 Productivity Analysis engagement drops after analytics or chart changes without a corresponding drop in WAU
-
----
-
-<!-- Last updated is listed at the top of this document. -->

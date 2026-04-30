@@ -1,191 +1,59 @@
-# Product Metrics — Focista Schedulo
+# Product Metrics
 
-**Last updated:** 2026-04-09  
+**Last updated:** 2026-04-30  
 **Owner:** Product Analytics
 
-This document defines the product metrics used to evaluate the health and growth of Focista Schedulo. For OKRs and product-team metrics, see `METRICS_AND_OKRS.md`. For variable definitions and formulas, see `VARIABLES.md`.
+---
+
+## North-Star Metric
+
+### NSM-01: Weekly Completed Scoped Tasks (WCST)
+
+- **Definition:** Number of completed tasks per week in active profile scope.
+- **Why it matters:** Captures real execution, not just task creation.
+- **Formula:** Weekly count of tasks where `completed = true`, grouped by progress day.
 
 ---
 
-## North Star Metric
+## Core Product Metrics
 
-### Weekly Completed, Scheduled Tasks (WCST)
-
-| Attribute | Value |
-|-----------|--------|
-| **Definition** | Count of tasks that are **completed** and had scheduling intent (i.e. `dueDate` is set), grouped by week. |
-| **Why it matters** | Measures users translating planning into execution, not just capturing tasks. |
-| **Formula** | WCST = count(tasks where `completed === true` and `dueDate` is set) per week. |
-| **Instrumentation** | Current implementation computes basic stats server-side; full WCST may require completion timestamps or explicit week grouping. |
-
----
-
-## Shipped vs Planned (Instrumentation Guide)
-
-This product currently ships **local-first persistence** without a user identity model or telemetry pipeline. Therefore:
-
-- **Shipped metrics (server-computable):** Metrics that can be computed directly from persisted tasks (e.g., streak distribution, recurrence duplication detection signals) or existing endpoints like `GET /api/stats` and `GET /api/productivity-insights`.
-- **Planned metrics (instrumentation-required):** Metrics that require session/user identity and event telemetry (e.g., DAU/WAU, time-to-first-structured-task, weekly open-rate of a modal).
-
-In this document, any metric marked **(planned)** means **instrumentation is required** before it can be reported reliably.
+| Metric ID | Metric Name | Definition | Formula | Target Direction |
+|---|---|---|---|---|
+| PM-01 | Task Completion Velocity | Completed tasks per active week | count(completed tasks)/active week | Up |
+| PM-02 | Profile Scope Integrity | Percentage of views without cross-profile leakage defects | 1 - (scope defects / scope checks) | Up |
+| PM-03 | Recurrence Integrity Rate | Recurring operations without duplicate/missing defects | successful recurrence ops / total recurrence ops | Up |
+| PM-04 | Action Latency Compliance | Share of critical actions under 1 second | actions < 1000ms / total critical actions | Up |
+| PM-05 | Export Reliability | Successful export operations ratio | successful exports / export attempts | Up |
+| PM-06 | Import Reliability | Successful imports without data corruption | successful imports / import attempts | Up |
+| PM-07 | Error Clarity Coverage | Share of failed user actions surfaced with friendly root-cause copy | friendly errors / total surfaced errors | Up |
+| PM-08 | Showcase Integrity | Share of blocked mutations correctly prevented for showcase profile | blocked showcase writes / showcase write attempts | Up |
 
 ---
 
-## Activation Metrics
+## Secondary Engagement Metrics
 
-### A1 — First structured task created
-
-| Attribute | Value |
-|-----------|--------|
-| **Definition** | User creates their first task with at least two structured fields beyond title (e.g. dueDate, priority, projectId, repeat). |
-| **Success threshold** | Within first session. |
-| **Notes** | Requires event instrumentation (planned). |
-
-### A2 — Calendar usage
-
-| Attribute | Value |
-|-----------|--------|
-| **Definition** | User switches to Calendar view and opens Day Agenda at least once. |
-| **Notes** | Indicates adoption of planning workflow. |
-
----
-
-## Engagement Metrics
-
-### E1 — DAU/WAU (planned)
-
-| Attribute | Value |
-|-----------|--------|
-| **Definition** | Daily and weekly active usage. |
-| **Notes** | Requires user identity and telemetry (not currently shipped). |
-
-### E2 — Tasks created per active day
-
-| Attribute | Value |
-|-----------|--------|
-| **Definition** | Count of tasks created per day of usage. |
-| **Notes** | Can be approximated from backend data if creation timestamps are available. |
-
-### E3 — Recurrence adoption
-
-| Attribute | Value |
-|-----------|--------|
-| **Definition** | Percentage of users (or sessions) that have at least one repeating task (`repeat !== "none"`). |
-| **Notes** | Proxy for “planning ahead” behavior. |
-
-### E4 — Voice capture adoption
-
-| Attribute | Value |
-|-----------|--------|
-| **Definition** | Percentage of users who use voice input at least once per week (or per session). |
-| **Notes** | Requires voice-usage instrumentation (planned). |
-
-### E5 — Productivity Analysis engagement
-
-| Attribute | Value |
-|-----------|--------|
-| **Definition** | Share of sessions (or users, when telemetry exists) that open **Productivity Analysis** at least once per week. |
-| **Why it matters** | Indicates demand for historical completion, points, and streak context beyond the live stats strip. |
-| **Source (current)** | Feature is shipped; session-level counts require instrumentation. Proxy: support/feedback and optional client event `pst:open-productivity` when added. |
-| **Related API** | `GET /api/productivity-insights` (see `docs/API_CONTRACTS.md`, `VARIABLES.md`). |
-
----
-
-## Retention Metrics
-
-### R1 — 7-day return rate (planned)
-
-| Attribute | Value |
-|-----------|--------|
-| **Definition** | Percentage of users who return within 7 days after first use. |
-| **Notes** | Requires user identity and telemetry. |
-
-### R2 — Streak continuation
-
-| Attribute | Value |
-|-----------|--------|
-| **Definition** | Distribution of completion streak days (`streakDays`). |
-| **Source** | `GET /api/stats` → `streakDays`. |
-| **Notes** | Higher median streak indicates sustained engagement. |
+| Metric ID | Metric Name | Definition |
+|---|---|---|
+| EM-01 | Streak Continuity | Distribution trend of `streakDays` |
+| EM-02 | XP Gain Momentum | Weekly change in `pointsToday` and cumulative XP |
+| EM-03 | Productivity Insight Usage | Frequency of productivity analysis feature use |
+| EM-04 | Bulk Action Adoption | Share of task maintenance done through batch operations |
 
 ---
 
 ## Quality Metrics
 
-### Q1 — Recurrence duplication rate (goal: ~0)
-
-| Attribute | Value |
-|-----------|--------|
-| **Definition** | Count or rate of duplicate persisted occurrences for the same logical series/date pair. |
-| **Detection** | Backend integrity checks detect same-series same-date duplicates; UI materialization flow prevents duplicate real tasks under concurrent actions. |
-| **Target** | Near zero. |
-
-### Q4 — Recurring completion integrity (gap-fill + user toggles)
-
-| Attribute | Value |
-|-----------|--------|
-| **Definition** | Recurring series behavior stays trustworthy: completing a later occurrence can **materialize missing prior dates** as completed, but **existing** occurrences are **not** forced back to completed on reload after the user marked them active. |
-| **Detection** | QA on series with partial completion + mark-active on middle occurrences; verify `loadData` / file-watch reload does not revert intentional inactive rows. |
-| **Target** | No unintended flips of saved completion state; gap-fill still creates missing persisted rows when appropriate. |
-
-### Q2 — Calendar correctness rate
-
-| Attribute | Value |
-|-----------|--------|
-| **Definition** | Percentage of multi-day tasks that appear on all days they span. |
-| **Notes** | Verified via segmentation logic in calendar builder; can be tested with fixtures. |
-
-### Q3 — Export success rate
-
-| Attribute | Value |
-|-----------|--------|
-| **Definition** | Percentage of export attempts that produce a valid, uncorrupted file. |
-| **Target** | ≥ 99%. |
+| Metric ID | Metric Name | Definition |
+|---|---|---|
+| QM-01 | Data Write Safety | No invalid or destructive persistence events |
+| QM-02 | API Contract Stability | Contract-breaking changes per release |
+| QM-03 | Runtime Persistence Efficiency | Average write coalescing effectiveness under high activity |
 
 ---
 
-## Metric Definitions and Variable References
+## Reporting Cadence
 
-See `VARIABLES.md` for:
+- Weekly: PM-01, PM-04, EM-02
+- Bi-weekly: PM-02, PM-03, QM-01
+- Monthly: PM-05, PM-06, QM-02, QM-03
 
-- Priority-to-points mapping (low=1, medium=2, high=3, urgent=4)
-- Level formula: `1 + floor(totalPoints / 50)`
-- XP to next: `50 - (totalPoints % 50)` (or 50 when divisible)
-- CalendarEntry segmentation definitions
-- `stats.completedToday`, `stats.pointsToday`, `stats.totalPoints`, `stats.streakDays`
-
----
-
-## Metric Ownership and Reporting Cadence
-
-| Metric Group | Primary Owner | Secondary Owner | Reporting Cadence |
-|--------------|---------------|-----------------|-------------------|
-| Activation (A1, A2) | Product | Engineering | Weekly |
-| Engagement (E1-E5) | Product Analytics | Product | Weekly |
-| Retention (R1, R2) | Product Analytics | Product | Monthly |
-| Quality (Q1-Q3) | Engineering | Product | Weekly + release gate |
-
----
-
-## Data Quality Checks
-
-Before metrics are consumed for decisions:
-
-1. Validate no duplicate task IDs in persisted data.
-2. Validate no duplicate recurring occurrences in the same series/date.
-3. Validate local-date correctness for daily calculations (`completedToday`, `streakDays`, `last7Days`) against **`completionDateIsoLocalForTask`** (**`dueDate`** first, else **`completedAt`** local day).
-4. Validate milestone and level formulas in `/api/stats`.
-5. When validating analysis releases, confirm `/api/productivity-insights` series match the Productivity Analysis modal charts (same windows and field semantics as `VARIABLES.md`).
-
----
-
-## Instrumentation Backlog (Planned)
-
-- Formal event taxonomy and naming convention.
-- Dashboard mapping by audience (PM, engineering, leadership).
-- Baseline/target snapshots by quarter.
-- SLA for metric refresh latency and data quality alerts.
-
----
-
-<!-- Last updated is listed at the top of this document. -->

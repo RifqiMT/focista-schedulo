@@ -1,125 +1,104 @@
-# User Personas — Focista Schedulo
+# User Personas
 
-**Last updated:** 2026-04-09  
+**Last updated:** 2026-04-30  
 **Owner:** Product
 
-This document describes the primary user personas for Focista Schedulo. Personas inform feature prioritization, UX decisions, and messaging.
-
 ---
 
-## Persona 1 — The Project Operator
+## Persona A: Multi-Context Professional
 
-**Profile:** Mid-level professional managing multiple deliverables, meetings, and cross-team dependencies. Works from a mix of desktop and browser; needs a single place to see what’s due when and to adjust quickly when scope changes.
+**Profile:** Knowledge worker balancing personal and professional responsibilities, often switching context multiple times per day.
 
 **Primary goals:**
 
-- Keep tasks organized by project and priority.
-- Plan the day realistically using duration and calendar context.
-- Move and update tasks quickly when priorities shift.
-
-**Key behaviors:**
-
-- Creates tasks in batches per project.
-- Uses calendar and day agenda to decide what fits today vs. tomorrow.
-- Tracks completion and streaks for motivation (day-scoped stats use **progress day**: **`dueDate`** when set, else completion date); opens **Badges** for milestone detail and **Productivity Analysis** for long-range trends.
-- Uses bulk move and delete to keep lists manageable.
+- Keep work/personal plans separated and clear
+- Re-prioritize quickly when schedules shift
+- Track execution quality over time
 
 **Pain points:**
 
-- To-do lists feel noisy without a calendar view.
-- Recurring admin tasks duplicate or drift over time.
-- Editing recurring series is often unreliable in other tools.
+- Task leakage between contexts
+- Slow bulk operations
+- Inconsistent recurring task behavior
 
-**What success looks like:**
+**Success criteria:**
 
-- One view to see the month and drill into a day agenda.
-- Recurring tasks stay stable and predictable; can expand to see occurrences.
-- Bulk operations make maintenance easy; hovercard gives full details without opening the editor.
+- Profile-based scoping remains strict
+- Common actions complete quickly
+- Recurring workflows stay predictable
 
 ---
 
-## Persona 2 — The Routine Builder
+## Persona B: Routine Builder
 
-**Profile:** Student or learner building habits (study, exercise, language practice). Relies on repetition and consistency; wants recurring planning to stay clean while still being able to inspect upcoming horizons when needed.
+**Profile:** User with high recurrence density (daily habits, weekly routines, periodic checklists).
 
 **Primary goals:**
 
-- Set up recurring tasks and focus only on the next one.
-- Capture tasks quickly, including via voice.
-- Feel rewarded for consistency (streaks, points, levels).
-
-**Key behaviors:**
-
-- Uses weekdays/weekends and custom intervals (e.g., every 2 weeks).
-- Completes tasks on mobile or laptop quickly.
-- Checks progress and streak daily.
+- Create robust recurring patterns
+- Mark/undo completion confidently
+- Maintain historical visibility
 
 **Pain points:**
 
-- Recurrence systems often generate many upcoming tasks at once, which feels overwhelming.
-- Voice capture in other apps often fails to fill structured fields correctly.
+- Duplicate/missing recurring entries
+- Hard-to-debug recurrence state
 
-**What success looks like:**
+**Success criteria:**
 
-- Simple recurring setup; list remains collapsed by default while upcoming horizon occurrences can be expanded and inspected.
-- Voice input reliably fills date/time, duration, and priority.
-- Progress panel and streaks provide clear, immediate feedback.
+- Deterministic parent/child normalization
+- Historical recurrence remains complete and accessible
 
 ---
 
-## Persona 3 — The Personal Planner
+## Persona C: Progress-Motivated Planner
 
-**Profile:** Individual managing life admin, errands, and personal goals. Wants to remember deadlines and reminders, tag tasks with labels and locations, and avoid overloading weekends using the calendar.
+**Profile:** User motivated by measurable progress, streaks, and milestone progression.
 
 **Primary goals:**
 
-- Never miss a deadline or reminder.
-- Tag tasks with labels and locations (and links) for context.
-- Use calendar to balance load across the week.
-
-**Key behaviors:**
-
-- Uses reminders and deadlines for time-sensitive tasks.
-- Switches between list and calendar views.
-- Exports data occasionally for backup or analysis.
+- See daily momentum and longer-term productivity trends
+- Use badges/milestones as behavioral reinforcement
 
 **Pain points:**
 
-- Multi-day tasks and time blocks are hard to see clearly.
-- Inconsistent IDs or recurrence behavior reduce trust in the tool.
+- Metrics that feel disconnected from task activity
+- Progress UI not reflecting latest state quickly
 
-**What success looks like:**
+**Success criteria:**
 
-- Calendar reflects multi-day duration correctly with clear segments.
-- Export is one click with format choice (JSON/CSV).
-- Links and locations are easy to add and open from the hovercard or editor.
-
----
-
-## Persona Prioritization and Coverage
-
-| Persona | Priority | Primary Epics | Current Coverage |
-|--------|----------|---------------|------------------|
-| Project Operator | P0 | Task CRUD, projects, bulk actions, calendar/day agenda | Strong |
-| Routine Builder | P0 | Recurrence, complete/reactivate loops, progress and milestones, voice capture | Strong |
-| Personal Planner | P1 | Labels/locations/links, reminders, export, calendar balancing | Strong |
+- Stats and productivity analysis remain reliable and profile-aware
+- Milestone feedback is timely and understandable
 
 ---
 
-## Jobs-to-be-Done (JTBD)
+## Persona-to-Feature Alignment
 
-1. When my day changes quickly, I want to reprioritize and move tasks fast so I can keep momentum.
-2. When I rely on routines, I want recurrence to behave predictably so I can trust future planning.
-3. When I manage personal commitments, I want schedule visibility and reminders so nothing critical slips.
-
----
-
-## Anti-Personas (Out of Current Scope)
-
-- Large multi-team PMO requiring enterprise workflow approvals.
-- Real-time collaborative teams needing shared editing and role-based permissions.
-- Compliance-heavy organizations requiring cloud audit trail and policy controls.
+| Persona | Highest Value Features |
+|---|---|
+| Multi-Context Professional | profiles, project filters, bulk edit/move/delete, calendar planning |
+| Routine Builder | recurrence engine, historical loading, completion robustness |
+| Progress-Motivated Planner | stats, productivity insights, badges, streaks |
 
 ---
 
-<!-- Last updated is listed at the top of this document. -->
+## Persona D: Showcase Presenter / Demo Owner
+
+**Profile:** Team member conducting demos, internal showcases, or training sessions where baseline datasets must remain unchanged.
+
+**Primary goals:**
+
+- Demonstrate app flows safely without corrupting seeded data
+- Prevent accidental changes in the demo profile
+- Communicate failures clearly when an action is intentionally blocked
+
+**Pain points:**
+
+- Accidental edits/deletes during live demos
+- Ambiguous error messages that confuse audience confidence
+
+**Success criteria:**
+
+- Dedicated read-only profile behavior is enforced in frontend and backend
+- Blocked actions return user-friendly root-cause feedback
+

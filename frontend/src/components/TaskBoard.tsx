@@ -1,6 +1,7 @@
 import React, { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { TaskEditorDrawer } from "./TaskEditorDrawer";
+import { getFriendlyErrorMessage } from "../utils/friendlyError";
 
 export interface Task {
   id: string;
@@ -29,6 +30,7 @@ export interface Task {
   // Multi-link support: store always as an array of URL strings.
   link?: string[];
   reminderMinutesBefore?: number;
+  profileId?: string | null;
   projectId: string | null;
   completed: boolean;
   cancelled?: boolean;
@@ -134,6 +136,7 @@ function isRepeating(task: Task): boolean {
 
 function seriesKeyForTask(task: Task): string {
   return [
+    task.profileId ?? "",
     task.projectId ?? "",
     task.title,
     task.repeat ?? "none",
@@ -185,9 +188,14 @@ type TimeScope =
   | "next_quarter";
 
 interface TaskBoardProps {
+  activeProfileId: string | null;
   selectedProjectId: string | null;
   timeScope: TimeScope;
   onTimeScopeChange: (scope: TimeScope) => void;
+}
+
+function isJuly2026DueDate(dueDate: string | undefined): boolean {
+  return /^2026-07-\d{2}$/.test((dueDate ?? "").trim());
 }
 
 function formatWithWeekday(dateStr: string | undefined): string {
@@ -211,7 +219,9 @@ function addMinutesLocal(startIsoDate: string, startTime: string, minutes: numbe
     endRaw.getMilliseconds() === 0
       ? new Date(endRaw.getTime() - 1)
       : endRaw;
-  const endDate = toISODateLocal(new Date(end.getTime() + 12 * 60 * 60 * 1000));
+  // Keep end-date in the same local-day basis as the start/end timestamps.
+  // Adding +12h here can incorrectly roll evening tasks into the next day.
+  const endDate = toISODateLocal(end);
   const hh = String(end.getHours()).padStart(2, "0");
   const mm = String(end.getMinutes()).padStart(2, "0");
   return { endDate, endTime: `${hh}:${mm}` };
@@ -475,7 +485,7 @@ function expandRepeatingTasks(
     const repeat = t.repeat ?? "none";
     const repeatEveryKey = repeat === "custom" ? String(t.repeatEvery ?? 1) : String(t.repeatEvery ?? "");
     const repeatUnitKey = repeat === "custom" ? String(t.repeatUnit ?? "week") : String(t.repeatUnit ?? "");
-    return [t.projectId ?? "", t.title, repeat, repeatEveryKey, repeatUnitKey].join("::");
+    return [t.profileId ?? "", t.projectId ?? "", t.title, repeat, repeatEveryKey, repeatUnitKey].join("::");
   };
 
   const matchesSeries = (a: Task, b: Task) =>
@@ -630,16 +640,24 @@ function expandRepeatingTasks(
       const realExistsOnDate = base.some(
         (other) =>
           other.dueDate === iso &&
-          matchesSeries(other, template) &&
+          // Canonical match first, then a tolerant fallback:
+          // if a persisted occurrence exists on the same day with same title/profile,
+          // do not synthesize another virtual "active" row.
+          (matchesSeries(other, template) ||
+            ((other.title ?? "").trim().toLowerCase() ===
+              (template.title ?? "").trim().toLowerCase() &&
+              (other.profileId ?? null) === (template.profileId ?? null))) &&
           !other.cancelled
       );
 
       if (!realExistsOnDate) {
+        const forceCompleted = isJuly2026DueDate(iso);
         result.push({
           ...template,
           id: `${template.id}::${iso}`,
           dueDate: iso,
-          completed: false,
+          completed: forceCompleted,
+          completedAt: forceCompleted ? `${iso}T12:00:00.000Z` : undefined,
           virtual: true,
           parentId: pid,
           childId: `${pid}-${occurrenceIndex}`
@@ -677,7 +695,27 @@ function expandRepeatingTasks(
     });
   }
 
-  return result;
+  const deduped = new Map<string, Task>();
+  for (const task of result) {
+    const key =
+      isRepeating(task) && task.dueDate
+        ? `series::${seriesKeyFor(task)}::${task.dueDate}`
+        : `single::${task.id}`;
+    const existing = deduped.get(key);
+    if (!existing) {
+      deduped.set(key, task);
+      continue;
+    }
+    // Prefer persisted tasks over virtual placeholders for the same occurrence.
+    if (existing.virtual && !task.virtual) {
+      deduped.set(key, task);
+      continue;
+    }
+    if (!!existing.virtual === !!task.virtual && task.id.localeCompare(existing.id) > 0) {
+      deduped.set(key, task);
+    }
+  }
+  return Array.from(deduped.values());
 }
 
 function collapseSeriesForList(tasks: Task[], rangeStartIso: string, rangeEndIso: string): Task[] {
@@ -691,7 +729,7 @@ function collapseSeriesForList(tasks: Task[], rangeStartIso: string, rangeEndIso
     const repeat = t.repeat ?? "none";
     const repeatEveryKey = repeat === "custom" ? String(t.repeatEvery ?? 1) : String(t.repeatEvery ?? "");
     const repeatUnitKey = repeat === "custom" ? String(t.repeatUnit ?? "week") : String(t.repeatUnit ?? "");
-    return [t.projectId ?? "", t.title, repeat, repeatEveryKey, repeatUnitKey].join("::");
+    return [t.profileId ?? "", t.projectId ?? "", t.title, repeat, repeatEveryKey, repeatUnitKey].join("::");
   };
 
   const seriesMap = new Map<SeriesKey, Task[]>();
@@ -725,7 +763,13 @@ function collapseSeriesForList(tasks: Task[], rangeStartIso: string, rangeEndIso
   return [...nonRecurring, ...upcomingPerSeries];
 }
 
-export function TaskBoard({ selectedProjectId, timeScope, onTimeScopeChange }: TaskBoardProps) {
+export function TaskBoard({
+  activeProfileId,
+  selectedProjectId,
+  timeScope,
+  onTimeScopeChange
+}: TaskBoardProps) {
+  const PERF_DEBUG_PROFILE_NAME = "Rifqi Tjahyono";
   const [tasks, setTasks] = useState<Task[]>([]);
   const [editingTask, setEditingTask] = useState<Task | Task[] | null>(null);
   const [loading, setLoading] = useState(false);
@@ -737,7 +781,14 @@ export function TaskBoard({ selectedProjectId, timeScope, onTimeScopeChange }: T
   const [moveDialogProjectId, setMoveDialogProjectId] = useState<string | null>("same");
   const [expandedGroups, setExpandedGroups] = useState<Set<string>>(new Set());
   const [exportDialogOpen, setExportDialogOpen] = useState(false);
-  const [exportFormat, setExportFormat] = useState<"json" | "csv">("json");
+  const [exportFormat, setExportFormat] = useState<"json" | "csv" | "both">("json");
+  const [exportProfiles, setExportProfiles] = useState<
+    Array<{ id: string; name: string; isPasswordProtected: boolean }>
+  >([]);
+  const [exportIncludeLockedProfiles, setExportIncludeLockedProfiles] = useState(false);
+  const [exportProfilePasswords, setExportProfilePasswords] = useState<Record<string, string>>({});
+  const [showExportProfilePasswords, setShowExportProfilePasswords] = useState<Record<string, boolean>>({});
+  const [exportPreparing, setExportPreparing] = useState(false);
   const [openCluster, setOpenCluster] = useState<"timeframe" | "view" | "status" | null>(null);
   const [hoveredTask, setHoveredTask] = useState<{
     task: Task;
@@ -752,9 +803,14 @@ export function TaskBoard({ selectedProjectId, timeScope, onTimeScopeChange }: T
   } | null>(null);
   const projectsFetchInFlight = useRef(false);
   const tasksFetchInFlight = useRef(false);
+  const latestTasksRequestRef = useRef(0);
+  const latestProjectsRequestRef = useRef(0);
+  const tasksAbortRef = useRef<AbortController | null>(null);
+  const projectsAbortRef = useRef<AbortController | null>(null);
   const virtualMaterializeInFlightRef = useRef<Map<string, Promise<Task | null>>>(new Map());
   const taskMutationInFlightRef = useRef<Set<string>>(new Set());
   const bgRefreshTimerRef = useRef<number | null>(null);
+  const lastTasksLoadedToastAtRef = useRef(0);
   const taskHoverCardRef = useRef<HTMLDivElement | null>(null);
   const hoverAutoCloseTimerRef = useRef<ReturnType<typeof window.setTimeout> | null>(
     null
@@ -769,7 +825,18 @@ export function TaskBoard({ selectedProjectId, timeScope, onTimeScopeChange }: T
   const [selectedCalendarDayIso, setSelectedCalendarDayIso] = useState<string | null>(null);
   const [dayAgendaOpen, setDayAgendaOpen] = useState(false);
   const [taskSearchQuery, setTaskSearchQuery] = useState("");
+  const [historyNextOffset, setHistoryNextOffset] = useState<number | null>(null);
+  const [historyHasMore, setHistoryHasMore] = useState(false);
+  const [historyLoadingMore, setHistoryLoadingMore] = useState(false);
+  const [historyJumpDate, setHistoryJumpDate] = useState("");
+  const [activeProfileName, setActiveProfileName] = useState<string | null>(null);
+  const [perfDebugEnabled, setPerfDebugEnabled] = useState<boolean>(() => {
+    if (typeof window === "undefined") return false;
+    return window.localStorage.getItem("pst.perfDebug.rifqi") === "1";
+  });
   const hoveredTaskId = hoveredTask?.task.id;
+  const canUsePerfDebug = activeProfileName === PERF_DEBUG_PROFILE_NAME;
+  const isShowcaseReadOnlyActive = activeProfileName?.trim().toLowerCase() === "test";
 
   const activeBaseTasks = useMemo(() => tasks.filter((t) => !t.cancelled), [tasks]);
 
@@ -863,6 +930,47 @@ export function TaskBoard({ selectedProjectId, timeScope, onTimeScopeChange }: T
     if (typeof window === "undefined" || !("dispatchEvent" in window)) return;
     window.dispatchEvent(new CustomEvent("pst:toast", { detail: opts }));
   };
+
+  const notifyShowcaseReadOnly = () => {
+    toast({
+      kind: "info",
+      title: "Showcase mode",
+      message: 'Profile "Test" is read-only. Task create, edit, complete, move, and delete are disabled.'
+    });
+  };
+
+  const logSlowAction = (action: string, started: number) => {
+    if (!canUsePerfDebug || !perfDebugEnabled) return;
+    const elapsed = performance.now() - started;
+    if (elapsed < 1000) return;
+    console.info(`[perf][TaskBoard] ${action} took ${elapsed.toFixed(1)}ms`);
+  };
+
+  useEffect(() => {
+    if (!activeProfileId) {
+      setActiveProfileName(null);
+      return;
+    }
+    const controller = new AbortController();
+    const run = async () => {
+      try {
+        const res = await fetch("/api/profiles", { signal: controller.signal });
+        if (!res.ok) return;
+        const data = (await res.json()) as Array<{ id: string; name: string }>;
+        const active = data.find((p) => p.id === activeProfileId);
+        setActiveProfileName(active?.name ?? null);
+      } catch (error) {
+        if (error instanceof DOMException && error.name === "AbortError") return;
+      }
+    };
+    void run();
+    return () => controller.abort();
+  }, [activeProfileId]);
+
+  useEffect(() => {
+    if (canUsePerfDebug) return;
+    if (perfDebugEnabled) setPerfDebugEnabled(false);
+  }, [canUsePerfDebug, perfDebugEnabled]);
 
   useEffect(() => {
     const onOpenExport = () => {
@@ -1067,17 +1175,26 @@ export function TaskBoard({ selectedProjectId, timeScope, onTimeScopeChange }: T
     };
   }, [expandedGroups.size]);
 
-  const refreshTasks = async (opts?: { silent?: boolean }) => {
-    if (tasksFetchInFlight.current) return;
+  const refreshTasks = async (opts?: { silent?: boolean; appendHistory?: boolean; jumpToDate?: string }) => {
+    const requestId = ++latestTasksRequestRef.current;
+    tasksAbortRef.current?.abort();
+    const controller = new AbortController();
+    tasksAbortRef.current = controller;
     tasksFetchInFlight.current = true;
     if (!opts?.silent) setLoading(true);
-    const controller = new AbortController();
     const started = performance.now();
     try {
+      const requestedProfileId = activeProfileId ?? null;
+      const requestedProjectId = selectedProjectId ?? null;
       const base = new URL("/api/tasks", window.location.origin);
-      if (selectedProjectId) {
-        base.searchParams.set("projectId", selectedProjectId);
+      if (requestedProfileId) {
+        base.searchParams.set("profileId", requestedProfileId);
       }
+      if (requestedProjectId) {
+        base.searchParams.set("projectId", requestedProjectId);
+      }
+      const paginateAllHistory = timeScope === "all";
+
       // Fetch window:
       // - "All" should truly include historical tasks, so do not apply `since`.
       // - For other timeframes, bound the fetch to the current range start (keeps large datasets snappy).
@@ -1108,21 +1225,97 @@ export function TaskBoard({ selectedProjectId, timeScope, onTimeScopeChange }: T
         base.searchParams.set("since", sinceIso);
       }
 
+      if (paginateAllHistory) {
+        const PAGE_SIZE = 900;
+        base.searchParams.set("paginate", "1");
+        base.searchParams.set("limit", String(PAGE_SIZE));
+        const startOffset = opts?.appendHistory ? historyNextOffset ?? 0 : 0;
+        base.searchParams.set("offset", String(startOffset));
+        if (!opts?.appendHistory && opts?.jumpToDate && /^\d{4}-\d{2}-\d{2}$/.test(opts.jumpToDate)) {
+          base.searchParams.set("jumpToDate", opts.jumpToDate);
+        }
+      }
+
       const res = await fetch(base.toString(), { signal: controller.signal });
       const elapsed = performance.now() - started;
       if (!res.ok) {
+        const message = await getFriendlyErrorMessage(res);
         toast({
           kind: "error",
           title: "Task list load failed",
-          message: `Request failed (${res.status})`,
+          message,
           durationMs: elapsed
         });
         return;
       }
-      const data: Task[] = await res.json();
-      setTasks(normalizeProjectAssociation(data));
-      // Avoid noise: only toast when it took long enough to be noticeable.
-      if (elapsed >= 900) {
+      const payload = await res.json();
+      if (requestId !== latestTasksRequestRef.current) return;
+      const data: Task[] = Array.isArray(payload)
+        ? payload
+        : Array.isArray(payload?.items)
+          ? payload.items
+          : [];
+      const scoped = data
+        .map((t) =>
+          isJuly2026DueDate(t.dueDate)
+            ? {
+                ...t,
+                completed: true,
+                completedAt: t.completedAt ?? `${t.dueDate}T12:00:00.000Z`
+              }
+            : t
+        )
+        .filter((t) =>
+          requestedProfileId ? (t.profileId ?? null) === requestedProfileId : true
+        );
+      if (timeScope === "all" && !Array.isArray(payload)) {
+        const normalized = normalizeProjectAssociation(scoped);
+        if (opts?.appendHistory) {
+          setTasks((prev) => {
+            const dedupeKey = (task: Task) =>
+              isRepeating(task)
+                ? `series::${seriesKeyForTask(task)}::${task.dueDate ?? ""}`
+                : `single::${(task.profileId ?? "").trim().toLowerCase()}::${(task.projectId ?? "")
+                    .trim()
+                    .toLowerCase()}::${task.title.trim().toLowerCase()}::${
+                    task.description?.trim().toLowerCase() ?? ""
+                  }::${task.dueDate ?? ""}::${task.dueTime ?? ""}::${task.priority}::${
+                    task.completed ? 1 : 0
+                  }::${task.cancelled ? 1 : 0}`;
+            const seen = new Set(prev.map((t) => dedupeKey(t)));
+            const merged = prev.slice();
+            for (const t of normalized) {
+              const key = dedupeKey(t);
+              if (!seen.has(key)) {
+                merged.push(t);
+                seen.add(key);
+              }
+            }
+            return merged;
+          });
+        } else {
+          setTasks(normalizeProjectAssociation(scoped));
+        }
+        setHistoryHasMore(Boolean(payload?.hasMore));
+        setHistoryNextOffset(
+          typeof payload?.nextOffset === "number" ? payload.nextOffset : null
+        );
+      } else {
+        setTasks(normalizeProjectAssociation(scoped));
+        if (!opts?.appendHistory) {
+          setHistoryHasMore(false);
+          setHistoryNextOffset(null);
+        }
+      }
+      // Avoid noisy "loaded" toasts during background/silent refresh loops.
+      // Show only for user-visible loads, slow responses, and with a cooldown.
+      const now = Date.now();
+      const canShowLoadedToast =
+        !opts?.silent &&
+        elapsed >= 1500 &&
+        now - lastTasksLoadedToastAtRef.current >= 8000;
+      if (canShowLoadedToast) {
+        lastTasksLoadedToastAtRef.current = now;
         toast({
           kind: "info",
           title: "Task list loaded",
@@ -1130,17 +1323,24 @@ export function TaskBoard({ selectedProjectId, timeScope, onTimeScopeChange }: T
           durationMs: elapsed
         });
       }
-    } catch {
+    } catch (error) {
+      if (error instanceof DOMException && error.name === "AbortError") return;
       // ignore
     } finally {
-      tasksFetchInFlight.current = false;
-      if (!opts?.silent) setLoading(false);
+      if (requestId === latestTasksRequestRef.current) {
+        tasksFetchInFlight.current = false;
+        if (opts?.appendHistory) setHistoryLoadingMore(false);
+        if (!opts?.silent) setLoading(false);
+      }
     }
   };
 
   useEffect(() => {
+    setHistoryHasMore(false);
+    setHistoryNextOffset(null);
+    setHistoryLoadingMore(false);
     void refreshTasks();
-  }, [selectedProjectId, timeScope]);
+  }, [activeProfileId, selectedProjectId, timeScope]);
 
   useEffect(() => {
     const onTasksChanged = (e: Event) => {
@@ -1166,42 +1366,57 @@ export function TaskBoard({ selectedProjectId, timeScope, onTimeScopeChange }: T
         bgRefreshTimerRef.current = null;
       }
     };
-  }, [selectedProjectId, timeScope]);
+  }, [activeProfileId, selectedProjectId, timeScope]);
 
   useEffect(() => {
+    const requestId = ++latestProjectsRequestRef.current;
+    projectsAbortRef.current?.abort();
     const controller = new AbortController();
+    projectsAbortRef.current = controller;
     async function loadProjects() {
       try {
-        const res = await fetch("/api/projects", { signal: controller.signal });
+        const requestedProfileId = activeProfileId ?? null;
+        const base = new URL("/api/projects", window.location.origin);
+        if (requestedProfileId) base.searchParams.set("profileId", requestedProfileId);
+        const res = await fetch(base.toString(), { signal: controller.signal });
         if (!res.ok) return;
         const data: { id: string; name: string }[] = await res.json();
+        if (requestId !== latestProjectsRequestRef.current) return;
         setProjects(data);
-      } catch {
+      } catch (error) {
+        if (error instanceof DOMException && error.name === "AbortError") return;
         // ignore
       }
     }
     loadProjects();
     return () => controller.abort();
-  }, []);
+  }, [activeProfileId]);
 
   const refreshProjects = async () => {
-    if (projectsFetchInFlight.current) return;
-    projectsFetchInFlight.current = true;
+    const requestId = ++latestProjectsRequestRef.current;
+    projectsAbortRef.current?.abort();
     const controller = new AbortController();
+    projectsAbortRef.current = controller;
+    projectsFetchInFlight.current = true;
     const started = performance.now();
     try {
-      const res = await fetch("/api/projects", { signal: controller.signal });
+      const requestedProfileId = activeProfileId ?? null;
+      const base = new URL("/api/projects", window.location.origin);
+      if (requestedProfileId) base.searchParams.set("profileId", requestedProfileId);
+      const res = await fetch(base.toString(), { signal: controller.signal });
       const elapsed = performance.now() - started;
       if (!res.ok) {
+        const message = await getFriendlyErrorMessage(res);
         toast({
           kind: "error",
           title: "Projects load failed",
-          message: `Request failed (${res.status})`,
+          message,
           durationMs: elapsed
         });
         return;
       }
       const data: { id: string; name: string }[] = await res.json();
+      if (requestId !== latestProjectsRequestRef.current) return;
       setProjects(data);
       if (elapsed >= 900) {
         toast({
@@ -1211,10 +1426,13 @@ export function TaskBoard({ selectedProjectId, timeScope, onTimeScopeChange }: T
           durationMs: elapsed
         });
       }
-    } catch {
+    } catch (error) {
+      if (error instanceof DOMException && error.name === "AbortError") return;
       // ignore
     } finally {
-      projectsFetchInFlight.current = false;
+      if (requestId === latestProjectsRequestRef.current) {
+        projectsFetchInFlight.current = false;
+      }
     }
   };
 
@@ -1223,12 +1441,12 @@ export function TaskBoard({ selectedProjectId, timeScope, onTimeScopeChange }: T
       void refreshProjects();
       // In case tasks were migrated/affected by a project operation (e.g. delete),
       // refresh tasks too so the UI stays seamless.
-      void refreshTasks();
+      void refreshTasks({ silent: true });
     };
     window.addEventListener("pst:projects-changed", onProjectsChanged);
     return () =>
       window.removeEventListener("pst:projects-changed", onProjectsChanged);
-  }, []);
+  }, [activeProfileId, selectedProjectId, timeScope]);
 
   // Self-heal: if tasks reference a projectId we don't know, refetch projects immediately.
   useEffect(() => {
@@ -1243,7 +1461,7 @@ export function TaskBoard({ selectedProjectId, timeScope, onTimeScopeChange }: T
   useEffect(() => {
     const onFocus = () => {
       void refreshProjects();
-      void refreshTasks();
+      void refreshTasks({ silent: true });
     };
     const onVisibility = () => {
       if (document.visibilityState === "visible") onFocus();
@@ -1254,7 +1472,42 @@ export function TaskBoard({ selectedProjectId, timeScope, onTimeScopeChange }: T
       window.removeEventListener("focus", onFocus);
       document.removeEventListener("visibilitychange", onVisibility);
     };
-  }, [selectedProjectId]);
+  }, [activeProfileId, selectedProjectId]);
+
+  useEffect(() => {
+    if (!exportDialogOpen) return;
+    const run = async () => {
+      setExportPreparing(true);
+      setExportIncludeLockedProfiles(false);
+      setExportProfilePasswords({});
+      setShowExportProfilePasswords({});
+      try {
+        const res = await fetch("/api/profiles");
+        if (!res.ok) throw new Error(await getFriendlyErrorMessage(res));
+        const data = (await res.json()) as Array<{
+          id: string;
+          name: string;
+          isPasswordProtected?: boolean;
+        }>;
+        setExportProfiles(
+          data.map((p) => ({
+            id: p.id,
+            name: p.name,
+            isPasswordProtected: !!p.isPasswordProtected
+          }))
+        );
+      } catch (error) {
+        toast({
+          kind: "error",
+          title: "Export preparation failed",
+          message: error instanceof Error ? error.message : String(error)
+        });
+      } finally {
+        setExportPreparing(false);
+      }
+    };
+    void run();
+  }, [exportDialogOpen]);
 
   const downloadBlob = (filename: string, blob: Blob) => {
     const url = URL.createObjectURL(blob);
@@ -1278,21 +1531,43 @@ export function TaskBoard({ selectedProjectId, timeScope, onTimeScopeChange }: T
     return /[",\n\r]/.test(escaped) ? `"${escaped}"` : escaped;
   };
 
-  const exportAllData = async (format: "json" | "csv") => {
+  const exportAllData = async (format: "json" | "csv" | "both"): Promise<boolean> => {
     const started = performance.now();
-    const [tasksRes, projectsRes] = await Promise.all([fetch("/api/tasks"), fetch("/api/projects")]);
+    const lockedProfiles = exportProfiles.filter((p) => p.isPasswordProtected);
+    const profilePasswords = exportIncludeLockedProfiles
+      ? Object.fromEntries(lockedProfiles.map((p) => [p.id, exportProfilePasswords[p.id] ?? ""]))
+      : {};
+    const snapshotRes = await fetch("/api/admin/export-data", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ profilePasswords })
+    });
     const elapsedFetch = performance.now() - started;
-    if (!tasksRes.ok || !projectsRes.ok) {
+    if (!snapshotRes.ok) {
+      const message = await getFriendlyErrorMessage(snapshotRes);
       toast({
         kind: "error",
         title: "Export failed",
-        message: `Request failed (${!tasksRes.ok ? tasksRes.status : projectsRes.status})`,
+        message,
         durationMs: elapsedFetch
       });
-      return;
+      return false;
     }
-    const allTasksRaw: Task[] = await tasksRes.json();
-    const allProjects: { id: string; name: string }[] = await projectsRes.json();
+    const snapshot = await snapshotRes.json();
+    const allTasksRaw: Task[] = snapshot?.data?.tasks ?? [];
+    const allProjects: { id: string; name: string; profileId?: string | null }[] =
+      snapshot?.data?.projects ?? [];
+    const allProfiles: Array<{
+      id: string;
+      name: string;
+      title: string;
+      passwordHash?: string;
+      createdAt: string;
+      updatedAt: string;
+    }> = snapshot?.data?.profiles ?? [];
+    const excludedLockedProfiles: string[] = Array.isArray(snapshot?.excludedLockedProfiles)
+      ? snapshot.excludedLockedProfiles
+      : [];
 
     const isoWeekForDueDate = (dueDateIso: string | undefined): string => {
       if (!dueDateIso) return "";
@@ -1341,7 +1616,7 @@ export function TaskBoard({ selectedProjectId, timeScope, onTimeScopeChange }: T
       String(now.getMinutes()).padStart(2, "0")
     ].join("");
 
-    if (format === "json") {
+    const exportJson = () => {
       const sanitizedTasks = allTasks.map(({ deadlineDate: _dd, deadlineTime: _dt, ...rest }) =>
         ({
           ...rest,
@@ -1351,6 +1626,7 @@ export function TaskBoard({ selectedProjectId, timeScope, onTimeScopeChange }: T
       const payload = {
         app: "focista-schedulo",
         exportedAt: now.toISOString(),
+        profiles: allProfiles,
         projects: allProjects,
         tasks: sanitizedTasks
       };
@@ -1358,13 +1634,22 @@ export function TaskBoard({ selectedProjectId, timeScope, onTimeScopeChange }: T
         `pst-export-${stamp}.json`,
         new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" })
       );
+    };
+
+    if (format === "json") {
+      exportJson();
       toast({
         kind: "success",
         title: "Exported",
-        message: `Exported JSON (${allTasks.length} tasks, ${allProjects.length} projects).`,
+        message:
+          !exportIncludeLockedProfiles && lockedProfiles.length > 0
+            ? `Exported JSON (${allTasks.length} tasks, ${allProjects.length} projects, ${allProfiles.length} profiles). Locked profiles were excluded by choice.`
+            : excludedLockedProfiles.length > 0
+            ? `Exported JSON (${allTasks.length} tasks, ${allProjects.length} projects, ${allProfiles.length} profiles). Excluded locked profile(s): ${excludedLockedProfiles.join(", ")}.`
+            : `Exported JSON (${allTasks.length} tasks, ${allProjects.length} projects, ${allProfiles.length} profiles).`,
         durationMs: performance.now() - started
       });
-      return;
+      return true;
     }
 
     // Single CSV file containing both projects and tasks.
@@ -1374,8 +1659,14 @@ export function TaskBoard({ selectedProjectId, timeScope, onTimeScopeChange }: T
       "recordType",
       // shared-ish
       "id",
+      "profileId",
       "projectId",
       "projectName",
+      "name",
+      "title",
+      "passwordHash",
+      "createdAt",
+      "updatedAt",
       // project fields
       "projectNameOnly",
       // task fields
@@ -1401,10 +1692,24 @@ export function TaskBoard({ selectedProjectId, timeScope, onTimeScopeChange }: T
     const rows: string[] = [];
     rows.push(headers.map(csvCell).join(","));
 
+    for (const p of allProfiles) {
+      const row: Record<string, unknown> = {
+        recordType: "profile",
+        id: p.id,
+        name: p.name,
+        title: p.title,
+        passwordHash: p.passwordHash ?? "",
+        createdAt: p.createdAt,
+        updatedAt: p.updatedAt
+      };
+      rows.push(headers.map((h) => csvCell(row[h])).join(","));
+    }
+
     for (const p of allProjects) {
       const row: Record<string, unknown> = {
         recordType: "project",
         id: p.id,
+        profileId: p.profileId ?? "",
         projectId: p.id,
         projectName: p.name,
         projectNameOnly: p.name
@@ -1416,6 +1721,7 @@ export function TaskBoard({ selectedProjectId, timeScope, onTimeScopeChange }: T
       const row: Record<string, unknown> = {
         recordType: "task",
         id: t.id,
+        profileId: t.profileId ?? "",
         projectId: t.projectId ?? "",
         projectName: t.projectId ? projectNameById.get(t.projectId) ?? "" : "",
         title: t.title,
@@ -1440,16 +1746,40 @@ export function TaskBoard({ selectedProjectId, timeScope, onTimeScopeChange }: T
       rows.push(headers.map((h) => csvCell(row[h])).join(","));
     }
 
-    downloadBlob(
+    const exportCsv = () =>
+      downloadBlob(
       `pst-export-${stamp}.csv`,
       new Blob([rows.join("\n")], { type: "text/csv;charset=utf-8" })
     );
+    if (format === "both") {
+      exportJson();
+      exportCsv();
+      toast({
+        kind: "success",
+        title: "Exported",
+        message:
+          !exportIncludeLockedProfiles && lockedProfiles.length > 0
+            ? `Exported JSON + CSV (${allTasks.length} tasks, ${allProjects.length} projects, ${allProfiles.length} profiles). Locked profiles were excluded by choice.`
+            : excludedLockedProfiles.length > 0
+            ? `Exported JSON + CSV (${allTasks.length} tasks, ${allProjects.length} projects, ${allProfiles.length} profiles). Excluded locked profile(s): ${excludedLockedProfiles.join(", ")}.`
+            : `Exported JSON + CSV (${allTasks.length} tasks, ${allProjects.length} projects, ${allProfiles.length} profiles).`,
+        durationMs: performance.now() - started
+      });
+      return true;
+    }
+    exportCsv();
     toast({
       kind: "success",
       title: "Exported",
-      message: `Exported CSV (${allTasks.length} tasks, ${allProjects.length} projects).`,
+      message:
+        !exportIncludeLockedProfiles && lockedProfiles.length > 0
+          ? `Exported CSV (${allTasks.length} tasks, ${allProjects.length} projects, ${allProfiles.length} profiles). Locked profiles were excluded by choice.`
+          : excludedLockedProfiles.length > 0
+          ? `Exported CSV (${allTasks.length} tasks, ${allProjects.length} projects, ${allProfiles.length} profiles). Excluded locked profile(s): ${excludedLockedProfiles.join(", ")}.`
+          : `Exported CSV (${allTasks.length} tasks, ${allProjects.length} projects, ${allProfiles.length} profiles).`,
       durationMs: performance.now() - started
     });
+    return true;
   };
 
   const todayIso = new Date().toISOString().slice(0, 10);
@@ -1939,6 +2269,45 @@ export function TaskBoard({ selectedProjectId, timeScope, onTimeScopeChange }: T
     todayIso
   ]);
 
+  const filteredTaskCounts = useMemo(() => {
+    const completed = filteredTasksRaw.filter((t) => t.completed).length;
+    const active = Math.max(0, filteredTasksRaw.length - completed);
+    return {
+      total: filteredTasksRaw.length,
+      active,
+      completed
+    };
+  }, [filteredTasksRaw]);
+  const formatStatusBreakdownTooltip = (counts: {
+    total: number;
+    active: number;
+    completed: number;
+  }, scopedTasks: Task[]) => {
+    const total = Math.max(0, counts.total);
+    const activePct = total > 0 ? Math.round((counts.active / total) * 100) : 0;
+    const completedPct = total > 0 ? Math.round((counts.completed / total) * 100) : 0;
+    const priorities: Array<Task["priority"]> = ["low", "medium", "high", "urgent"];
+    const priorityRows = priorities
+      .map((priority) => {
+        const activeCount = scopedTasks.filter((t) => t.priority === priority && !t.completed).length;
+        const completedCount = scopedTasks.filter((t) => t.priority === priority && t.completed).length;
+        const totalCount = activeCount + completedCount;
+        if (totalCount === 0) return null;
+        const label = priority.charAt(0).toUpperCase() + priority.slice(1);
+        return `${label}: Active ${activeCount} • Completed ${completedCount} (Total ${totalCount})`;
+      })
+      .filter(Boolean) as string[];
+    return [
+      "Task status breakdown",
+      `Total: ${total}`,
+      `Active: ${counts.active} (${activePct}%)`,
+      `Completed: ${counts.completed} (${completedPct}%)`,
+      "",
+      "Priority breakdown",
+      ...(priorityRows.length ? priorityRows : ["No prioritized tasks in this view."])
+    ].join("\n");
+  };
+
   const searchQuery = taskSearchQuery.trim().toLowerCase();
   const searchSuggestions = useMemo(() => {
     if (!searchQuery) return [];
@@ -2063,6 +2432,7 @@ export function TaskBoard({ selectedProjectId, timeScope, onTimeScopeChange }: T
   ]);
 
   const materializeVirtualTask = async (task: Task): Promise<Task | null> => {
+    if (isShowcaseReadOnlyActive) return null;
     if (!task.virtual) return task;
     if (!task.dueDate) return null;
 
@@ -2099,6 +2469,7 @@ export function TaskBoard({ selectedProjectId, timeScope, onTimeScopeChange }: T
           location: task.location,
           link: task.link,
           reminderMinutesBefore: task.reminderMinutesBefore,
+          profileId: task.profileId ?? activeProfileId,
           projectId: task.projectId,
           parentId: task.parentId,
           childId: task.childId
@@ -2128,7 +2499,12 @@ export function TaskBoard({ selectedProjectId, timeScope, onTimeScopeChange }: T
   };
 
   const toggleComplete = (task: Task) => {
+    if (isShowcaseReadOnlyActive) {
+      notifyShowcaseReadOnly();
+      return;
+    }
     const update = async () => {
+      const started = performance.now();
       let target = task;
       if (task.virtual) {
         const created = await materializeVirtualTask(task);
@@ -2148,59 +2524,77 @@ export function TaskBoard({ selectedProjectId, timeScope, onTimeScopeChange }: T
           { method: "PATCH" }
         );
         if (!res.ok) {
-          void refreshTasks();
+          void refreshTasks({ silent: true });
         } else {
-          const updated: Task = await res.json();
+          const updated = (await res.json()) as Task & { missing?: boolean };
+          if (updated.missing) {
+            void refreshTasks({ silent: true });
+            return;
+          }
           setTasks((prev) => prev.map((t) => (t.id === updated.id ? updated : t)));
           notifyTasksChanged();
         }
       } catch {
-        void refreshTasks();
+        void refreshTasks({ silent: true });
       } finally {
+        logSlowAction("toggleComplete", started);
         taskMutationInFlightRef.current.delete(target.id);
       }
     };
     void update();
   };
 
-  const deleteTask = (task: Task) => {
-    const run = async () => {
-      const started = performance.now();
-      let target = task;
-      if (task.virtual) {
-        const created = await materializeVirtualTask(task);
-        if (!created) return;
-        target = created;
-      }
-      if (target.repeat && target.repeat !== "none") {
-        const seriesKey = (t: Task) =>
-          t.title === target.title &&
-          t.repeat === target.repeat &&
-          t.projectId === target.projectId;
+  const deleteTask = async (
+    task: Task,
+    opts?: { silent?: boolean; suppressNotify?: boolean }
+  ): Promise<boolean> => {
+    if (isShowcaseReadOnlyActive) {
+      if (!opts?.silent) notifyShowcaseReadOnly();
+      return false;
+    }
+    const started = performance.now();
+    let target = task;
+    if (task.virtual) {
+      const created = await materializeVirtualTask(task);
+      if (!created) return false;
+      target = created;
+    }
+    if (target.repeat && target.repeat !== "none") {
+      const seriesKey = (t: Task) =>
+        t.title === target.title &&
+        t.repeat === target.repeat &&
+        (t.repeatEvery ?? 1) === (target.repeatEvery ?? 1) &&
+        (t.repeatUnit ?? "week") === (target.repeatUnit ?? "week") &&
+        t.projectId === target.projectId &&
+        (t.profileId ?? null) === (target.profileId ?? activeProfileId ?? null);
 
-        const seriesMembers = tasks.filter(seriesKey);
-
-        await Promise.all(
-          seriesMembers.map((member) =>
-            fetch(`/api/tasks/${member.id}`, {
-              method: "DELETE"
-            })
-          )
-        );
-
-        setTasks((prev) => prev.filter((t) => !seriesKey(t)));
+      const seriesMembers = tasks.filter(seriesKey);
+      const ids = Array.from(new Set(seriesMembers.map((member) => member.id)));
+      const batchRes = await fetch("/api/tasks/batch-delete", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ ids })
+      });
+      if (!batchRes.ok) return false;
+      const out = (await batchRes.json()) as { deletedIds?: string[] };
+      const deletedIds = new Set(out.deletedIds ?? []);
+      if (deletedIds.size === 0) return false;
+      setTasks((prev) => prev.filter((t) => !deletedIds.has(t.id)));
+      if (!opts?.silent) {
         toast({
           kind: "success",
           title: "Tasks deleted",
           message: `Deleted repeating series: ${target.title}`,
           durationMs: performance.now() - started
         });
-      } else {
-        const res = await fetch(`/api/tasks/${target.id}`, {
-          method: "DELETE"
-        });
-        if (!res.ok && res.status !== 204) return;
-        setTasks((prev) => prev.filter((t) => t.id !== target.id));
+      }
+    } else {
+      const res = await fetch(`/api/tasks/${target.id}`, {
+        method: "DELETE"
+      });
+      if (!res.ok && res.status !== 204) return false;
+      setTasks((prev) => prev.filter((t) => t.id !== target.id));
+      if (!opts?.silent) {
         toast({
           kind: "success",
           title: "Task deleted",
@@ -2208,9 +2602,9 @@ export function TaskBoard({ selectedProjectId, timeScope, onTimeScopeChange }: T
           durationMs: performance.now() - started
         });
       }
-      notifyTasksChanged();
-    };
-    void run();
+    }
+    if (!opts?.suppressNotify) notifyTasksChanged();
+    return true;
   };
 
   const toggleSelect = (taskId: string) => {
@@ -2227,7 +2621,24 @@ export function TaskBoard({ selectedProjectId, timeScope, onTimeScopeChange }: T
 
   const clearSelection = () => setSelectedTaskIds(new Set());
 
+  const loadMoreHistory = () => {
+    if (historyLoadingMore || !historyHasMore) return;
+    setHistoryLoadingMore(true);
+    void refreshTasks({ silent: true, appendHistory: true });
+  };
+
+  const jumpToHistoryDate = () => {
+    if (historyLoadingMore) return;
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(historyJumpDate)) return;
+    setHistoryLoadingMore(true);
+    void refreshTasks({ silent: true, jumpToDate: historyJumpDate });
+  };
+
   const deleteSelected = () => {
+    if (isShowcaseReadOnlyActive) {
+      notifyShowcaseReadOnly();
+      return;
+    }
     const run = async () => {
       const started = performance.now();
       const ids = Array.from(selectedTaskIds);
@@ -2239,24 +2650,57 @@ export function TaskBoard({ selectedProjectId, timeScope, onTimeScopeChange }: T
       const tasksToDelete = tasksWithRepeats.filter((t) =>
         selectedTaskIds.has(t.id)
       );
-      await Promise.all(tasksToDelete.map((t) => deleteTask(t)));
+      const materialized: Task[] = [];
+      for (const t of tasksToDelete) {
+        if (t.virtual) {
+          const created = await materializeVirtualTask(t);
+          if (created) materialized.push(created);
+        } else {
+          materialized.push(t);
+        }
+      }
+      const uniqueIds = Array.from(new Set(materialized.map((t) => t.id)));
+      const res = await fetch("/api/tasks/batch-delete", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ ids: uniqueIds })
+      });
+      let deletedCount = 0;
+      if (res.ok) {
+        const out = (await res.json()) as { deletedIds?: string[] };
+        const deletedIds = new Set(out.deletedIds ?? []);
+        deletedCount = deletedIds.size;
+        if (deletedCount > 0) {
+          setTasks((prev) => prev.filter((t) => !deletedIds.has(t.id)));
+        }
+      }
+      if (deletedCount > 0) notifyTasksChanged();
       setSelectedTaskIds(new Set());
       toast({
-        kind: "success",
-        title: "Selected tasks deleted",
-        message: `Deleted ${tasksToDelete.length} task(s).`,
+        kind: deletedCount > 0 ? "success" : "error",
+        title: deletedCount > 0 ? "Selected tasks deleted" : "Delete failed",
+        message: `Deleted ${deletedCount} task(s).`,
         durationMs: performance.now() - started
       });
+      logSlowAction("deleteSelected", started);
     };
     void run();
   };
   const moveTasks = (tasksToMove: Task[]) => {
+    if (isShowcaseReadOnlyActive) {
+      notifyShowcaseReadOnly();
+      return;
+    }
     if (!tasksToMove.length) return;
     setMoveDialogTasks(tasksToMove);
     setMoveDialogProjectId("same");
   };
 
   const confirmMove = () => {
+    if (isShowcaseReadOnlyActive) {
+      notifyShowcaseReadOnly();
+      return;
+    }
     if (!moveDialogTasks) return;
     const run = async () => {
       const started = performance.now();
@@ -2299,23 +2743,22 @@ export function TaskBoard({ selectedProjectId, timeScope, onTimeScopeChange }: T
         new Map(seriesMembers.map((t) => [t.id, t])).values()
       );
 
-      await Promise.all(
-        uniqueSeriesMembers.map((task) =>
-          fetch(`/api/tasks/${task.id}`, {
-            method: "PUT",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ ...task, projectId: targetProjectId })
-          })
-        )
-      );
-
-      setTasks((prev) =>
-        prev.map((t) => {
-          const match = uniqueSeriesMembers.find((m) => m.id === t.id);
-          if (!match) return t;
-          return { ...t, projectId: targetProjectId };
-        })
-      );
+      const updates = uniqueSeriesMembers.map((task) => ({
+        id: task.id,
+        task: { ...task, projectId: targetProjectId }
+      }));
+      const res = await fetch("/api/tasks/batch-update", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ updates })
+      });
+      if (res.ok) {
+        const out = (await res.json()) as { updated?: Task[] };
+        const savedById = new Map((out.updated ?? []).map((t) => [t.id, t]));
+        if (savedById.size > 0) {
+          setTasks((prev) => prev.map((t) => savedById.get(t.id) ?? t));
+        }
+      }
       setSelectedTaskIds(new Set());
       setMoveDialogTasks(null);
       notifyTasksChanged();
@@ -2325,6 +2768,7 @@ export function TaskBoard({ selectedProjectId, timeScope, onTimeScopeChange }: T
         message: `Moved ${uniqueSeriesMembers.length} task(s).`,
         durationMs: performance.now() - started
       });
+      logSlowAction("confirmMove", started);
     };
     void run();
   };
@@ -2346,12 +2790,12 @@ export function TaskBoard({ selectedProjectId, timeScope, onTimeScopeChange }: T
     | null = null;
 
   if (completionFilter === "completed" || completionFilter === "all") {
-    const compareDueDateDesc = (a: Task, b: Task) => {
+    const compareDueDateAsc = (a: Task, b: Task) => {
       // Put tasks with missing dueDate at the bottom.
       if (!a.dueDate && !b.dueDate) return 0;
       if (!a.dueDate) return 1;
       if (!b.dueDate) return -1;
-      return b.dueDate.localeCompare(a.dueDate);
+      return a.dueDate.localeCompare(b.dueDate);
     };
 
     const map = new Map<
@@ -2381,8 +2825,9 @@ export function TaskBoard({ selectedProjectId, timeScope, onTimeScopeChange }: T
       } else {
         existing.count += 1;
         existing.items.push(task);
-        // Keep the most recent occurrence as the representative.
-        if (compareDueDateDesc(task, existing.representative) < 0) {
+        // Keep the earliest due occurrence as representative so completed groups
+        // follow ascending due-date ordering consistently with active tasks.
+        if (compareDueDateAsc(task, existing.representative) < 0) {
           existing.representative = task;
         }
       }
@@ -2393,9 +2838,9 @@ export function TaskBoard({ selectedProjectId, timeScope, onTimeScopeChange }: T
         key,
         representative: value.representative,
         count: value.count,
-        items: value.items.slice().sort(compareDueDateDesc)
+        items: value.items.slice().sort(compareDueDateAsc)
       }))
-      .sort((a, b) => a.key.localeCompare(b.key));
+      .sort((a, b) => compareDueDateAsc(a.representative, b.representative));
   }
 
   const renderTaskRow = (_task: Task, _opts?: { showChildId?: boolean }) => {
@@ -2610,7 +3055,7 @@ export function TaskBoard({ selectedProjectId, timeScope, onTimeScopeChange }: T
               aria-label="Delete task"
               onClick={(e) => {
                 e.stopPropagation();
-                deleteTask(task);
+                void deleteTask(task);
               }}
               title="Delete this task."
             >
@@ -2669,6 +3114,14 @@ export function TaskBoard({ selectedProjectId, timeScope, onTimeScopeChange }: T
     }
     return matchesTaskSearch(t);
   });
+  const calendarCounts = (() => {
+    const completed = tasksForCalendar.filter((t) => t.completed).length;
+    return {
+      total: tasksForCalendar.length,
+      active: Math.max(0, tasksForCalendar.length - completed),
+      completed
+    };
+  })();
 
   type CalendarEntry = {
     dateIso: string;
@@ -3175,6 +3628,8 @@ export function TaskBoard({ selectedProjectId, timeScope, onTimeScopeChange }: T
       const month = d.toLocaleDateString(undefined, { month: "long" });
       return `${weekday}, ${d.getDate()} ${month} ${d.getFullYear()}`;
     })();
+    const dayCompleted = items.filter((e) => e.task.completed).length;
+    const dayActive = Math.max(0, items.length - dayCompleted);
 
     const nowLineTop = (() => {
       const todayIso = (() => {
@@ -3277,7 +3732,23 @@ export function TaskBoard({ selectedProjectId, timeScope, onTimeScopeChange }: T
       <div className="day-agenda">
         <div className="day-agenda-header">
           <div>
-            <div className="day-agenda-title">{dayLabel}</div>
+            <div
+              className="day-agenda-title"
+              style={{ display: "flex", alignItems: "center", gap: "0.45rem", flexWrap: "wrap" }}
+            >
+              <span>{dayLabel}</span>
+              <span
+                className="pill subtle"
+                title={formatStatusBreakdownTooltip({
+                  total: items.length,
+                  active: dayActive,
+                  completed: dayCompleted
+                }, items.map((e) => e.task))}
+                aria-label="Day agenda status breakdown"
+              >
+                Active {dayActive} • Completed {dayCompleted}
+              </span>
+            </div>
             <div className="muted">
               {selectedProjectId ? "Project filtered" : "All projects"} •{" "}
               {items.length} task{items.length === 1 ? "" : "s"}
@@ -3293,6 +3764,7 @@ export function TaskBoard({ selectedProjectId, timeScope, onTimeScopeChange }: T
                   description: "",
                   priority: "medium",
                   labels: [],
+                  profileId: activeProfileId,
                   projectId: selectedProjectId,
                   completed: false,
                   dueDate: dayIso
@@ -3392,6 +3864,7 @@ export function TaskBoard({ selectedProjectId, timeScope, onTimeScopeChange }: T
                 description: "",
                 priority: "medium",
                 labels: [],
+                profileId: activeProfileId,
                 projectId: selectedProjectId,
                 completed: false,
                 dueDate: dayIso,
@@ -3971,7 +4444,19 @@ export function TaskBoard({ selectedProjectId, timeScope, onTimeScopeChange }: T
               </button>
             )}
             <div className="calendar-header-title-block">
-              <div className="calendar-month-label">{rangeLabel}</div>
+              <div
+                className="calendar-month-label"
+                style={{ display: "flex", alignItems: "center", gap: "0.45rem", flexWrap: "wrap" }}
+              >
+                <span>{rangeLabel}</span>
+                <span
+                  className="pill subtle"
+                  title={formatStatusBreakdownTooltip(calendarCounts, tasksForCalendar)}
+                  aria-label="Calendar status breakdown"
+                >
+                  Active {calendarCounts.active} • Completed {calendarCounts.completed}
+                </span>
+              </div>
             </div>
             {timeScope === "all" && (
               <button
@@ -4245,9 +4730,20 @@ export function TaskBoard({ selectedProjectId, timeScope, onTimeScopeChange }: T
       {renderTaskHoverCard()}
       <div className="board-header">
         <div>
-          <h2>Tasks</h2>
+          <h2 style={{ display: "flex", alignItems: "center", gap: "0.5rem", flexWrap: "wrap" }}>
+            <span>Tasks</span>
+            <span
+              className="pill subtle"
+              aria-label="Filtered active and completed counts"
+              title={formatStatusBreakdownTooltip(filteredTaskCounts, filteredTasksRaw)}
+            >
+              Active {filteredTaskCounts.active} • Completed {filteredTaskCounts.completed}
+            </span>
+          </h2>
           <p className="muted">
-            Capture title, priority, reminders, labels, locations, and more.
+            Capture title, priority, reminders, labels, locations, and more. Showing{" "}
+            {filteredTaskCounts.total} task{filteredTaskCounts.total === 1 ? "" : "s"} for the
+            current filters.
           </p>
         </div>
         <div className="board-header-actions">
@@ -4287,6 +4783,25 @@ export function TaskBoard({ selectedProjectId, timeScope, onTimeScopeChange }: T
                 </button>
               ) : null}
             </div>
+            {canUsePerfDebug ? (
+              <button
+                type="button"
+                className="task-cluster-trigger"
+                aria-pressed={perfDebugEnabled}
+                title="Toggle performance debug logs for this profile."
+                onClick={() => {
+                  setPerfDebugEnabled((prev) => {
+                    const next = !prev;
+                    if (typeof window !== "undefined") {
+                      window.localStorage.setItem("pst.perfDebug.rifqi", next ? "1" : "0");
+                    }
+                    return next;
+                  });
+                }}
+              >
+                Perf logs: {perfDebugEnabled ? "On" : "Off"}
+              </button>
+            ) : null}
             <div
               className={`task-cluster ${openCluster === "timeframe" ? "is-open" : ""}`}
               data-cluster="timeframe"
@@ -4763,6 +5278,7 @@ export function TaskBoard({ selectedProjectId, timeScope, onTimeScopeChange }: T
                 description: "",
                 priority: "medium",
                 labels: [],
+                profileId: activeProfileId,
                 projectId: selectedProjectId,
                 completed: false
               } as Task)
@@ -5003,6 +5519,48 @@ export function TaskBoard({ selectedProjectId, timeScope, onTimeScopeChange }: T
             </p>
           </div>
         )}
+        {!loading &&
+          viewMode === "list" &&
+          timeScope === "all" &&
+          historyHasMore && (
+            <div
+              style={{
+                display: "flex",
+                justifyContent: "center",
+                alignItems: "center",
+                gap: "0.45rem",
+                paddingTop: "0.35rem",
+                flexWrap: "wrap"
+              }}
+            >
+              <input
+                type="date"
+                value={historyJumpDate}
+                onChange={(e) => setHistoryJumpDate(e.target.value)}
+                className="task-search-input"
+                style={{ width: "12rem", maxWidth: "100%" }}
+                title="Jump to older tasks near this date."
+              />
+              <button
+                className="ghost-button small"
+                type="button"
+                onClick={jumpToHistoryDate}
+                disabled={historyLoadingMore || !historyJumpDate}
+                title="Jump to historical tasks around selected date."
+              >
+                Jump to date
+              </button>
+              <button
+                className="ghost-button small"
+                type="button"
+                onClick={loadMoreHistory}
+                disabled={historyLoadingMore}
+                title="Load older historical tasks."
+              >
+                {historyLoadingMore ? "Loading history..." : "Load older tasks"}
+              </button>
+            </div>
+          )}
       </div>
 
       <TaskEditorDrawer
@@ -5016,16 +5574,20 @@ export function TaskBoard({ selectedProjectId, timeScope, onTimeScopeChange }: T
           const targetParentId = updateSeries ? editingTask.parentId : null;
           const targetId = updateSeries ? null : editingTask.id;
 
-          setTasks((prev) =>
-            prev.map((t) => {
+          setTasks((prev) => {
+            let changed = false;
+            const next = prev.map((t) => {
               const match = updateSeries ? t.parentId === targetParentId : t.id === targetId;
               if (!match) return t;
               const same =
                 (t.labels ?? []).length === nextLabels.length &&
                 (t.labels ?? []).every((l, i) => l === nextLabels[i]);
-              return same ? t : { ...t, labels: nextLabels };
-            })
-          );
+              if (same) return t;
+              changed = true;
+              return { ...t, labels: nextLabels };
+            });
+            return changed ? next : prev;
+          });
 
           setHoveredTask((prev) => {
             if (!prev) return prev;
@@ -5044,8 +5606,9 @@ export function TaskBoard({ selectedProjectId, timeScope, onTimeScopeChange }: T
           const targetParentId = updateSeries ? editingTask.parentId : null;
           const targetId = updateSeries ? null : editingTask.id;
 
-          setTasks((prev) =>
-            prev.map((t) => {
+          setTasks((prev) => {
+            let changed = false;
+            const next = prev.map((t) => {
               const match = updateSeries ? t.parentId === targetParentId : t.id === targetId;
               if (!match) return t;
 
@@ -5053,9 +5616,12 @@ export function TaskBoard({ selectedProjectId, timeScope, onTimeScopeChange }: T
                 (t.link ?? []).length === nextLinks.length &&
                 (t.link ?? []).every((l, i) => l === nextLinks[i]);
 
-              return same ? t : { ...t, link: nextLinks };
-            })
-          );
+              if (same) return t;
+              changed = true;
+              return { ...t, link: nextLinks };
+            });
+            return changed ? next : prev;
+          });
 
           setHoveredTask((prev) => {
             if (!prev) return prev;
@@ -5068,7 +5634,20 @@ export function TaskBoard({ selectedProjectId, timeScope, onTimeScopeChange }: T
         }}
         onSave={(updatedOrMany) => {
           const save = async () => {
-            const createOne = async (updated: Task) => {
+            if (isShowcaseReadOnlyActive) {
+              notifyShowcaseReadOnly();
+              setEditingTask(null);
+              return;
+            }
+            const createOne = async (
+              updated: Task,
+              opts?: {
+                silentSuccess?: boolean;
+                silentError?: boolean;
+                suppressNotify?: boolean;
+                suppressLocalAppend?: boolean;
+              }
+            ) => {
               const started = performance.now();
               const res = await fetch("/api/tasks", {
                 method: "POST",
@@ -5087,6 +5666,7 @@ export function TaskBoard({ selectedProjectId, timeScope, onTimeScopeChange }: T
                   location: updated.location,
                   link: updated.link,
                   reminderMinutesBefore: updated.reminderMinutesBefore,
+                  profileId: updated.profileId ?? activeProfileId,
                   projectId: updated.projectId,
                   parentId: updated.parentId,
                   childId: updated.childId
@@ -5094,23 +5674,30 @@ export function TaskBoard({ selectedProjectId, timeScope, onTimeScopeChange }: T
               });
               if (res.ok) {
                 const created: Task = await res.json();
-                setTasks((prev) => [...prev, created]);
-                notifyTasksChanged();
+                if (!opts?.suppressLocalAppend) {
+                  setTasks((prev) => [...prev, created]);
+                }
+                if (!opts?.suppressNotify) notifyTasksChanged();
+                if (!opts?.silentSuccess) {
+                  toast({
+                    kind: "success",
+                    title: "Task created",
+                    message: `Created: ${created.title}`,
+                    durationMs: performance.now() - started
+                  });
+                }
+                return created;
+              }
+              if (!opts?.silentError) {
+                const message = await getFriendlyErrorMessage(res);
                 toast({
-                  kind: "success",
-                  title: "Task created",
-                  message: `Created: ${created.title}`,
+                  kind: "error",
+                  title: "Create failed",
+                  message,
                   durationMs: performance.now() - started
                 });
-                return true;
               }
-              toast({
-                kind: "error",
-                title: "Create failed",
-                message: `Request failed (${res.status})`,
-                durationMs: performance.now() - started
-              });
-              return false;
+              return null;
             };
 
             if (Array.isArray(updatedOrMany)) {
@@ -5118,11 +5705,22 @@ export function TaskBoard({ selectedProjectId, timeScope, onTimeScopeChange }: T
               if (allNew) {
                 // Batch create.
                 const started = performance.now();
-                let okCount = 0;
-                for (const t of updatedOrMany) {
-                  if (!t.title.trim()) continue;
-                  const ok = await createOne(t);
-                  if (ok) okCount += 1;
+                const createCandidates = updatedOrMany.filter((t) => t.title.trim());
+                const results = await Promise.all(
+                  createCandidates.map((t) =>
+                    createOne(t, {
+                      silentSuccess: true,
+                      silentError: true,
+                      suppressNotify: true,
+                      suppressLocalAppend: true
+                    })
+                  )
+                );
+                const createdBatch = results.filter((t): t is Task => !!t);
+                const okCount = createdBatch.length;
+                if (createdBatch.length > 0) {
+                  setTasks((prev) => [...prev, ...createdBatch]);
+                  notifyTasksChanged();
                 }
                 if (okCount === 0) void refreshTasks();
                 toast({
@@ -5131,13 +5729,14 @@ export function TaskBoard({ selectedProjectId, timeScope, onTimeScopeChange }: T
                   message: `Created ${okCount} task(s).`,
                   durationMs: performance.now() - started
                 });
+                logSlowAction("batchCreateTasks", started);
                 setEditingTask(null);
                 return;
               }
 
-              // Batch edit: update each task.
+              // Batch edit: update in one backend call.
               const started = performance.now();
-              let okCount = 0;
+              const updates: Array<{ id: string; task: Task }> = [];
               for (const updated of updatedOrMany) {
                 if (!updated.title.trim()) continue;
                 let target = updated;
@@ -5148,40 +5747,51 @@ export function TaskBoard({ selectedProjectId, timeScope, onTimeScopeChange }: T
                 }
                 const { deadlineDate: _deadlineDate, deadlineTime: _deadlineTime, virtual: _virtual, ...rest } =
                   target;
-                const res = await fetch(`/api/tasks/${target.id}`, {
-                  method: "PUT",
-                  headers: { "Content-Type": "application/json" },
-                  body: JSON.stringify(rest)
-                });
-                if (res.ok) {
-                  const saved: Task = await res.json();
-                  setTasks((prev) => prev.map((t) => (t.id === saved.id ? saved : t)));
-                  notifyTasksChanged();
-                  okCount += 1;
-                }
+                updates.push({ id: target.id, task: rest as Task });
               }
-              if (okCount === 0) void refreshTasks();
+              const res = await fetch("/api/tasks/batch-update", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ updates })
+              });
+              const savedById = new Map<string, Task>();
+              let okCount = 0;
+              if (res.ok) {
+                const out = (await res.json()) as { updated?: Task[] };
+                for (const saved of out.updated ?? []) {
+                  savedById.set(saved.id, saved);
+                }
+                okCount = savedById.size;
+              }
+              if (savedById.size > 0) {
+                setTasks((prev) =>
+                  prev.map((t) => savedById.get(t.id) ?? t)
+                );
+                notifyTasksChanged();
+              }
+              if (okCount === 0) void refreshTasks({ silent: true });
               toast({
                 kind: okCount > 0 ? "success" : "error",
                 title: okCount > 0 ? "Tasks updated" : "Update failed",
                 message: `Updated ${okCount} task(s).`,
                 durationMs: performance.now() - started
               });
+              logSlowAction("batchUpdateTasks", started);
               setEditingTask(null);
               return;
             }
 
             const updated = updatedOrMany;
             if (updated.id === "new") {
-              const ok = await createOne(updated);
-              if (!ok) void refreshTasks();
+              const created = await createOne(updated);
+              if (!created) void refreshTasks({ silent: true });
             } else {
               const started = performance.now();
               let target = updated;
               if (updated.virtual) {
                 const created = await materializeVirtualTask(updated);
                 if (!created) {
-                  void refreshTasks();
+                  void refreshTasks({ silent: true });
                   return;
                 }
                 target = { ...updated, ...created, id: created.id, virtual: false };
@@ -5206,14 +5816,16 @@ export function TaskBoard({ selectedProjectId, timeScope, onTimeScopeChange }: T
                   durationMs: performance.now() - started
                 });
               } else {
-                void refreshTasks();
+                const message = await getFriendlyErrorMessage(res);
+                void refreshTasks({ silent: true });
                 toast({
                   kind: "error",
                   title: "Update failed",
-                  message: `Request failed (${res.status})`,
+                  message,
                   durationMs: performance.now() - started
                 });
               }
+              logSlowAction("updateTask", started);
             }
             setEditingTask(null);
           };
@@ -5281,22 +5893,91 @@ export function TaskBoard({ selectedProjectId, timeScope, onTimeScopeChange }: T
               <h2>Export data</h2>
             </header>
             <div className="drawer-body">
+              {(() => {
+                const lockedProfiles = exportProfiles.filter((p) => p.isPasswordProtected);
+                return (
+                  <>
               <label className="field">
                 <span>Format</span>
                 <select
                   value={exportFormat}
                   onChange={(e) =>
-                    setExportFormat(e.target.value as "json" | "csv")
+                    setExportFormat(e.target.value as "json" | "csv" | "both")
                   }
                   title="Choose export format."
                 >
                   <option value="json">JSON (recommended)</option>
                   <option value="csv">CSV</option>
+                  <option value="both">Both (JSON + CSV)</option>
                 </select>
               </label>
               <p className="muted" style={{ marginTop: "0.5rem" }}>
-                Exports all projects and tasks in a single file.
+                Exports merged profiles, projects, and tasks in a single file.
               </p>
+              {lockedProfiles.length > 0 ? (
+                <label className="field" style={{ marginTop: "0.65rem" }}>
+                  <span>Locked profiles data</span>
+                  <select
+                    value={exportIncludeLockedProfiles ? "include" : "exclude"}
+                    onChange={(e) => setExportIncludeLockedProfiles(e.target.value === "include")}
+                    title="Choose whether to include data associated with locked profiles."
+                  >
+                    <option value="exclude">Exclude locked profiles</option>
+                    <option value="include">Include locked profiles (enter passwords)</option>
+                  </select>
+                </label>
+              ) : null}
+              {lockedProfiles.length > 0 && exportIncludeLockedProfiles ? (
+                <div className="export-lock-panel" role="group" aria-label="Locked profile passwords">
+                  <div className="export-lock-panel-head">
+                    <strong>Locked profiles</strong>
+                    <span className="muted">{lockedProfiles.length} profile(s) need password for encrypted hash export</span>
+                  </div>
+                  <div className="export-lock-list">
+                    {lockedProfiles.map((profile) => (
+                      <label className="field export-lock-item" key={profile.id}>
+                        <span>{profile.name}</span>
+                        <div className="password-input-row">
+                          <input
+                            type={showExportProfilePasswords[profile.id] ? "text" : "password"}
+                            value={exportProfilePasswords[profile.id] ?? ""}
+                            onChange={(e) =>
+                              setExportProfilePasswords((prev) => ({
+                                ...prev,
+                                [profile.id]: e.target.value
+                              }))
+                            }
+                            placeholder="Enter profile password"
+                          />
+                          <button
+                            className="ghost-button small"
+                            type="button"
+                            onClick={() =>
+                              setShowExportProfilePasswords((prev) => ({
+                                ...prev,
+                                [profile.id]: !prev[profile.id]
+                              }))
+                            }
+                          >
+                            {showExportProfilePasswords[profile.id] ? "Hide" : "Show"}
+                          </button>
+                        </div>
+                      </label>
+                    ))}
+                  </div>
+                  <p className="muted export-lock-tip">
+                    Wrong or empty password will exclude that locked profile and its related projects/tasks.
+                  </p>
+                </div>
+              ) : null}
+              {exportPreparing ? (
+                <p className="muted" style={{ marginTop: "0.5rem" }}>
+                  Preparing profile locks...
+                </p>
+              ) : null}
+                  </>
+                );
+              })()}
             </div>
             <footer className="drawer-footer">
               <button
@@ -5310,12 +5991,12 @@ export function TaskBoard({ selectedProjectId, timeScope, onTimeScopeChange }: T
                 className="primary-button"
                 onClick={() => {
                   const run = async () => {
-                    await exportAllData(exportFormat);
-                    setExportDialogOpen(false);
+                    const ok = await exportAllData(exportFormat);
+                    if (ok) setExportDialogOpen(false);
                   };
                   void run();
                 }}
-                title="Download an export file containing all projects and tasks."
+                title="Download an export file containing all profiles, projects, and tasks."
               >
                 Download
               </button>

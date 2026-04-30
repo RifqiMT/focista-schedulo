@@ -4,6 +4,10 @@
   "private": true,
   "workspaces": ["backend", "frontend"],
   "scripts": {
+    "ready:dev": "npm-run-all setup:dev verify:dev",
+    "setup:dev": "npm install",
+    "verify:dev": "npm-run-all lint test build",
+    "test": "npm --workspace backend run test",
     "dev": "npm-run-all -p dev:backend dev:frontend",
     "dev:backend": "npm --workspace backend run dev",
     "dev:frontend": "npm --workspace frontend run dev",

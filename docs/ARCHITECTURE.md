@@ -1,160 +1,97 @@
-# Architecture — Focista Schedulo
+# Architecture
 
-**Last updated:** 2026-04-01  
-**Owner:** Engineering  
-
-## Overview
-
-Focista Schedulo is a TypeScript monorepo with:
-
-- **Backend**: Node.js + Express REST API with JSON-file persistence
-- **Frontend**: React + Vite SPA with list + calendar views
-## Repository structure
-
-- `backend/`
-  - `src/index.ts`: Express server, schemas, persistence, migrations, recurrence identity rules, stats
-  - `eslint.config.mjs`: ESLint 9 flat config for `src/**/*.ts` (aligned with frontend tooling)
-  - `data/tasks.json`, `data/projects.json`: persisted data (dev/local)
-- `frontend/`
-  - `src/App.tsx`: app shell/branding, cross-component refresh triggers
-  - `src/components/TaskBoard.tsx`: list, calendar month view, day agenda view, export, task actions
-  - `src/components/TaskEditorDrawer.tsx`: task edit/create + voice parsing
-  - `src/components/ProjectSidebar.tsx`: project CRUD + change events
-  - `src/components/GamificationPanel.tsx`: `/api/stats`, Badges entry (full-viewport portaled overlay), opens Productivity Analysis
-  - `src/components/BadgesModalDialogBody.tsx`: milestone badge grids and hover detail (rendered inside gamification portaled shell)
-  - `src/components/ProductivityAnalysisModal.tsx`: productivity charts, fullscreen, `/api/productivity-insights`
-  - `src/components/Toaster.tsx`: app-level toasts (`pst:toast`); suppressed during in-app “true fullscreen” overlays when configured
-  - `src/fullscreenApi.ts`, `src/productivityAnalysisFullscreen.ts`, `src/badgeFullscreen.ts`: fullscreen / overlay helpers and toasts
-  - `src/styles.css`: global theme + component styles (Indonesian palette; `pa-*` productivity shell; `badge-fs-pa-layer` Badges overlay)
-
-## Runtime topology
-
-```mermaid
-flowchart LR
-  UI[React SPA<br/>Vite dev server :5173] -->|/api proxy| API[Express API :4000]
-  API -->|read/write| JSON[(backend/data/*.json)]
-```
-
-## Data model (summary)
-
-See `VARIABLES.md` for full definitions.
-
-- **Project**: `{ id: "P<number>", name }`
-- **Task**: rich fields including `priority`, `dueDate`, `dueTime`, `durationMinutes`, `repeat*`, `projectId`, `completed`, `parentId`, `childId`, `cancelled`, `labels`, `location`, `link` (array of URLs), `reminderMinutesBefore`, `deadlineDate`, `deadlineTime`
-
-## Persistence and migrations
-
-Backend persists to JSON files:
-
-- `backend/data/projects.json`
-- `backend/data/tasks.json`
-
-On server start (`loadData()`):
-
-- Creates `backend/data/` if missing.
-- Loads tasks/projects with Zod validation.
-- **Project ID normalization**:
-  - Resequences all projects to strict `P1..Pn`
-  - Migrates `task.projectId` references accordingly
-- **Series normalization (repeating tasks)**:
-  - Ensures each series has stable `parentId`
-  - Ensures `childId` exists and is sequential by `dueDate`
-  - Ensures `durationMinutes` is consistent within the series
-- **Project association normalization (all tasks)**:
-  - Enforces that tasks sharing the same `parentId` also share the same `projectId`
-  - Canonical project per parent group is the first non-empty `projectId` found; otherwise `null`
-- **Parent ID standardization (all tasks)**:
-  - Enforces `parentId` format `YYYYMMDD-N` for one-time and repeating tasks
-
-These migrations are intended to be **deterministic** and safe to run repeatedly.
-
-## Recurrence and identity strategy
-
-Recurring tasks have two key identity dimensions:
-
-- **Series identity** (shared across occurrences):
-  - `parentId` (standardized `YYYYMMDD-N`)
-  - `seriesKey` (derived): `projectId :: title :: repeat :: repeatEvery :: repeatUnit`
-- **Occurrence identity**:
-  - `childId` (backend-normalized sequence identity; legacy formats may exist in older records)
-
-The frontend may create virtual occurrences across a bounded horizon for planning views. When the user interacts with a virtual occurrence (open/edit/complete), it is materialized into a real backend task while preserving series identity.
-
-Deletion behavior is primarily persisted deletion/materialization-aware mutation, with integrity safeguards to prevent same-series same-date duplicates.
-
-## API surface
-
-### Health
-
-- `GET /health` → `{ status: "ok", service: "focista-schedulo-backend" }`
-
-### Projects
-
-- `GET /api/projects`
-- `POST /api/projects` (body: `{ name }`) → creates `P<number>`
-- `PUT /api/projects/:id` (body: `{ name }`)
-- `DELETE /api/projects/:id` → deletes project + its tasks
-
-### Tasks
-
-- `GET /api/tasks?projectId=P1` (optional filter)
-- `POST /api/tasks` (create)
-- `PUT /api/tasks/:id` (update)
-- `PATCH /api/tasks/:id/complete` (toggle completed + `completedAt`)
-- `DELETE /api/tasks/:id` (delete; recurring tasks may be cancelled instead depending on UI behavior)
-
-### Stats
-
-- `GET /api/stats` → stats used by Progress panel (points, level, streak, last7Days, achievements, milestoneAchievements). Day-based metrics use **progress day** from `completionDateIsoLocalForTask` (**`dueDate`** when set; else local date from **`completedAt`**). Responses are cached in memory; caches are **cleared at the start of** `persistTasks` / `persistProjects` and **after** `loadData()` completes so clients never read stale aggregates while in-memory `tasks` already reflect mutations.
-
-### Productivity insights
-
-- `GET /api/productivity-insights` → `{ rows: ProductivityRow[], projectBreakdown? }` daily series for **completed** tasks only: same **progress-day** bucketing as stats. Includes per-day counts, cumulative completions, per-day and cumulative XP (same priority weights as stats), implied level from cumulative XP, and cumulative milestone “unlocks” along the timeline. Cached and invalidated like `/api/stats`.
-
-### Admin
-
-- `POST /api/admin/reload-data` → reloads tasks and projects from disk (e.g. after editing JSON)
-- `POST /api/admin/save-data` → persists tasks/projects to `backend/data/*.json`, then runs standard normalization by reloading (dedupe + deterministic IDs)
-- `POST /api/admin/import` → imports JSON/CSV exports and merges into persisted data, followed by normalization
-- `POST /api/admin/sync-from-data` → reads JSON files from `backend/data/`, merges into in-memory state, dedupes by id, persists, then runs standard normalization
-
-## Frontend state synchronization
-
-The UI uses a lightweight event mechanism:
-
-- `pst:tasks-changed`
-- `pst:projects-changed`
-- `pst:open-export` (header Export → task board export UI)
-- `pst:toast` (success/error/info notifications surfaced by `Toaster`)
-
-Components dispatch these events after CRUD actions and listen to them to refetch and synchronize state.
-
-Additionally, the app refreshes when:
-
-- window gains focus
-- tab visibility changes
-
-This reduces “stale association” issues (e.g., project rename reflected on task cards).
-
-## Build and dev
-
-- Dev:
-  - API runs on `:4000`
-  - UI runs on `:5173` and proxies `/api` to backend
-- Scripts live in root `package.json`:
-  - `npm run dev`
-  - `npm run build`
-  - `npm run lint`
+**Last updated:** 2026-04-30  
+**Owner:** Engineering
 
 ---
 
-## Related Documentation
+## System Overview
 
-- Product scope and requirements: `docs/PRD.md`
-- Variables and formulas: `docs/VARIABLES.md`
-- Metrics and OKRs: `docs/PRODUCT_METRICS.md`, `docs/METRICS_AND_OKRS.md`
-- Guardrails and constraints: `docs/GUARDRAILS.md`
-- End-to-end traceability: `docs/TRACEABILITY_MATRIX.md`
-- API contracts: `docs/API_CONTRACTS.md`
+Focista Schedulo is a TypeScript monorepo with:
 
-<!-- Last updated is listed at the top of this document. -->
+- `backend`: Express API, validation, persistence, normalization, analytics endpoints
+- `frontend`: React application for profile/task/project/progress workflows
+
+---
+
+## Runtime Topology
+
+```mermaid
+flowchart LR
+  UI[Frontend App :5173]
+  API[Backend API :4000]
+  RT[(Runtime Files<br/>tasks/projects/profiles)]
+  UJ[(Unified JSON<br/>interchange workflows)]
+
+  UI --> API
+  API --> RT
+  API --> UJ
+```
+
+---
+
+## Persistence Strategy
+
+### Runtime (Primary)
+
+- `backend/data/tasks.runtime.json`
+- `backend/data/projects.runtime.json`
+- `backend/data/profiles.runtime.json`
+
+Used for frequent operational mutations and read paths.
+
+### Interchange (Secondary)
+
+- `backend/data/focista-unified-data.json`
+
+Used for import/export/admin interoperability workflows.
+
+---
+
+## Backend Responsibilities
+
+- API contracts and request validation
+- Recurrence identity normalization (parent/child determinism)
+- Profile/project/task scope integrity
+- Stats and productivity aggregate computation
+- Safe persistence with debounced flush strategy
+- Read-only showcase profile policy enforcement for mutation endpoints
+
+Primary implementation: `backend/src/index.ts`
+
+---
+
+## Frontend Responsibilities
+
+- Profile-scoped task/project rendering
+- Optimistic action handling for responsiveness
+- Batch mutation orchestration
+- Calendar and historical task UX
+- Progress and productivity analysis presentation
+- Friendly error translation for toaster UX via shared formatter utility
+
+Primary implementation:
+
+- `frontend/src/App.tsx`
+- `frontend/src/components/TaskBoard.tsx`
+- `frontend/src/components/ProfileManagement.tsx`
+- `frontend/src/components/GamificationPanel.tsx`
+- `frontend/src/components/ProductivityAnalysisModal.tsx`
+
+---
+
+## Reliability and Performance Patterns
+
+- Batch endpoints for high-volume mutations
+- Debounced/coalesced persistence writes
+- Silent reconciliation refreshes after optimistic UI updates
+- Instrumentation for action latency diagnostics
+
+---
+
+## Architectural Constraints
+
+- Local-first file persistence (no cloud DB in current scope)
+- Single-user operational model
+- Interchange file support preserved for portability
+

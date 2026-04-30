@@ -9,17 +9,42 @@ import { computeMonthlyGrinding } from "./monthlyGrinding";
 import { computeYearlyGrinding } from "./yearlyGrinding";
 import { buildBadgesEarnedMilestoneBlock } from "./badgesEarnedMilestone";
 import { capMilestoneBadges } from "./capMilestoneBadges";
+import { hashPassword, verifyPassword } from "./profileSecurity";
+import {
+  createProfile as createProfileRecord,
+  deleteProfile as deleteProfileRecord,
+  toProfilePublic,
+  updateProfile as updateProfileRecord,
+  verifyProfileUnlock
+} from "./profileService";
 
 const app = express();
 app.use(cors());
 app.use(compression());
 // Accept larger JSON bodies for import workflows.
 app.use(express.json({ limit: "10mb" }));
+app.use((req, res, next) => {
+  if (!req.path.startsWith("/api/")) return next();
+  const started = performance.now();
+  const originalEnd = res.end.bind(res);
+  res.end = ((...args: unknown[]) => {
+    const elapsed = performance.now() - started;
+    if (!res.headersSent) {
+      res.setHeader("X-Server-Time-Ms", elapsed.toFixed(1));
+    }
+    return originalEnd(...(args as Parameters<typeof originalEnd>));
+  }) as typeof res.end;
+  next();
+});
 
 const PORT = process.env.PORT || 4000;
 const DATA_DIR = path.join(__dirname, "..", "data");
-const TASKS_FILE = path.join(DATA_DIR, "tasks.json");
-const PROJECTS_FILE = path.join(DATA_DIR, "projects.json");
+const UNIFIED_DATA_FILE = path.join(DATA_DIR, "focista-unified-data.json");
+const TASKS_FILE = path.join(DATA_DIR, "tasks.runtime.json");
+const PROJECTS_FILE = path.join(DATA_DIR, "projects.runtime.json");
+const PROFILES_FILE = path.join(DATA_DIR, "profiles.runtime.json");
+const LEGACY_TASKS_FILE = path.join(DATA_DIR, "tasks.json");
+const LEGACY_PROJECTS_FILE = path.join(DATA_DIR, "projects.json");
 
 const TaskSchema = z.object({
   id: z.string(),
@@ -52,6 +77,7 @@ const TaskSchema = z.object({
   // "single or multiple" URLs.
   link: z.array(z.string()).optional(),
   reminderMinutesBefore: z.number().int().nonnegative().optional(),
+  profileId: z.string().nullable().optional(),
   projectId: z.string().nullable(),
   completed: z.boolean(),
   completedAt: z.string().optional(),
@@ -62,14 +88,35 @@ const TaskSchema = z.object({
 
 const ProjectSchema = z.object({
   id: z.string(),
-  name: z.string().min(1)
+  name: z.string().min(1),
+  profileId: z.string().nullable().optional()
+});
+
+const ProfileSchema = z.object({
+  id: z.string(),
+  name: z.string().min(1),
+  title: z.string().min(1),
+  passwordHash: z.string().min(1).optional(),
+  createdAt: z.string(),
+  updatedAt: z.string()
 });
 
 type Task = z.infer<typeof TaskSchema>;
 type Project = z.infer<typeof ProjectSchema>;
+type Profile = z.infer<typeof ProfileSchema>;
 
 let tasks: Task[] = [];
 let projects: Project[] = [];
+let profiles: Profile[] = [];
+let lastProfileBackfillDiagnostics: {
+  totalBackfilled: number;
+  byProfileId: Record<string, number>;
+  byProfileName: Record<string, number>;
+} = {
+  totalBackfilled: 0,
+  byProfileId: {},
+  byProfileName: {}
+};
 
 type ImportFormat = "json" | "csv";
 
@@ -216,6 +263,47 @@ function isLooseTaskArray(p: unknown): p is unknown[] {
   );
 }
 
+function isLooseProfileArray(p: unknown): p is unknown[] {
+  return (
+    Array.isArray(p) &&
+    p.length > 0 &&
+    typeof p[0] === "object" &&
+    p[0] !== null &&
+    typeof (p[0] as Record<string, unknown>).name === "string" &&
+    typeof (p[0] as Record<string, unknown>).title === "string"
+  );
+}
+
+function parseProfilesLoose(rows: unknown[]): Profile[] {
+  const nowIso = new Date().toISOString();
+  const out: Profile[] = [];
+  for (const row of rows) {
+    if (typeof row !== "object" || row === null) continue;
+    const r = row as Record<string, unknown>;
+    const rawName = String(r.name ?? r.profileName ?? "").trim();
+    const rawTitle = String(r.title ?? r.profileTitle ?? rawName).trim();
+    if (!rawName || !rawTitle) continue;
+    const idRaw = String(r.id ?? "").trim();
+    const profile: Profile = {
+      id: idRaw || makeProfileId(),
+      name: rawName,
+      title: rawTitle,
+      passwordHash:
+        typeof r.passwordHash === "string" && r.passwordHash.trim() ? r.passwordHash.trim() : undefined,
+      createdAt:
+        typeof r.createdAt === "string" && r.createdAt.trim() ? r.createdAt.trim() : nowIso,
+      updatedAt:
+        typeof r.updatedAt === "string" && r.updatedAt.trim() ? r.updatedAt.trim() : nowIso
+    };
+    out.push(profile);
+  }
+  return out;
+}
+
+function normalizeProfileLabel(label: string | undefined): string {
+  return (label ?? "").trim().toLowerCase();
+}
+
 function parsePipeArray(v: string | undefined): string[] {
   const s = (v ?? "").trim();
   if (!s) return [];
@@ -230,7 +318,87 @@ function mergeProjects(existing: Project[], incoming: Project[]): Project[] {
     if (!prev) byId.set(p.id, p);
     else byId.set(p.id, { ...prev, ...p });
   }
-  return Array.from(byId.values());
+  const bySemantic = new Map<string, Project>();
+  for (const p of byId.values()) {
+    const key = `${(p.profileId ?? "").trim().toLowerCase()}::${p.name.trim().toLowerCase()}`;
+    const prev = bySemantic.get(key);
+    if (!prev) {
+      bySemantic.set(key, p);
+      continue;
+    }
+    if (p.id.localeCompare(prev.id) > 0) bySemantic.set(key, p);
+  }
+  return Array.from(bySemantic.values());
+}
+
+function mergeProfiles(existing: Profile[], incoming: Profile[]): Profile[] {
+  const byId = new Map<string, Profile>();
+  for (const p of existing) byId.set(p.id, p);
+  for (const p of incoming) {
+    const prev = byId.get(p.id);
+    byId.set(
+      p.id,
+      prev
+        ? {
+            ...prev,
+            ...p,
+            createdAt: prev.createdAt || p.createdAt
+          }
+        : p
+    );
+  }
+  const bySemantic = new Map<string, Profile>();
+  for (const p of byId.values()) {
+    const key = `${normalizeProfileLabel(p.name)}::${normalizeProfileLabel(p.title)}`;
+    const prev = bySemantic.get(key);
+    if (!prev) {
+      bySemantic.set(key, p);
+      continue;
+    }
+    const prevUpdated = toEpochMs(prev.updatedAt);
+    const nextUpdated = toEpochMs(p.updatedAt);
+    if (nextUpdated >= prevUpdated) {
+      bySemantic.set(key, p);
+    }
+  }
+  return Array.from(bySemantic.values());
+}
+
+function canonicalizeProfilesAndRemap(
+  profilesInput: Profile[],
+  projectsInput: Project[],
+  tasksInput: Task[]
+): { profiles: Profile[]; projects: Project[]; tasks: Task[] } {
+  const bySemantic = new Map<string, Profile>();
+  const aliasById = new Map<string, string>();
+  for (const p of profilesInput) {
+    const key = `${normalizeProfileLabel(p.name)}::${normalizeProfileLabel(p.title)}`;
+    const prev = bySemantic.get(key);
+    if (!prev) {
+      bySemantic.set(key, p);
+      aliasById.set(p.id, p.id);
+      continue;
+    }
+    const prevUpdated = toEpochMs(prev.updatedAt);
+    const nextUpdated = toEpochMs(p.updatedAt);
+    if (nextUpdated >= prevUpdated) {
+      aliasById.set(prev.id, p.id);
+      aliasById.set(p.id, p.id);
+      bySemantic.set(key, p);
+    } else {
+      aliasById.set(p.id, prev.id);
+    }
+  }
+  const canonicalProfiles = Array.from(bySemantic.values());
+  const canonicalIds = new Set(canonicalProfiles.map((p) => p.id));
+  const remap = (pid: string | null | undefined): string | null => {
+    if (!pid) return null;
+    const mapped = aliasById.get(pid) ?? pid;
+    return canonicalIds.has(mapped) ? mapped : null;
+  };
+  const projects = projectsInput.map((p) => ({ ...p, profileId: remap(p.profileId) }));
+  const tasks = tasksInput.map((t) => ({ ...t, profileId: remap(t.profileId) }));
+  return { profiles: canonicalProfiles, projects, tasks };
 }
 
 function mergeTasks(existing: Task[], incoming: Task[]): Task[] {
@@ -249,7 +417,26 @@ function mergeTasks(existing: Task[], incoming: Task[]): Task[] {
       });
     }
   }
-  return Array.from(byId.values());
+  const merged = Array.from(byId.values());
+  const bySemantic = new Map<string, Task>();
+  for (const t of merged) {
+    const key = isRepeatingTask(t)
+      ? `series::${seriesKeyForTask(t)}::${t.dueDate ?? ""}`
+      : `single::${(t.profileId ?? "").trim().toLowerCase()}::${(t.projectId ?? "")
+          .trim()
+          .toLowerCase()}::${t.title.trim().toLowerCase()}::${t.description?.trim().toLowerCase() ?? ""}::${
+          t.dueDate ?? ""
+        }::${t.dueTime ?? ""}::${t.priority}::${t.completed ? 1 : 0}::${t.cancelled ? 1 : 0}`;
+    const prev = bySemantic.get(key);
+    if (!prev) {
+      bySemantic.set(key, t);
+      continue;
+    }
+    const prevRecency = toEpochMs(prev.completedAt);
+    const nextRecency = toEpochMs(t.completedAt);
+    if (nextRecency >= prevRecency) bySemantic.set(key, t);
+  }
+  return Array.from(bySemantic.values());
 }
 
 function toEpochMs(iso: string | undefined): number {
@@ -280,16 +467,41 @@ function mergeTasksPreferLatest(existing: Task[], incoming: Task[]): Task[] {
       cancelled: (loser.cancelled ?? false) || (winner.cancelled ?? false)
     });
   }
-  return Array.from(byId.values());
+  const merged = Array.from(byId.values());
+  const bySemantic = new Map<string, Task>();
+  for (const t of merged) {
+    const key = isRepeatingTask(t)
+      ? `series::${seriesKeyForTask(t)}::${t.dueDate ?? ""}`
+      : `single::${(t.profileId ?? "").trim().toLowerCase()}::${(t.projectId ?? "")
+          .trim()
+          .toLowerCase()}::${t.title.trim().toLowerCase()}::${t.description?.trim().toLowerCase() ?? ""}::${
+          t.dueDate ?? ""
+        }::${t.dueTime ?? ""}::${t.priority}::${t.completed ? 1 : 0}::${t.cancelled ? 1 : 0}`;
+    const prev = bySemantic.get(key);
+    if (!prev) {
+      bySemantic.set(key, t);
+      continue;
+    }
+    const prevRecency = toEpochMs(prev.completedAt);
+    const nextRecency = toEpochMs(t.completedAt);
+    if (nextRecency >= prevRecency) bySemantic.set(key, t);
+  }
+  return Array.from(bySemantic.values());
 }
 
-async function readJsonFilesFromDataDir(): Promise<{
+async function readSyncSourceFromDataDir(): Promise<{
   projects: Project[];
   tasks: Task[];
+  profiles: Profile[];
   filesRead: number;
 }> {
+  // Sync is explicitly non-monolith: ignore unified snapshot file.
+  // Use runtime split files (and compatible JSON fallbacks) only.
   const entries = await fs.readdir(DATA_DIR).catch(() => []);
-  const jsonFiles = entries.filter((n) => n.toLowerCase().endsWith(".json"));
+  const jsonFiles = entries.filter((n) => {
+    const lower = n.toLowerCase();
+    return lower.endsWith(".json") && lower !== "focista-unified-data.json";
+  });
   const fileMetas = await Promise.all(
     jsonFiles.map(async (name) => {
       const full = path.join(DATA_DIR, name);
@@ -305,6 +517,7 @@ async function readJsonFilesFromDataDir(): Promise<{
 
   let incomingProjects: Project[] = [];
   let incomingTasks: Task[] = [];
+  let incomingProfiles: Profile[] = [];
 
   for (const f of ordered) {
     const raw = await fs.readFile(f.full, "utf8").catch(() => "");
@@ -332,15 +545,29 @@ async function readJsonFilesFromDataDir(): Promise<{
 
     const pSafe = z.array(ProjectSchema).safeParse(pArr);
     const tSafe = z.array(TaskSchema).safeParse(tArr);
+    const profileArr = Array.isArray(rec?.profiles)
+      ? rec.profiles
+      : Array.isArray(parsed)
+        ? parsed
+        : [];
+    const profileSafe = z.array(ProfileSchema).safeParse(profileArr);
     if (pSafe.success && pSafe.data.length) {
       incomingProjects = mergeProjects(incomingProjects, pSafe.data);
     }
     if (tSafe.success && tSafe.data.length) {
       incomingTasks = mergeTasksPreferLatest(incomingTasks, tSafe.data);
     }
+    if (profileSafe.success && profileSafe.data.length) {
+      incomingProfiles = mergeProfiles(incomingProfiles, profileSafe.data);
+    }
   }
 
-  return { projects: incomingProjects, tasks: incomingTasks, filesRead: ordered.length };
+  return {
+    projects: incomingProjects,
+    tasks: incomingTasks,
+    profiles: incomingProfiles,
+    filesRead: ordered.length
+  };
 }
 
 // Lightweight in-memory caching for expensive aggregate endpoints.
@@ -397,11 +624,41 @@ function makeCache<T>() {
   };
 }
 
-const statsCache = makeCache<unknown>();
-const productivityCache = makeCache<unknown>();
+function makeScopedCache<T>() {
+  const cache = new Map<string, CachedValue<T>>();
+  return {
+    get(key: string): T | null {
+      const row = cache.get(key);
+      if (!row) return null;
+      if (row.version !== dataVersion) return null;
+      return row.value;
+    },
+    set(key: string, value: T) {
+      cache.set(key, { version: dataVersion, value, at: Date.now() });
+    },
+    clear() {
+      cache.clear();
+    }
+  };
+}
+
+const statsCache = makeScopedCache<unknown>();
+const productivityCache = makeScopedCache<unknown>();
 
 function makeTaskId(): string {
   return `${Date.now()}-${Math.random().toString(16).slice(2, 10)}`;
+}
+
+function makeProfileId(): string {
+  return `PR-${Date.now()}-${Math.random().toString(16).slice(2, 8)}`;
+}
+
+const PROFILE_ID_FORMAT = /^PR-\d{13}-[a-f0-9]{6}$/;
+const RIFQI_PROFILE_NAME = "rifqi tjahyono";
+const RIFQI_PROFILE_TARGET_ID = "PR-1777494302624-98735a";
+
+function isCanonicalProfileId(id: string | null | undefined): boolean {
+  return !!id && PROFILE_ID_FORMAT.test(id);
 }
 
 function yyyymmddLocal(d: Date): string {
@@ -596,19 +853,46 @@ function hasProjectId(projectId: string | null | undefined): projectId is string
   return typeof projectId === "string" && projectId.trim() !== "";
 }
 
+function hasProfileId(profileId: string | null | undefined): profileId is string {
+  return typeof profileId === "string" && profileId.trim() !== "";
+}
+
+function profileIdForProjectId(projectId: string | null | undefined): string | null {
+  if (!hasProjectId(projectId)) return null;
+  return projects.find((p) => p.id === projectId)?.profileId ?? null;
+}
+
 function syncProjectIdForParent(parentId: string) {
   // Enforce invariant: all tasks sharing a parentId share the same projectId.
   // Pick the first non-empty projectId in that parent group; otherwise null.
   const canonical =
     tasks.find((t) => t.parentId === parentId && hasProjectId(t.projectId))?.projectId ?? null;
-  tasks = tasks.map((t) => (t.parentId === parentId ? { ...t, projectId: canonical } : t));
+  const canonicalProfileId =
+    (hasProjectId(canonical)
+      ? profileIdForProjectId(canonical)
+      : (tasks.find((t) => t.parentId === parentId && hasProfileId(t.profileId))?.profileId ?? null)) ??
+    null;
+  tasks = tasks.map((t) =>
+    t.parentId === parentId
+      ? { ...t, projectId: canonical, profileId: canonicalProfileId }
+      : t
+  );
 }
 
 function forceProjectIdForParent(parentId: string, projectId: string | null) {
   // Explicit series move: if the user edits a single occurrence's project, the intent is that the
   // whole parent group stays consistent (historical + future occurrences).
   const canonical = hasProjectId(projectId) ? projectId : null;
-  tasks = tasks.map((t) => (t.parentId === parentId ? { ...t, projectId: canonical } : t));
+  const canonicalProfileId =
+    (hasProjectId(canonical)
+      ? profileIdForProjectId(canonical)
+      : (tasks.find((t) => t.parentId === parentId && hasProfileId(t.profileId))?.profileId ?? null)) ??
+    null;
+  tasks = tasks.map((t) =>
+    t.parentId === parentId
+      ? { ...t, projectId: canonical, profileId: canonicalProfileId }
+      : t
+  );
 }
 
 function isRepeatingTask(t: Task): boolean {
@@ -617,6 +901,7 @@ function isRepeatingTask(t: Task): boolean {
 
 function seriesKeyForTask(t: Task): string {
   return [
+    t.profileId ?? "",
     t.projectId ?? "",
     t.title,
     t.repeat ?? "none",
@@ -626,6 +911,7 @@ function seriesKeyForTask(t: Task): string {
 }
 
 function seriesKeyForFields(fields: {
+  profileId: string | null;
   projectId: string | null;
   title: string;
   repeat?: Task["repeat"];
@@ -633,6 +919,7 @@ function seriesKeyForFields(fields: {
   repeatUnit?: Task["repeatUnit"];
 }): string {
   return [
+    fields.profileId ?? "",
     fields.projectId ?? "",
     fields.title,
     fields.repeat ?? "none",
@@ -757,6 +1044,9 @@ async function enforceSequentialCompletionForRepeatingSeries(): Promise<boolean>
     // not just the earliest template row (older data may have projectId only on later rows).
     const canonicalProjectId =
       sorted.find((t) => hasProjectId(t.projectId))?.projectId ?? null;
+    const canonicalProfileId =
+      sorted.find((t) => hasProfileId(t.profileId))?.profileId ??
+      profileIdForProjectId(canonicalProjectId);
 
     const completedDueDates = sorted
       .filter((t) => t.completed && !!t.dueDate)
@@ -815,6 +1105,7 @@ async function enforceSequentialCompletionForRepeatingSeries(): Promise<boolean>
           location: template.location,
           reminderMinutesBefore: template.reminderMinutesBefore,
           projectId: canonicalProjectId,
+          profileId: canonicalProfileId,
           completed: true,
           completedAt: new Date().toISOString(),
           parentId: template.parentId,
@@ -874,73 +1165,221 @@ function repairMissingProjectIdsForRepeatingSeries(): boolean {
   return changed;
 }
 
+function repairMissingProfileIdsForRepeatingSeries(): boolean {
+  // Only fill missing profileId within an existing parent group when the group already has
+  // exactly one non-empty profileId. Do NOT infer across different parentIds.
+  const parentIds = new Set(tasks.map((t) => t.parentId).filter((v): v is string => !!v));
+  if (parentIds.size === 0) return false;
+
+  let changed = false;
+  for (const pid of parentIds) {
+    const members = tasks.filter((t) => t.parentId === pid && isRepeatingTask(t) && !t.cancelled);
+    if (members.length === 0) continue;
+    const ids = new Set(members.map((t) => t.profileId).filter(hasProfileId));
+    if (ids.size !== 1) continue;
+    const canonical = Array.from(ids)[0] ?? null;
+    if (!canonical) continue;
+    const hasMissing = members.some((t) => !hasProfileId(t.profileId));
+    if (!hasMissing) continue;
+    tasks = tasks.map((t) =>
+      t.parentId === pid && isRepeatingTask(t) && !t.cancelled && !hasProfileId(t.profileId)
+        ? { ...t, profileId: canonical }
+        : t
+    );
+    changed = true;
+  }
+
+  return changed;
+}
+
 async function ensureDataDir() {
   await fs.mkdir(DATA_DIR, { recursive: true });
 }
 
+async function readUnifiedDataFile(): Promise<{
+  projects: Project[];
+  tasks: Task[];
+  profiles: Profile[];
+} | null> {
+  try {
+    const raw = await fs.readFile(UNIFIED_DATA_FILE, "utf8");
+    const parsed = JSON.parse(raw);
+    const rec =
+      typeof parsed === "object" && parsed !== null && !Array.isArray(parsed)
+        ? (parsed as Record<string, unknown>)
+        : null;
+    if (!rec) return null;
+
+    const projectsRaw = Array.isArray(rec.projects) ? rec.projects : [];
+    const tasksRaw = Array.isArray(rec.tasks) ? rec.tasks : [];
+    const profilesRaw = Array.isArray(rec.profiles) ? rec.profiles : [];
+
+    // Strict-first parse, then degrade gracefully per-row if one malformed item exists.
+    const pSafe = z.array(ProjectSchema).safeParse(projectsRaw);
+    const tSafe = z.array(TaskSchema).safeParse(tasksRaw);
+    const profileSafe = z.array(ProfileSchema).safeParse(profilesRaw);
+    if (pSafe.success && tSafe.success && profileSafe.success) {
+      return { projects: pSafe.data, tasks: tSafe.data, profiles: profileSafe.data };
+    }
+
+    const projects: Project[] = [];
+    const tasks: Task[] = [];
+    const profiles: Profile[] = [];
+    let droppedProjects = 0;
+    let droppedTasks = 0;
+    let droppedProfiles = 0;
+
+    for (const p of projectsRaw) {
+      const ok = ProjectSchema.safeParse(p);
+      if (ok.success) projects.push(ok.data);
+      else droppedProjects += 1;
+    }
+    for (const t of tasksRaw) {
+      const ok = TaskSchema.safeParse(t);
+      if (ok.success) tasks.push(ok.data);
+      else droppedTasks += 1;
+    }
+    for (const p of profilesRaw) {
+      const ok = ProfileSchema.safeParse(p);
+      if (ok.success) profiles.push(ok.data);
+      else droppedProfiles += 1;
+    }
+
+    if (droppedProjects || droppedTasks || droppedProfiles) {
+      console.warn("[unified-data] dropped invalid rows", {
+        droppedProjects,
+        droppedTasks,
+        droppedProfiles
+      });
+    }
+
+    // If everything got dropped, treat file as unusable and fallback to legacy/default flow.
+    if (projects.length === 0 && tasks.length === 0 && profiles.length === 0) return null;
+    return { projects, tasks, profiles };
+  } catch {
+    return null;
+  }
+}
+
+async function readRuntimeDataFiles(): Promise<{
+  projects: Project[];
+  tasks: Task[];
+  profiles: Profile[];
+} | null> {
+  const parseArrayFile = async <T>(file: string, schema: z.ZodType<T>): Promise<T[] | null> => {
+    try {
+      const raw = await fs.readFile(file, "utf8");
+      const parsed = JSON.parse(raw);
+      const safe = z.array(schema).safeParse(parsed);
+      return safe.success ? safe.data : [];
+    } catch {
+      return null;
+    }
+  };
+
+  const [tasksRuntime, projectsRuntime, profilesRuntime] = await Promise.all([
+    parseArrayFile(TASKS_FILE, TaskSchema),
+    parseArrayFile(PROJECTS_FILE, ProjectSchema),
+    parseArrayFile(PROFILES_FILE, ProfileSchema)
+  ]);
+
+  const hasAnyRuntime =
+    tasksRuntime !== null || projectsRuntime !== null || profilesRuntime !== null;
+  if (!hasAnyRuntime) return null;
+  return {
+    projects: projectsRuntime ?? [],
+    tasks: tasksRuntime ?? [],
+    profiles: profilesRuntime ?? []
+  };
+}
+
 async function loadData() {
   await ensureDataDir();
-  try {
-    const rawTasks = await fs.readFile(TASKS_FILE, "utf8");
-    const parsed = JSON.parse(rawTasks);
-    const safe = z.array(TaskSchema).safeParse(parsed);
-    if (safe.success) {
-      // Keep label ordering deterministic across all UI surfaces.
-      tasks = safe.data.map((t) => ({
-        ...t,
-        completedAt: t.completed ? t.completedAt : undefined,
-        labels: sortLabelsAsc(t.labels),
-        link: t.link ? sortLinksAsc(t.link) : t.link
-      }));
-
-      // Repair inconsistent data from historical race conditions:
-      // 1) remove duplicate IDs (keep latest record)
-      // 2) collapse duplicate repeating occurrences on the same dueDate
-      //    within the same logical series (prefer completed=true if either is completed)
-      const byId = new Map<string, Task>();
-      for (const t of tasks) {
-        byId.set(t.id, t);
-      }
-      const afterIdDedup = Array.from(byId.values());
-
-      const bySeriesDue = new Map<string, Task>();
-      for (const t of afterIdDedup) {
-        if (!isRepeatingTask(t) || !t.dueDate || t.cancelled) {
-          bySeriesDue.set(`id:${t.id}`, t);
-          continue;
-        }
-        const key = `series:${seriesKeyForTask(t)}::${t.dueDate}`;
-        const existing = bySeriesDue.get(key);
-        if (!existing) {
-          bySeriesDue.set(key, t);
-          continue;
-        }
-        bySeriesDue.set(key, {
-          ...existing,
-          ...t,
-          completed: existing.completed || t.completed
-        });
-      }
-      const normalized = Array.from(bySeriesDue.values());
-      if (normalized.length !== tasks.length) {
-        tasks = normalized;
-        await persistTasks();
-      }
+  // Runtime mode (non-monolith): split files are primary source for normal app usage.
+  const runtime = await readRuntimeDataFiles();
+  if (runtime) {
+    projects = runtime.projects;
+    tasks = runtime.tasks;
+    profiles = runtime.profiles;
+  } else {
+    const unified = await readUnifiedDataFile();
+    if (unified) {
+      projects = unified.projects;
+      tasks = unified.tasks;
+      profiles = unified.profiles;
+      // Bootstrap runtime files from unified snapshot once.
+      await Promise.all([
+        fs.writeFile(TASKS_FILE, JSON.stringify(tasks, null, 2), "utf8"),
+        fs.writeFile(PROJECTS_FILE, JSON.stringify(projects, null, 2), "utf8"),
+        fs.writeFile(PROFILES_FILE, JSON.stringify(profiles, null, 2), "utf8")
+      ]);
+    } else {
+    try {
+      const rawTasks = await fs.readFile(LEGACY_TASKS_FILE, "utf8");
+      const parsed = JSON.parse(rawTasks);
+      const safe = z.array(TaskSchema).safeParse(parsed);
+      if (safe.success) tasks = safe.data;
+      else tasks = [];
+    } catch {
+      tasks = [];
     }
-  } catch {
-    tasks = [];
+
+    try {
+      const rawProjects = await fs.readFile(LEGACY_PROJECTS_FILE, "utf8");
+      const parsed = JSON.parse(rawProjects);
+      const safe = z.array(ProjectSchema).safeParse(parsed);
+      if (safe.success) projects = safe.data;
+      else projects = [];
+    } catch {
+      projects = [
+        { id: "P1", name: "Personal Growth" },
+        { id: "P2", name: "Work – Q2 Delivery" }
+      ];
+    }
+    profiles = [];
+    }
   }
 
-  try {
-    const rawProjects = await fs.readFile(PROJECTS_FILE, "utf8");
-    const parsed = JSON.parse(rawProjects);
-    const safe = z.array(ProjectSchema).safeParse(parsed);
-    if (safe.success) projects = safe.data;
-  } catch {
-    projects = [
-      { id: "P1", name: "Personal Growth" },
-      { id: "P2", name: "Work – Q2 Delivery" }
-    ];
+  // Keep label/link ordering deterministic across all UI surfaces.
+  tasks = tasks.map((t) => ({
+    ...t,
+    completedAt: t.completed ? t.completedAt : undefined,
+    labels: sortLabelsAsc(t.labels),
+    link: t.link ? sortLinksAsc(t.link) : t.link
+  }));
+
+  // Repair inconsistent data from historical race conditions:
+  // 1) remove duplicate IDs (keep latest record)
+  // 2) collapse duplicate repeating occurrences on the same dueDate
+  //    within the same logical series (prefer completed=true if either is completed)
+  const byId = new Map<string, Task>();
+  for (const t of tasks) {
+    byId.set(t.id, t);
+  }
+  const afterIdDedup = Array.from(byId.values());
+
+  const bySeriesDue = new Map<string, Task>();
+  for (const t of afterIdDedup) {
+    if (!isRepeatingTask(t) || !t.dueDate || t.cancelled) {
+      bySeriesDue.set(`id:${t.id}`, t);
+      continue;
+    }
+    const key = `series:${seriesKeyForTask(t)}::${t.dueDate}`;
+    const existing = bySeriesDue.get(key);
+    if (!existing) {
+      bySeriesDue.set(key, t);
+      continue;
+    }
+    bySeriesDue.set(key, {
+      ...existing,
+      ...t,
+      completed: existing.completed || t.completed
+    });
+  }
+  const normalized = Array.from(bySeriesDue.values());
+  if (normalized.length !== tasks.length) {
+    tasks = normalized;
+    await persistTasks();
   }
 
   // Normalize and re-sequence project IDs to strict "P1..Pn", then migrate task references.
@@ -981,6 +1420,79 @@ async function loadData() {
 
   if (idMap.size > 0) {
     await persistProjects();
+    await persistTasks();
+  }
+
+  // Normalize profile IDs:
+  // - Force profile "Rifqi Tjahyono" to requested stable ID.
+  // - Ensure all other profiles use canonical format PR-<13digits>-<hex6>.
+  const profileIdMap = new Map<string, string>();
+  const usedProfileIds = new Set<string>();
+  profiles = profiles.map((p) => {
+    const oldId = p.id;
+    const normalizedName = p.name.trim().toLowerCase();
+    let nextId = oldId;
+    if (normalizedName === RIFQI_PROFILE_NAME) {
+      nextId = RIFQI_PROFILE_TARGET_ID;
+    } else if (!isCanonicalProfileId(oldId)) {
+      nextId = makeProfileId();
+      while (usedProfileIds.has(nextId)) nextId = makeProfileId();
+    }
+    usedProfileIds.add(nextId);
+    if (nextId !== oldId) profileIdMap.set(oldId, nextId);
+    return nextId === oldId ? p : { ...p, id: nextId };
+  });
+  // Collapse any accidental duplicates after ID normalization by semantic identity.
+  profiles = mergeProfiles([], profiles);
+  if (profileIdMap.size > 0) {
+    projects = projects.map((p) => {
+      const pid = p.profileId ?? null;
+      if (!pid) return p;
+      const mapped = profileIdMap.get(pid);
+      return mapped ? { ...p, profileId: mapped } : p;
+    });
+    tasks = tasks.map((t) => {
+      const pid = t.profileId ?? null;
+      if (!pid) return t;
+      const mapped = profileIdMap.get(pid);
+      return mapped ? { ...t, profileId: mapped } : t;
+    });
+    await persistProfiles();
+    await persistProjects();
+    await persistTasks();
+  }
+
+  // Backfill missing task.profileId from associated project.profileId.
+  // This keeps profile-scoped views consistent after sync/import of partial records.
+  let profileBackfillMutated = false;
+  let profileBackfillCount = 0;
+  const profileBackfillByProfileId = new Map<string, number>();
+  const profileNameById = new Map(profiles.map((p) => [p.id, p.name]));
+  tasks = tasks.map((t) => {
+    if (hasProfileId(t.profileId)) return t;
+    if (!hasProjectId(t.projectId)) return t;
+    const inferredProfileId = profileIdForProjectId(t.projectId);
+    if (!hasProfileId(inferredProfileId)) return t;
+    profileBackfillMutated = true;
+    profileBackfillCount += 1;
+    profileBackfillByProfileId.set(
+      inferredProfileId,
+      (profileBackfillByProfileId.get(inferredProfileId) ?? 0) + 1
+    );
+    return { ...t, profileId: inferredProfileId };
+  });
+  lastProfileBackfillDiagnostics = {
+    totalBackfilled: profileBackfillCount,
+    byProfileId: Object.fromEntries(profileBackfillByProfileId.entries()),
+    byProfileName: Object.fromEntries(
+      Array.from(profileBackfillByProfileId.entries()).map(([id, count]) => [
+        profileNameById.get(id) ?? id,
+        count
+      ])
+    )
+  };
+  if (profileBackfillMutated) {
+    console.info("[loadData] profileId backfill", lastProfileBackfillDiagnostics);
     await persistTasks();
   }
 
@@ -1121,6 +1633,13 @@ async function loadData() {
     await persistTasks();
   }
 
+  // Repair missing profile association in repeating series (high confidence only).
+  // This prevents profile-scoped views from hiding valid recurring occurrences.
+  const inferredProfileIds = repairMissingProfileIdsForRepeatingSeries();
+  if (inferredProfileIds) {
+    await persistTasks();
+  }
+
   // Enforce sequential completion for repeating series:
   // If a later occurrence is marked completed, we materialize any missing
   // earlier occurrences and mark them completed too so the UI has no "gaps".
@@ -1166,22 +1685,90 @@ function startDataAutoSync() {
   });
 }
 
+let persistDebounceTimer: NodeJS.Timeout | null = null;
+let persistInFlight: Promise<void> | null = null;
+let persistResolvers: Array<() => void> = [];
+let persistRejectors: Array<(err: unknown) => void> = [];
+let dirtyTasks = false;
+let dirtyProjects = false;
+let dirtyProfiles = false;
+
+async function persistRuntimeData(): Promise<void> {
+  await ensureDataDir();
+  const writes: Array<Promise<void>> = [];
+  if (dirtyTasks) {
+    writes.push(fs.writeFile(TASKS_FILE, JSON.stringify(tasks, null, 2), "utf8"));
+  }
+  if (dirtyProjects) {
+    writes.push(fs.writeFile(PROJECTS_FILE, JSON.stringify(projects, null, 2), "utf8"));
+  }
+  if (dirtyProfiles) {
+    writes.push(fs.writeFile(PROFILES_FILE, JSON.stringify(profiles, null, 2), "utf8"));
+  }
+  await Promise.all(writes);
+  dirtyTasks = false;
+  dirtyProjects = false;
+  dirtyProfiles = false;
+}
+
+async function flushPersistQueue(): Promise<void> {
+  // Serialize writes and coalesce bursts.
+  if (persistInFlight) {
+    await persistInFlight;
+  }
+  const resolvers = persistResolvers;
+  const rejectors = persistRejectors;
+  persistResolvers = [];
+  persistRejectors = [];
+
+  persistInFlight = (async () => {
+    await persistRuntimeData();
+    bumpDataVersion();
+  })();
+
+  try {
+    await persistInFlight;
+    resolvers.forEach((r) => r());
+  } catch (err) {
+    rejectors.forEach((rj) => rj(err));
+  } finally {
+    persistInFlight = null;
+  }
+}
+
+function schedulePersistFlush(delayMs = 40): Promise<void> {
+  return new Promise<void>((resolve, reject) => {
+    persistResolvers.push(resolve);
+    persistRejectors.push(reject);
+    if (persistDebounceTimer) clearTimeout(persistDebounceTimer);
+    persistDebounceTimer = setTimeout(() => {
+      persistDebounceTimer = null;
+      void flushPersistQueue();
+    }, delayMs);
+  });
+}
+
 async function persistTasks() {
   // Invalidate before awaiting I/O so /api/stats cannot return pre-mutation cache
   // while in-memory `tasks` is already updated.
   statsCache.clear();
   productivityCache.clear();
-  await ensureDataDir();
-  await fs.writeFile(TASKS_FILE, JSON.stringify(tasks, null, 2), "utf8");
-  bumpDataVersion();
+  dirtyTasks = true;
+  await schedulePersistFlush();
 }
 
 async function persistProjects() {
   statsCache.clear();
   productivityCache.clear();
-  await ensureDataDir();
-  await fs.writeFile(PROJECTS_FILE, JSON.stringify(projects, null, 2), "utf8");
-  bumpDataVersion();
+  dirtyProjects = true;
+  await schedulePersistFlush();
+}
+
+async function persistProfiles() {
+  statsCache.clear();
+  productivityCache.clear();
+  dirtyProfiles = true;
+  await schedulePersistFlush();
 }
 
 app.get("/health", (_req, res) => {
@@ -1219,16 +1806,52 @@ app.get("/api/events", (req, res) => {
   });
 });
 
-app.get("/api/projects", (_req, res) => {
-  res.json(projects);
+app.get("/api/projects", (req, res) => {
+  const effectiveProfileId = resolveEffectiveProfileId(req.query.profileId);
+  const cleaned = dedupeProjectsForRead(projects);
+  if (effectiveProfileId) {
+    return res.json(cleaned.filter((p) => (p.profileId ?? null) === effectiveProfileId));
+  }
+  res.json(cleaned);
 });
+
+const SHOWCASE_READONLY_PROFILE_NAME = "test";
+const SHOWCASE_READONLY_MESSAGE =
+  'Showcase mode: profile "Test" is read-only. Create, edit, and delete actions are disabled.';
+
+function getShowcaseReadOnlyProfileId(): string | null {
+  const match = profiles.find(
+    (p) => p.name.trim().toLowerCase() === SHOWCASE_READONLY_PROFILE_NAME
+  );
+  return match?.id ?? null;
+}
+
+function isShowcaseReadOnlyProfileId(profileId: string | null | undefined): boolean {
+  if (!profileId) return false;
+  const lockedId = getShowcaseReadOnlyProfileId();
+  if (!lockedId) return false;
+  return profileId === lockedId;
+}
 
 app.post("/api/projects", (req, res) => {
   const body = ProjectSchema.omit({ id: true }).safeParse(req.body);
   if (!body.success) {
     return res.status(400).json({ error: body.error.flatten() });
   }
-  const project: Project = { id: allocateNextProjectId(), ...body.data };
+  if (!hasProfileId(body.data.profileId)) {
+    return res.status(400).json({ error: "profileId is required when creating a project." });
+  }
+  if (!profiles.some((p) => p.id === body.data.profileId)) {
+    return res.status(400).json({ error: "profileId does not exist." });
+  }
+  if (isShowcaseReadOnlyProfileId(body.data.profileId)) {
+    return res.status(403).json({ error: SHOWCASE_READONLY_MESSAGE });
+  }
+  const project: Project = {
+    id: allocateNextProjectId(),
+    ...body.data,
+    profileId: body.data.profileId
+  };
   projects.push(project);
   void persistProjects();
   res.status(201).json(project);
@@ -1240,28 +1863,248 @@ app.put("/api/projects/:id", (req, res) => {
   if (!parsed.success) {
     return res.status(400).json({ error: parsed.error.flatten() });
   }
+  if (!hasProfileId(parsed.data.profileId)) {
+    return res.status(400).json({ error: "profileId is required when updating a project." });
+  }
+  if (!profiles.some((p) => p.id === parsed.data.profileId)) {
+    return res.status(400).json({ error: "profileId does not exist." });
+  }
   const index = projects.findIndex((p) => p.id === id);
   if (index === -1) return res.sendStatus(404);
-  projects[index] = parsed.data;
+  if (
+    isShowcaseReadOnlyProfileId(projects[index]?.profileId ?? null) ||
+    isShowcaseReadOnlyProfileId(parsed.data.profileId)
+  ) {
+    return res.status(403).json({ error: SHOWCASE_READONLY_MESSAGE });
+  }
+  projects[index] = { ...parsed.data, profileId: parsed.data.profileId };
   void persistProjects();
   res.json(parsed.data);
 });
 
-app.delete("/api/projects/:id", (req, res) => {
+app.delete("/api/projects/:id", async (req, res) => {
   const id = req.params.id;
+  const targetProject = projects.find((p) => p.id === id);
+  if (!targetProject) return res.sendStatus(404);
+  if (isShowcaseReadOnlyProfileId(targetProject.profileId ?? null)) {
+    return res.status(403).json({ error: SHOWCASE_READONLY_MESSAGE });
+  }
   const before = projects.length;
   projects = projects.filter((p) => p.id !== id);
   if (projects.length === before) return res.sendStatus(404);
   tasks = tasks.filter((t) => t.projectId !== id);
-  void persistProjects();
-  void persistTasks();
+  await persistProjects();
+  await persistTasks();
+  await rebuildParentAndChildIdsDeterministic();
   res.sendStatus(204);
 });
 
-app.get("/api/tasks", (req, res) => {
-  const { projectId, since } = req.query;
+app.get("/api/profiles", (_req, res) => {
+  res.json(profiles.map(toProfilePublic));
+});
 
-  let filtered = tasks;
+app.get("/api/profiles/task-counts", (_req, res) => {
+  const countsByProfileId: Record<string, number> = {};
+  const seenByProfile = new Map<string, Set<string>>();
+  for (const task of tasks) {
+    const pid = task.profileId ?? null;
+    if (!pid) continue;
+    let seen = seenByProfile.get(pid);
+    if (!seen) {
+      seen = new Set<string>();
+      seenByProfile.set(pid, seen);
+    }
+    // Normalize repeating occurrences by series+date so imported duplicates
+    // do not inflate profile-level task counts.
+    const occurrenceKey = isRepeatingTask(task)
+      ? `${seriesKeyForTask(task)}::${task.dueDate ?? ""}::${completionDateIsoLocalForTask(task) ?? ""}`
+      : `one::${task.id}`;
+    if (seen.has(occurrenceKey)) continue;
+    seen.add(occurrenceKey);
+    countsByProfileId[pid] = (countsByProfileId[pid] ?? 0) + 1;
+  }
+  res.json({ countsByProfileId });
+});
+
+app.post("/api/profiles", async (req, res) => {
+  const body = z
+    .object({
+      name: z.string(),
+      title: z.string(),
+      password: z.string().optional(),
+      requirePassword: z.boolean().optional()
+    })
+    .safeParse(req.body);
+  if (!body.success) return res.status(400).json({ error: body.error.flatten() });
+  const out = await createProfileRecord({
+    profiles,
+    name: body.data.name,
+    title: body.data.title,
+    password: body.data.password,
+    requirePassword: body.data.requirePassword,
+    nowIso: new Date().toISOString(),
+    makeId: makeProfileId,
+    hashPassword
+  });
+  if (!out.ok) return res.status(out.status).json({ error: out.error });
+  profiles = out.value.profiles;
+  await persistProfiles();
+  res.status(201).json(out.value.profile);
+});
+
+app.put("/api/profiles/:id", async (req, res) => {
+  if (isShowcaseReadOnlyProfileId(req.params.id)) {
+    return res.status(403).json({ error: SHOWCASE_READONLY_MESSAGE });
+  }
+  const body = z
+    .object({
+      name: z.string(),
+      title: z.string(),
+      requirePassword: z.boolean().optional(),
+      currentPassword: z.string().optional(),
+      newPassword: z.string().optional(),
+      confirmNewPassword: z.string().optional()
+    })
+    .safeParse(req.body);
+  if (!body.success) return res.status(400).json({ error: body.error.flatten() });
+  const out = await updateProfileRecord({
+    profiles,
+    id: req.params.id,
+    name: body.data.name,
+    title: body.data.title,
+    requirePassword: body.data.requirePassword,
+    currentPassword: body.data.currentPassword,
+    newPassword: body.data.newPassword,
+    confirmNewPassword: body.data.confirmNewPassword,
+    nowIso: new Date().toISOString(),
+    hashPassword,
+    verifyPassword
+  });
+  if (!out.ok) return res.status(out.status).json({ error: out.error });
+  profiles = out.value.profiles;
+  await persistProfiles();
+  res.json(out.value.profile);
+});
+
+app.post("/api/profiles/:id/unlock", async (req, res) => {
+  const body = z.object({ password: z.string().optional() }).safeParse(req.body);
+  if (!body.success) return res.status(400).json({ error: body.error.flatten() });
+  const out = await verifyProfileUnlock({
+    profiles,
+    id: req.params.id,
+    password: body.data.password,
+    verifyPassword
+  });
+  if (!out.ok) return res.status(out.status).json({ error: out.error });
+  res.json({ ok: true, profile: out.value.profile });
+});
+
+app.delete("/api/profiles/:id", async (req, res) => {
+  if (isShowcaseReadOnlyProfileId(req.params.id)) {
+    return res.status(403).json({ error: SHOWCASE_READONLY_MESSAGE });
+  }
+  const body = z.object({ password: z.string().optional() }).safeParse(req.body ?? {});
+  if (!body.success) return res.status(400).json({ error: body.error.flatten() });
+  const target = profiles.find((p) => p.id === req.params.id);
+  if (!target) return res.sendStatus(404);
+  if (target.passwordHash) {
+    const verify = await verifyProfileUnlock({
+      profiles,
+      id: req.params.id,
+      password: body.data.password,
+      verifyPassword
+    });
+    if (!verify.ok) return res.status(verify.status).json({ error: verify.error });
+  }
+  const out = deleteProfileRecord({ profiles, id: req.params.id });
+  if (!out.ok) return res.sendStatus(404);
+  profiles = out.value.profiles;
+  projects = projects.filter((p) => (p.profileId ?? null) !== req.params.id);
+  tasks = tasks.filter((t) => (t.profileId ?? null) !== req.params.id);
+  await persistProfiles();
+  await persistProjects();
+  await persistTasks();
+  res.sendStatus(204);
+});
+
+function dedupeTasksForRead(input: Task[]): Task[] {
+  const byKey = new Map<string, Task>();
+  for (const task of input) {
+    const key = isRepeatingTask(task)
+      ? `series::${seriesKeyForTask(task)}::${task.dueDate ?? ""}`
+      : `single::${(task.profileId ?? "").trim().toLowerCase()}::${(task.projectId ?? "")
+          .trim()
+          .toLowerCase()}::${task.title.trim().toLowerCase()}::${task.dueDate ?? ""}::${task.dueTime ?? ""}`;
+    const existing = byKey.get(key);
+    if (!existing) {
+      byKey.set(key, task);
+      continue;
+    }
+    const existingScore =
+      (existing.completed ? 4 : 0) +
+      (existing.cancelled ? 2 : 0) +
+      (existing.completedAt ? 1 : 0);
+    const nextScore =
+      (task.completed ? 4 : 0) + (task.cancelled ? 2 : 0) + (task.completedAt ? 1 : 0);
+    if (nextScore > existingScore) {
+      byKey.set(key, task);
+      continue;
+    }
+    if (nextScore === existingScore && task.id.localeCompare(existing.id) > 0) {
+      byKey.set(key, task);
+    }
+  }
+  return Array.from(byKey.values());
+}
+
+function dedupeProjectsForRead(input: Project[]): Project[] {
+  const byKey = new Map<string, Project>();
+  for (const project of input) {
+    const key = `${(project.profileId ?? "").trim().toLowerCase()}::${project.name
+      .trim()
+      .toLowerCase()}`;
+    const existing = byKey.get(key);
+    if (!existing) {
+      byKey.set(key, project);
+      continue;
+    }
+    // Keep the most recent normalized ID to stabilize references.
+    if (project.id.localeCompare(existing.id) > 0) {
+      byKey.set(key, project);
+    }
+  }
+  return Array.from(byKey.values());
+}
+
+function resolveEffectiveProfileId(profileIdQuery: unknown): string | null {
+  const requested =
+    typeof profileIdQuery === "string" && profileIdQuery.trim() !== ""
+      ? profileIdQuery.trim()
+      : null;
+  if (requested && profiles.some((p) => p.id === requested)) return requested;
+  if (profiles.length === 0) return null;
+  if (profiles.length === 1) return profiles[0]!.id;
+  const countsByProfile = new Map<string, number>();
+  for (const t of tasks) {
+    const pid = t.profileId ?? null;
+    if (!pid) continue;
+    countsByProfile.set(pid, (countsByProfile.get(pid) ?? 0) + 1);
+  }
+  const mostPopulated = profiles
+    .map((p) => ({ id: p.id, count: countsByProfile.get(p.id) ?? 0 }))
+    .sort((a, b) => b.count - a.count)[0];
+  return mostPopulated?.id ?? profiles[0]!.id;
+}
+
+app.get("/api/tasks", (req, res) => {
+  const { projectId, since, paginate, limit, offset, jumpToDate } = req.query;
+  const effectiveProfileId = resolveEffectiveProfileId(req.query.profileId);
+
+  let filtered = dedupeTasksForRead(tasks);
+
+  if (effectiveProfileId) {
+    filtered = filtered.filter((t) => (t.profileId ?? null) === effectiveProfileId);
+  }
 
   if (typeof projectId === "string" && projectId.trim() !== "") {
     filtered = filtered.filter((t) => t.projectId === projectId);
@@ -1271,16 +2114,86 @@ app.get("/api/tasks", (req, res) => {
     const sinceDate = new Date(`${since}T00:00:00`);
     if (!Number.isNaN(sinceDate.getTime())) {
       const sinceIso = isoDateLocal(sinceDate);
-      filtered = filtered.filter((t) => {
+      const inWindow = filtered.filter((t) => {
         // Include tasks whose due date or completion date is on/after `since`.
         const dateIso = completionDateIsoLocalForTask(t) ?? t.dueDate ?? null;
         if (!dateIso) return true;
         return dateIso >= sinceIso;
       });
+
+      // Keep one historical seed row per recurring series when a timeframe-bound fetch
+      // would otherwise remove the entire series. The client expands recurring tasks
+      // from existing rows; without a seed, valid future virtual occurrences disappear.
+      const recurringSeedsBySeries = new Map<string, Task>();
+      for (const t of filtered) {
+        if (!isRepeatingTask(t) || t.cancelled || !t.dueDate) continue;
+        const dateIso = completionDateIsoLocalForTask(t) ?? t.dueDate ?? null;
+        if (dateIso && dateIso >= sinceIso) continue;
+        const key = seriesKeyForTask(t);
+        const existing = recurringSeedsBySeries.get(key);
+        if (!existing || (existing.dueDate ?? "") < (t.dueDate ?? "")) {
+          recurringSeedsBySeries.set(key, t);
+        }
+      }
+
+      const mergedById = new Map<string, Task>();
+      for (const t of inWindow) mergedById.set(t.id, t);
+      for (const t of recurringSeedsBySeries.values()) {
+        if (!mergedById.has(t.id)) mergedById.set(t.id, t);
+      }
+      filtered = Array.from(mergedById.values());
     }
   }
 
-  res.json(filtered);
+  const shouldPaginate = paginate === "1" || paginate === "true";
+  const parsedLimit =
+    typeof limit === "string" && Number.isFinite(Number(limit))
+      ? Math.max(1, Math.min(5000, Math.trunc(Number(limit))))
+      : 500;
+  const parsedOffset =
+    typeof offset === "string" && Number.isFinite(Number(offset))
+      ? Math.max(0, Math.trunc(Number(offset)))
+      : 0;
+
+  if (!shouldPaginate) {
+    res.json(filtered);
+    return;
+  }
+
+  const sorted = filtered
+    .slice()
+    .sort((a, b) => {
+      const ad = completionDateIsoLocalForTask(a) ?? a.dueDate ?? "";
+      const bd = completionDateIsoLocalForTask(b) ?? b.dueDate ?? "";
+      const d = bd.localeCompare(ad);
+      if (d !== 0) return d;
+      const at = a.dueTime ?? "";
+      const bt = b.dueTime ?? "";
+      const t = bt.localeCompare(at);
+      if (t !== 0) return t;
+      return b.id.localeCompare(a.id);
+    });
+  const total = sorted.length;
+  let effectiveOffset = parsedOffset;
+  if (typeof jumpToDate === "string" && /^\d{4}-\d{2}-\d{2}$/.test(jumpToDate)) {
+    const idx = sorted.findIndex((t) => {
+      const dateIso = completionDateIsoLocalForTask(t) ?? t.dueDate ?? "";
+      // Start paging near the first task on/before the target date.
+      return dateIso !== "" && dateIso <= jumpToDate;
+    });
+    if (idx >= 0) effectiveOffset = idx;
+  }
+  const items = sorted.slice(effectiveOffset, effectiveOffset + parsedLimit);
+  const nextOffset = effectiveOffset + items.length;
+  const hasMore = nextOffset < total;
+  res.json({
+    items,
+    total,
+    offset: effectiveOffset,
+    limit: parsedLimit,
+    hasMore,
+    nextOffset: hasMore ? nextOffset : null
+  });
 });
 
 app.post("/api/tasks", async (req, res) => {
@@ -1293,10 +2206,17 @@ app.post("/api/tasks", async (req, res) => {
   const repeating = !!parsed.data.repeat && parsed.data.repeat !== "none";
   const sortedParsedData = {
     ...parsed.data,
+    profileId: hasProjectId(parsed.data.projectId)
+      ? profileIdForProjectId(parsed.data.projectId)
+      : (parsed.data.profileId ?? null),
     labels: sortLabelsAsc(parsed.data.labels),
     link: parsed.data.link ? sortLinksAsc(parsed.data.link) : parsed.data.link
   };
+  if (isShowcaseReadOnlyProfileId(sortedParsedData.profileId ?? null)) {
+    return res.status(403).json({ error: SHOWCASE_READONLY_MESSAGE });
+  }
   const seriesKey = seriesKeyForFields({
+    profileId: sortedParsedData.profileId ?? null,
     projectId: sortedParsedData.projectId,
     title: sortedParsedData.title,
     repeat: sortedParsedData.repeat,
@@ -1343,6 +2263,7 @@ app.post("/api/tasks", async (req, res) => {
       description: task.description,
       priority: task.priority,
       projectId: task.projectId,
+      profileId: task.profileId ?? null,
       labels: task.labels,
       link: task.link,
       location: task.location,
@@ -1377,23 +2298,42 @@ app.post("/api/tasks", async (req, res) => {
   res.status(201).json(saved);
 });
 
-app.put("/api/tasks/:id", async (req, res) => {
-  const id = req.params.id;
-  const parsed = TaskSchema.safeParse({ ...req.body, id });
+function applyTaskUpdateInMemory(
+  id: string,
+  payload: unknown
+):
+  | {
+      ok: true;
+      updatedId: string;
+      projectChanged: boolean;
+    }
+  | {
+      ok: false;
+      status: number;
+      error?: unknown;
+    } {
+  const parsed = TaskSchema.safeParse({ ...(payload as Record<string, unknown>), id });
   if (!parsed.success) {
-    return res.status(400).json({ error: parsed.error.flatten() });
+    return { ok: false, status: 400, error: parsed.error.flatten() };
   }
   const sortedParsedData = {
     ...parsed.data,
+    profileId: hasProjectId(parsed.data.projectId)
+      ? profileIdForProjectId(parsed.data.projectId)
+      : (parsed.data.profileId ?? null),
     labels: sortLabelsAsc(parsed.data.labels),
     link: parsed.data.link ? sortLinksAsc(parsed.data.link) : parsed.data.link
   };
   const index = tasks.findIndex((t) => t.id === id);
-  if (index === -1) return res.sendStatus(404);
+  if (index === -1) return { ok: false, status: 404 };
   const existing = tasks[index];
+  if (isShowcaseReadOnlyProfileId(existing.profileId ?? null)) {
+    return { ok: false, status: 403, error: SHOWCASE_READONLY_MESSAGE };
+  }
   const repeating = !!sortedParsedData.repeat && sortedParsedData.repeat !== "none";
   const parentIdBefore = repeating ? existing.parentId ?? null : null;
   const seriesKey = seriesKeyForFields({
+    profileId: sortedParsedData.profileId ?? null,
     projectId: sortedParsedData.projectId,
     title: sortedParsedData.title,
     repeat: sortedParsedData.repeat,
@@ -1413,8 +2353,7 @@ app.put("/api/tasks/:id", async (req, res) => {
 
   const resolvedChildId =
     repeating && resolvedParentId
-      ? // Preserve existing childId when staying within the same parent group.
-        (resolvedParentId === existing.parentId && existing.childId
+      ? (resolvedParentId === existing.parentId && existing.childId
           ? existing.childId
           : allocateNextChildId(resolvedParentId, seriesKey))
       : sortedParsedData.childId ?? existing.childId;
@@ -1424,26 +2363,26 @@ app.put("/api/tasks/:id", async (req, res) => {
     parentId: resolvedParentId,
     childId: resolvedChildId
   };
+  if (isShowcaseReadOnlyProfileId(next.profileId ?? null)) {
+    return { ok: false, status: 403, error: SHOWCASE_READONLY_MESSAGE };
+  }
   if (next.completed) {
     next.completedAt = next.completedAt ?? existing.completedAt ?? new Date().toISOString();
   } else {
     next.completedAt = undefined;
   }
-  // If the client didn't send durationMinutes, inherit from existing.
   if (next.durationMinutes === undefined) {
     next.durationMinutes = existing.durationMinutes;
   }
   tasks[index] = next;
 
-  // Series-wide metadata propagation:
-  // If this is a repeating series task, apply definition-level edits (title/labels/location/etc)
-  // to all occurrences that belong to the *original parent group* (not a project-sensitive series key).
   if (repeating && parentIdBefore) {
     const seriesMetadata: Partial<Task> = {
       title: next.title,
       description: next.description,
       priority: next.priority,
       projectId: next.projectId,
+      profileId: next.profileId ?? null,
       labels: next.labels,
       link: next.link,
       location: next.location,
@@ -1460,21 +2399,31 @@ app.put("/api/tasks/:id", async (req, res) => {
     });
   }
 
-  // Ensure duration is consistent for all occurrences in a series.
   if (tasks[index].parentId && tasks[index].durationMinutes !== undefined) {
     syncDurationMinutesForParent(tasks[index].parentId!, tasks[index].durationMinutes!);
-    // Parent/child identity is rebuilt deterministically below.
+  }
+  const projectChanged = (existing.projectId ?? null) !== (next.projectId ?? null);
+  return { ok: true, updatedId: id, projectChanged };
+}
+
+app.put("/api/tasks/:id", async (req, res) => {
+  const id = req.params.id;
+  const out = applyTaskUpdateInMemory(id, req.body);
+  if (!out.ok) {
+    if (out.status === 404) return res.sendStatus(404);
+    return res.status(out.status).json({ error: out.error ?? "Update failed" });
   }
   await persistTasks();
   // Ensure parentId/childId determinism even when dueDate changes series prefix.
   await rebuildParentAndChildIdsDeterministic();
 
-  const updatedAfterRebuild = tasks.find((t) => t.id === id) ?? tasks[index];
+  const updatedAfterRebuild = tasks.find((t) => t.id === id);
+  if (!updatedAfterRebuild) return res.sendStatus(404);
   const parentIdAfter = updatedAfterRebuild?.parentId ?? null;
 
   // Ensure project association stays consistent across the entire parent group.
   // If the edited occurrence changed project, treat that as an explicit "move series" action.
-  const projectChanged = (existing.projectId ?? null) !== (updatedAfterRebuild.projectId ?? null);
+  const projectChanged = out.projectChanged;
   if (parentIdAfter) {
     if (projectChanged) {
       forceProjectIdForParent(parentIdAfter, updatedAfterRebuild.projectId ?? null);
@@ -1487,10 +2436,105 @@ app.put("/api/tasks/:id", async (req, res) => {
   res.json(updated);
 });
 
+app.post("/api/tasks/batch-update", async (req, res) => {
+  const body = z
+    .object({
+      updates: z.array(
+        z.object({
+          id: z.string().min(1),
+          task: z.record(z.any())
+        })
+      )
+    })
+    .safeParse(req.body);
+  if (!body.success) return res.status(400).json({ error: body.error.flatten() });
+  if (body.data.updates.length === 0) {
+    return res.json({ updated: [], failed: [] });
+  }
+
+  const updatedIds: string[] = [];
+  const projectChangedById = new Map<string, boolean>();
+  const failed: Array<{ id: string; status: number; error?: unknown }> = [];
+
+  for (const entry of body.data.updates) {
+    const out = applyTaskUpdateInMemory(entry.id, entry.task);
+    if (!out.ok) {
+      failed.push({ id: entry.id, status: out.status, error: out.error });
+      continue;
+    }
+    updatedIds.push(out.updatedId);
+    projectChangedById.set(out.updatedId, out.projectChanged);
+  }
+
+  if (updatedIds.length > 0) {
+    await persistTasks();
+    await rebuildParentAndChildIdsDeterministic();
+
+    const parentAction = new Map<string, "force" | "sync">();
+    for (const id of updatedIds) {
+      const row = tasks.find((t) => t.id === id);
+      if (!row?.parentId) continue;
+      const mode = projectChangedById.get(id) ? "force" : "sync";
+      const prev = parentAction.get(row.parentId);
+      if (!prev || mode === "force") parentAction.set(row.parentId, mode);
+    }
+    for (const [parentId, mode] of parentAction.entries()) {
+      const row = tasks.find((t) => t.parentId === parentId);
+      if (!row) continue;
+      if (mode === "force") forceProjectIdForParent(parentId, row.projectId ?? null);
+      else syncProjectIdForParent(parentId);
+    }
+    if (parentAction.size > 0) {
+      await persistTasks();
+    }
+  }
+
+  const updated = updatedIds
+    .map((id) => tasks.find((t) => t.id === id))
+    .filter((t): t is Task => !!t);
+  res.json({ updated, failed });
+});
+
+app.post("/api/tasks/batch-delete", async (req, res) => {
+  const body = z
+    .object({
+      ids: z.array(z.string().min(1))
+    })
+    .safeParse(req.body);
+  if (!body.success) return res.status(400).json({ error: body.error.flatten() });
+
+  const normalizedIds = body.data.ids.map((id) => (id.includes("::") ? id.split("::")[0] : id));
+  const existing = new Set(tasks.map((t) => t.id));
+  const deleteSet = new Set(normalizedIds.filter((id) => existing.has(id)));
+  for (const taskId of deleteSet) {
+    const row = tasks.find((t) => t.id === taskId);
+    if (row && isShowcaseReadOnlyProfileId(row.profileId ?? null)) {
+      return res.status(403).json({ error: SHOWCASE_READONLY_MESSAGE });
+    }
+  }
+  const missingIds = normalizedIds.filter((id) => !existing.has(id));
+
+  if (deleteSet.size > 0) {
+    tasks = tasks.filter((t) => !deleteSet.has(t.id));
+    await persistTasks();
+    await rebuildParentAndChildIdsDeterministic();
+  }
+
+  res.json({ deletedIds: Array.from(deleteSet), missingIds });
+});
+
 app.patch("/api/tasks/:id/complete", (req, res) => {
   const id = req.params.id;
-  const task = tasks.find((t) => t.id === id);
-  if (!task) return res.sendStatus(404);
+  const baseId = id.includes("::") ? id.split("::")[0] : id;
+  const task = tasks.find((t) => t.id === id) ?? tasks.find((t) => t.id === baseId);
+  if (!task) {
+    // Return 200 with a marker instead of 404 to avoid noisy "Failed to load resource"
+    // when the UI holds a stale/mutated id; client will reconcile with a refresh.
+    return res.json({ id, missing: true });
+  }
+  if (isShowcaseReadOnlyProfileId(task.profileId ?? null)) {
+    return res.status(403).json({ error: SHOWCASE_READONLY_MESSAGE });
+  }
   task.completed = !task.completed;
   task.completedAt = task.completed ? new Date().toISOString() : undefined;
   void persistTasks();
@@ -1499,6 +2543,11 @@ app.patch("/api/tasks/:id/complete", (req, res) => {
 
 app.delete("/api/tasks/:id", async (req, res) => {
   const id = req.params.id;
+  const targetTask = tasks.find((t) => t.id === id);
+  if (!targetTask) return res.sendStatus(404);
+  if (isShowcaseReadOnlyProfileId(targetTask.profileId ?? null)) {
+    return res.status(403).json({ error: SHOWCASE_READONLY_MESSAGE });
+  }
   const before = tasks.length;
   tasks = tasks.filter((t) => t.id !== id);
   if (tasks.length === before) return res.sendStatus(404);
@@ -1508,10 +2557,36 @@ app.delete("/api/tasks/:id", async (req, res) => {
   res.sendStatus(204);
 });
 
-app.get("/api/stats", (_req, res) => {
+function scopedDataForProfile(profileIdQuery: unknown): {
+  scopedProfileId: string | null;
+  scopedTasks: Task[];
+  scopedProjects: Project[];
+} {
+  const scopedProfileId = resolveEffectiveProfileId(profileIdQuery);
+  if (!scopedProfileId) {
+    return {
+      scopedProfileId: null,
+      scopedTasks: dedupeTasksForRead(tasks),
+      scopedProjects: dedupeProjectsForRead(projects)
+    };
+  }
+  return {
+    scopedProfileId,
+    scopedTasks: dedupeTasksForRead(
+      tasks.filter((t) => (t.profileId ?? null) === scopedProfileId)
+    ),
+    scopedProjects: dedupeProjectsForRead(
+      projects.filter((p) => (p.profileId ?? null) === scopedProfileId)
+    )
+  };
+}
+
+app.get("/api/stats", (req, res) => {
   // Ensure the Progress UI always gets fresh data (avoid intermediary caching).
   res.setHeader("Cache-Control", "no-store");
-  const cached = statsCache.get();
+  const { scopedProfileId, scopedTasks, scopedProjects } = scopedDataForProfile(req.query.profileId);
+  const scopedCacheKey = scopedProfileId ?? "__all__";
+  const cached = statsCache.get(scopedCacheKey);
   if (cached) {
     res.json(cached);
     return;
@@ -1573,7 +2648,7 @@ app.get("/api/stats", (_req, res) => {
   const now = new Date();
   const todayIso = toIsoLocal(now);
 
-  const safeTasks = tasks.filter((t) => !t.cancelled);
+  const safeTasks = scopedTasks.filter((t) => !t.cancelled);
   // Lifetime completed tasks: used for totals (XP, level, milestones, points by priority).
   const completedAllTasks = safeTasks.filter((t) => t.completed);
   // Day-addressable completed tasks: used for daily/weekly timeline widgets.
@@ -1667,7 +2742,7 @@ app.get("/api/stats", (_req, res) => {
     const t = completedTasksByDay.get(dateIso)?.[0];
     if (!t) return undefined;
     const projectName =
-      t.projectId != null ? projects.find((p) => p.id === t.projectId)?.name : undefined;
+      t.projectId != null ? scopedProjects.find((p) => p.id === t.projectId)?.name : undefined;
     return {
       id: t.id,
       title: t.title,
@@ -2174,6 +3249,7 @@ app.get("/api/stats", (_req, res) => {
   })();
 
   const payload = {
+    profileId: scopedProfileId,
     completedToday: completedToday.length,
     streakDays,
     level,
@@ -2186,15 +3262,17 @@ app.get("/api/stats", (_req, res) => {
     milestoneAchievements
   };
 
-  statsCache.set(payload);
+  statsCache.set(scopedCacheKey, payload);
   res.json(payload);
 });
 
-app.get("/api/productivity-insights", (_req, res) => {
+app.get("/api/productivity-insights", (req, res) => {
   // Ensure Productivity Analysis always reflects the latest completed-task data
   // (avoid intermediary caching of this derived endpoint).
   res.setHeader("Cache-Control", "no-store");
-  const cached = productivityCache.get();
+  const { scopedProfileId, scopedTasks, scopedProjects } = scopedDataForProfile(req.query.profileId);
+  const scopedCacheKey = scopedProfileId ?? "__all__";
+  const cached = productivityCache.get(scopedCacheKey);
   if (cached) {
     res.json(cached);
     return;
@@ -2212,7 +3290,7 @@ app.get("/api/productivity-insights", (_req, res) => {
     return x;
   };
 
-  const safeTasks = tasks.filter((t) => !t.cancelled && t.completed);
+  const safeTasks = scopedTasks.filter((t) => !t.cancelled && t.completed);
   const completedTasksWithDate = safeTasks
     .map((t) => ({ task: t, completionDateIso: completionDateIsoLocalForTask(t) }))
     .filter(
@@ -2385,7 +3463,7 @@ app.get("/api/productivity-insights", (_req, res) => {
   }[] = [];
 
   const projectsById = new Map<string, string>();
-  for (const p of projects) projectsById.set(p.id, p.name);
+  for (const p of scopedProjects) projectsById.set(p.id, p.name);
   const projectIdsSeen = new Set<string>();
   for (const dayMap of completionsByDayProject.values()) {
     for (const pid of dayMap.keys()) projectIdsSeen.add(pid);
@@ -2476,8 +3554,8 @@ app.get("/api/productivity-insights", (_req, res) => {
     cursor = addDaysLocal(cursor, 1);
   }
 
-  const payload = { rows, projectBreakdown };
-  productivityCache.set(payload);
+  const payload = { profileId: scopedProfileId, rows, projectBreakdown };
+  productivityCache.set(scopedCacheKey, payload);
   res.json(payload);
 });
 
@@ -2486,7 +3564,8 @@ app.post("/api/admin/reload-data", async (_req, res) => {
     await loadData();
     res.json({
       ok: true,
-      counts: { projects: projects.length, tasks: tasks.length }
+      counts: { projects: projects.length, tasks: tasks.length, profiles: profiles.length },
+      diagnostics: { profileBackfill: lastProfileBackfillDiagnostics }
     });
   } catch (error) {
     res.status(500).json({
@@ -2500,14 +3579,23 @@ app.post("/api/admin/save-data", async (_req, res) => {
   try {
     // Defensive: if any duplicates exist in memory, keep the latest instance by id.
     projects = mergeProjects([], projects);
-    tasks = mergeTasks([], tasks);
+    tasks = mergeTasksPreferLatest([], tasks);
+    profiles = mergeProfiles([], profiles);
+    {
+      const canonical = canonicalizeProfilesAndRemap(profiles, projects, tasks);
+      profiles = canonical.profiles;
+      projects = canonical.projects;
+      tasks = canonical.tasks;
+    }
+    // Runtime persistence (split files).
     await persistProjects();
     await persistTasks();
+    await persistProfiles();
     // Run standard normalization/dedupe to keep deterministic ids/series.
     await loadData();
     res.json({
       ok: true,
-      counts: { projects: projects.length, tasks: tasks.length }
+      counts: { projects: projects.length, tasks: tasks.length, profiles: profiles.length }
     });
   } catch (error) {
     res.status(500).json({
@@ -2517,20 +3605,117 @@ app.post("/api/admin/save-data", async (_req, res) => {
   }
 });
 
+app.post("/api/admin/export-data", async (req, res) => {
+  const body = z
+    .object({
+      profilePasswords: z.record(z.string(), z.string()).optional()
+    })
+    .safeParse(req.body ?? {});
+  if (!body.success) {
+    return res.status(400).json({ ok: false, error: body.error.flatten() });
+  }
+
+  try {
+    // Always export from a merged, deduped snapshot.
+    const mergedProjects = mergeProjects([], projects);
+    const mergedTasks = mergeTasksPreferLatest([], tasks);
+    const mergedProfiles = mergeProfiles([], profiles);
+    const profileIdSet = new Set(mergedProfiles.map((p) => p.id));
+    const liveProjects = mergedProjects.filter(
+      (p) => !p.profileId || profileIdSet.has(p.profileId)
+    );
+    const liveProjectIdSet = new Set(liveProjects.map((p) => p.id));
+    const liveTasks = mergedTasks.filter((t) => {
+      // Deleted-like tasks (cancelled) should never be exported.
+      if (t.cancelled) return false;
+      // Keep profile/project linkage consistent in export payload.
+      if (t.profileId && !profileIdSet.has(t.profileId)) return false;
+      if (t.projectId && !liveProjectIdSet.has(t.projectId)) return false;
+      return true;
+    });
+    const liveProfileIds = new Set<string>();
+    for (const p of liveProjects) {
+      if (p.profileId) liveProfileIds.add(p.profileId);
+    }
+    for (const t of liveTasks) {
+      if (t.profileId) liveProfileIds.add(t.profileId);
+    }
+    const liveProfiles = mergedProfiles.filter((p) => liveProfileIds.has(p.id));
+
+    const profilePasswords = body.data.profilePasswords ?? {};
+    const lockedProfiles = liveProfiles.filter((p) => !!p.passwordHash);
+    const deniedProfileIds = new Set<string>();
+    const deniedProfileNames: string[] = [];
+
+    for (const p of lockedProfiles) {
+      const password = profilePasswords[p.id];
+      if (!password) {
+        deniedProfileIds.add(p.id);
+        deniedProfileNames.push(p.name);
+        continue;
+      }
+      const valid = await verifyPassword(password, p.passwordHash!);
+      if (!valid) {
+        deniedProfileIds.add(p.id);
+        deniedProfileNames.push(p.name);
+      }
+    }
+
+    const exportProfiles = liveProfiles.filter((p) => !deniedProfileIds.has(p.id));
+    const exportProjects = liveProjects.filter((p) => !deniedProfileIds.has(p.profileId ?? ""));
+    const allowedProjectIds = new Set(exportProjects.map((p) => p.id));
+    const exportTasks = liveTasks.filter((t) => {
+      const profileAllowed = !deniedProfileIds.has(t.profileId ?? "");
+      const projectAllowed = !t.projectId || allowedProjectIds.has(t.projectId);
+      return profileAllowed && projectAllowed;
+    });
+
+    return res.json({
+      ok: true,
+      data: {
+        app: "focista-schedulo",
+        exportedAt: new Date().toISOString(),
+        profiles: exportProfiles,
+        projects: exportProjects,
+        tasks: exportTasks
+      },
+      excludedLockedProfiles: deniedProfileNames
+    });
+  } catch (error) {
+    return res.status(500).json({
+      ok: false,
+      error: error instanceof Error ? error.message : String(error)
+    });
+  }
+});
+
 app.post("/api/admin/sync-from-data", async (_req, res) => {
   try {
-    const disk = await readJsonFilesFromDataDir();
+    const disk = await readSyncSourceFromDataDir();
     // Merge disk into memory, dedupe by id, keep "latest" by completedAt where available.
     projects = mergeProjects(projects, disk.projects);
     tasks = mergeTasksPreferLatest(tasks, disk.tasks);
+    profiles = mergeProfiles(profiles, disk.profiles);
+    {
+      const canonical = canonicalizeProfilesAndRemap(profiles, projects, tasks);
+      profiles = canonical.profiles;
+      projects = canonical.projects;
+      tasks = canonical.tasks;
+    }
     await persistProjects();
     await persistTasks();
+    await persistProfiles();
     await loadData();
     res.json({
       ok: true,
       filesRead: disk.filesRead,
-      imported: { projects: disk.projects.length, tasks: disk.tasks.length },
-      counts: { projects: projects.length, tasks: tasks.length }
+      imported: {
+        projects: disk.projects.length,
+        tasks: disk.tasks.length,
+        profiles: disk.profiles.length
+      },
+      counts: { projects: projects.length, tasks: tasks.length, profiles: profiles.length },
+      diagnostics: { profileBackfill: lastProfileBackfillDiagnostics }
     });
   } catch (error) {
     res.status(500).json({
@@ -2555,35 +3740,94 @@ app.post("/api/admin/import", async (req, res) => {
   try {
     let incomingProjects: Project[] = [];
     let incomingTasks: Task[] = [];
+    let incomingProfiles: Profile[] = [];
+    let droppedRows = { projects: 0, tasks: 0, profiles: 0 };
+    let inferredProfileIds = { projects: 0, tasks: 0 };
 
     if (format === "json") {
       const raw = JSON.parse(content);
-      // Accept export payload { app, exportedAt, projects, tasks } or raw arrays.
-      const projectsRaw = Array.isArray(raw?.projects) ? raw.projects : Array.isArray(raw) ? raw : [];
-      const tasksRaw = Array.isArray(raw?.tasks) ? raw.tasks : [];
+      // Accept export payload { app, exportedAt, projects, tasks, profiles }
+      // and also loose arrays from runtime files (projects/tasks/profiles).
+      const projectsRaw = Array.isArray(raw?.projects)
+        ? raw.projects
+        : isLooseProjectArray(raw)
+          ? raw
+          : [];
+      const tasksRaw = Array.isArray(raw?.tasks)
+        ? raw.tasks
+        : isLooseTaskArray(raw)
+          ? raw
+          : [];
+      const profilesRaw = Array.isArray(raw?.profiles)
+        ? raw.profiles
+        : isLooseProfileArray(raw)
+          ? raw
+          : [];
 
       const pSafe = z.array(ProjectSchema).safeParse(projectsRaw);
       const tSafe = z.array(TaskSchema).safeParse(tasksRaw);
-      if (!pSafe.success && !tSafe.success) {
+      const profileSafe = z.array(ProfileSchema).safeParse(profilesRaw);
+      const looseProfiles = parseProfilesLoose(Array.isArray(profilesRaw) ? profilesRaw : []);
+      if (!pSafe.success && !tSafe.success && !profileSafe.success && looseProfiles.length === 0) {
         return res.status(400).json({
           ok: false,
-          error: "Invalid JSON import payload: expected {projects: Project[], tasks: Task[]} or a Project[]"
+          error:
+            "Invalid JSON import payload: expected export object or loose array of projects/tasks/profiles"
         });
       }
       incomingProjects = pSafe.success ? pSafe.data : [];
       incomingTasks = tSafe.success ? tSafe.data : [];
+      incomingProfiles = profileSafe.success ? profileSafe.data : looseProfiles;
+      droppedRows = {
+        projects: pSafe.success ? Math.max(0, projectsRaw.length - incomingProjects.length) : projectsRaw.length,
+        tasks: tSafe.success ? Math.max(0, tasksRaw.length - incomingTasks.length) : tasksRaw.length,
+        profiles: Math.max(0, profilesRaw.length - incomingProfiles.length)
+      };
     } else {
       const parsedCsv = parseCsv(content);
       if (parsedCsv.headers.length === 0) {
         return res.status(400).json({ ok: false, error: "CSV import failed: empty file" });
       }
+      const projectProfileHints = new Map<string, { name?: string; title?: string }>();
+      const taskProfileHints = new Map<string, { name?: string; title?: string }>();
       for (const r of parsedCsv.rows) {
         const recordType = (r["recordType"] ?? "").trim().toLowerCase();
         if (recordType === "project") {
           const id = (r["id"] ?? r["projectId"] ?? "").trim();
           const name = (r["projectNameOnly"] ?? r["projectName"] ?? r["name"] ?? "").trim();
           if (!id || !name) continue;
-          incomingProjects.push({ id, name });
+          incomingProjects.push({
+            id,
+            name,
+            profileId: (() => {
+              const pid = (r["profileId"] ?? "").trim();
+              return pid ? pid : null;
+            })()
+          });
+          const hintName = (r["profileName"] ?? "").trim();
+          const hintTitle = (r["profileTitle"] ?? "").trim();
+          if (id && (hintName || hintTitle)) {
+            projectProfileHints.set(id, {
+              name: hintName || undefined,
+              title: hintTitle || undefined
+            });
+          }
+          continue;
+        }
+        if (recordType === "profile") {
+          const id = (r["id"] ?? "").trim();
+          const name = (r["profileName"] ?? r["name"] ?? "").trim();
+          const title = (r["profileTitle"] ?? r["title"] ?? "").trim();
+          if (!id || !name || !title) continue;
+          const nowIso = new Date().toISOString();
+          incomingProfiles.push({
+            id,
+            name,
+            title,
+            passwordHash: (r["passwordHash"] ?? "").trim() || undefined,
+            createdAt: (r["createdAt"] ?? "").trim() || nowIso,
+            updatedAt: (r["updatedAt"] ?? "").trim() || nowIso
+          });
           continue;
         }
         if (recordType === "task") {
@@ -2611,6 +3855,10 @@ app.post("/api/admin/import", async (req, res) => {
               return arr.length ? arr : undefined;
             })(),
             reminderMinutesBefore: parseIntOpt(r["reminderMinutesBefore"]),
+            profileId: (() => {
+              const pid = (r["profileId"] ?? "").trim();
+              return pid ? pid : null;
+            })(),
             projectId: (() => {
               const pid = (r["projectId"] ?? "").trim();
               return pid ? pid : null;
@@ -2621,27 +3869,200 @@ app.post("/api/admin/import", async (req, res) => {
             childId: (r["childId"] ?? "").trim() || undefined,
             cancelled: parseBool(r["cancelled"])
           });
+          const hintName = (r["profileName"] ?? "").trim();
+          const hintTitle = (r["profileTitle"] ?? "").trim();
+          if (id && (hintName || hintTitle)) {
+            taskProfileHints.set(id, {
+              name: hintName || undefined,
+              title: hintTitle || undefined
+            });
+          }
           continue;
         }
       }
 
+      const profileUniverse = mergeProfiles(profiles, incomingProfiles);
+      const resolveProfileIdFromHint = (hint?: { name?: string; title?: string }): string | null => {
+        if (!hint?.name && !hint?.title) return null;
+        const byNameAndTitle = profileUniverse.find(
+          (p) =>
+            (!hint.name || normalizeProfileLabel(p.name) === normalizeProfileLabel(hint.name)) &&
+            (!hint.title || normalizeProfileLabel(p.title) === normalizeProfileLabel(hint.title))
+        );
+        if (byNameAndTitle) return byNameAndTitle.id;
+        if (hint.name) {
+          const byName = profileUniverse.find(
+            (p) => normalizeProfileLabel(p.name) === normalizeProfileLabel(hint.name)
+          );
+          if (byName) return byName.id;
+        }
+        return null;
+      };
+      const ensureProfileFromHint = (hint?: { name?: string; title?: string }): string | null => {
+        const resolved = resolveProfileIdFromHint(hint);
+        if (resolved) return resolved;
+        const name = (hint?.name ?? "").trim();
+        const title = (hint?.title ?? name).trim();
+        if (!name || !title) return null;
+        const nowIso = new Date().toISOString();
+        const created: Profile = {
+          id: makeProfileId(),
+          name,
+          title,
+          createdAt: nowIso,
+          updatedAt: nowIso
+        };
+        incomingProfiles.push(created);
+        profileUniverse.push(created);
+        return created.id;
+      };
+
+      incomingProjects = incomingProjects.map((p) => {
+        if (hasProfileId(p.profileId)) return p;
+        const inferred = ensureProfileFromHint(projectProfileHints.get(p.id));
+        if (!inferred) return p;
+        inferredProfileIds.projects += 1;
+        return { ...p, profileId: inferred };
+      });
+
+      const projectProfileById = new Map(incomingProjects.map((p) => [p.id, p.profileId ?? null]));
+      incomingTasks = incomingTasks.map((t) => {
+        if (hasProfileId(t.profileId)) return t;
+        const fromHint = ensureProfileFromHint(taskProfileHints.get(t.id));
+        if (fromHint) {
+          inferredProfileIds.tasks += 1;
+          return { ...t, profileId: fromHint };
+        }
+        const fromProject = hasProjectId(t.projectId) ? projectProfileById.get(t.projectId) ?? null : null;
+        if (hasProfileId(fromProject)) {
+          inferredProfileIds.tasks += 1;
+          return { ...t, profileId: fromProject };
+        }
+        return t;
+      });
+
+      // If import carries profiles but many task/project rows omit profileId entirely,
+      // attach them to the sole imported profile for deterministic scoped visibility.
+      if (incomingProfiles.length === 1) {
+        const soleProfileId = incomingProfiles[0]!.id;
+        incomingProjects = incomingProjects.map((p) =>
+          hasProfileId(p.profileId) ? p : { ...p, profileId: soleProfileId }
+        );
+        const projectProfileByIdNext = new Map(incomingProjects.map((p) => [p.id, p.profileId ?? null]));
+        incomingTasks = incomingTasks.map((t) => {
+          if (hasProfileId(t.profileId)) return t;
+          const fromProject = hasProjectId(t.projectId) ? projectProfileByIdNext.get(t.projectId) ?? null : null;
+          if (hasProfileId(fromProject)) return { ...t, profileId: fromProject };
+          return { ...t, profileId: soleProfileId };
+        });
+      }
+
       // Validate what we built (drop invalid rows)
-      incomingProjects = z.array(ProjectSchema).safeParse(incomingProjects).success ? incomingProjects : [];
+      const safeProjects = z.array(ProjectSchema).safeParse(incomingProjects);
+      incomingProjects = safeProjects.success ? safeProjects.data : [];
       const safeTasks = z.array(TaskSchema).safeParse(incomingTasks);
       incomingTasks = safeTasks.success ? safeTasks.data : [];
+      const safeProfiles = z.array(ProfileSchema).safeParse(incomingProfiles);
+      incomingProfiles = safeProfiles.success ? safeProfiles.data : parseProfilesLoose(incomingProfiles);
+      droppedRows = {
+        projects: safeProjects.success ? 0 : 1,
+        tasks: safeTasks.success ? 0 : 1,
+        profiles: safeProfiles.success ? 0 : 0
+      };
+    }
+
+    // Guarantee profile records exist for any referenced non-null profileId in imported data.
+    const ensuredProfilesById = new Map<string, Profile>();
+    for (const p of profiles) ensuredProfilesById.set(p.id, p);
+    for (const p of incomingProfiles) ensuredProfilesById.set(p.id, p);
+    const ensuredById = new Set(ensuredProfilesById.keys());
+    const nowIso = new Date().toISOString();
+    const referencedProfileIds = new Set<string>();
+    for (const p of incomingProjects) {
+      if (hasProfileId(p.profileId)) referencedProfileIds.add(p.profileId);
+    }
+    for (const t of incomingTasks) {
+      if (hasProfileId(t.profileId)) referencedProfileIds.add(t.profileId);
+    }
+    for (const pid of referencedProfileIds) {
+      if (ensuredById.has(pid)) continue;
+      incomingProfiles.push({
+        id: pid,
+        name: pid,
+        title: pid,
+        createdAt: nowIso,
+        updatedAt: nowIso
+      });
+      ensuredById.add(pid);
+    }
+
+    // Final attachment pass:
+    // 1) infer task profile from project profile when possible
+    // 2) when exactly one imported profile exists, attach remaining null-profile entities to it
+    const incomingProjectProfileById = new Map(incomingProjects.map((p) => [p.id, p.profileId ?? null]));
+    incomingTasks = incomingTasks.map((t) => {
+      if (hasProfileId(t.profileId)) return t;
+      const fromProject = hasProjectId(t.projectId) ? incomingProjectProfileById.get(t.projectId) ?? null : null;
+      if (hasProfileId(fromProject)) return { ...t, profileId: fromProject };
+      return t;
+    });
+    if (incomingProfiles.length === 1) {
+      const soleProfileId = incomingProfiles[0]!.id;
+      incomingProjects = incomingProjects.map((p) =>
+        hasProfileId(p.profileId) ? p : { ...p, profileId: soleProfileId }
+      );
+      const projectProfileByIdNext = new Map(incomingProjects.map((p) => [p.id, p.profileId ?? null]));
+      incomingTasks = incomingTasks.map((t) => {
+        if (hasProfileId(t.profileId)) return t;
+        const fromProject = hasProjectId(t.projectId) ? projectProfileByIdNext.get(t.projectId) ?? null : null;
+        if (hasProfileId(fromProject)) return { ...t, profileId: fromProject };
+        return { ...t, profileId: soleProfileId };
+      });
     }
 
     // Merge into in-memory state, then persist and run the standard load normalization/dedupe.
+    const profileUniverseForDiagnostics = mergeProfiles(profiles, incomingProfiles);
+    const profileNameById = new Map(profileUniverseForDiagnostics.map((p) => [p.id, p.name]));
+    const importedTasksByProfileIdMap = new Map<string, number>();
+    for (const t of incomingTasks) {
+      const pid = t.profileId ?? "__null__";
+      importedTasksByProfileIdMap.set(pid, (importedTasksByProfileIdMap.get(pid) ?? 0) + 1);
+    }
+    const importedTasksByProfileId = Object.fromEntries(importedTasksByProfileIdMap.entries());
+    const importedTasksByProfileName = Object.fromEntries(
+      Array.from(importedTasksByProfileIdMap.entries()).map(([pid, count]) => [
+        pid === "__null__" ? "(none)" : profileNameById.get(pid) ?? pid,
+        count
+      ])
+    );
+
     projects = mergeProjects(projects, incomingProjects);
-    tasks = mergeTasks(tasks, incomingTasks);
+    tasks = mergeTasksPreferLatest(tasks, incomingTasks);
+    profiles = mergeProfiles(profiles, incomingProfiles);
+    const canonical = canonicalizeProfilesAndRemap(profiles, projects, tasks);
+    profiles = canonical.profiles;
+    projects = canonical.projects;
+    tasks = canonical.tasks;
     await persistProjects();
     await persistTasks();
+    await persistProfiles();
     await loadData();
 
     res.json({
       ok: true,
-      imported: { projects: incomingProjects.length, tasks: incomingTasks.length },
-      counts: { projects: projects.length, tasks: tasks.length }
+      imported: {
+        projects: incomingProjects.length,
+        tasks: incomingTasks.length,
+        profiles: incomingProfiles.length
+      },
+      inferredProfileIds,
+      droppedRows,
+      counts: { projects: projects.length, tasks: tasks.length, profiles: profiles.length },
+      diagnostics: {
+        profileBackfill: lastProfileBackfillDiagnostics,
+        importedTasksByProfileId,
+        importedTasksByProfileName
+      }
     });
   } catch (error) {
     res.status(500).json({

@@ -1,22 +1,37 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 interface Project {
   id: string;
   name: string;
+  profileId?: string | null;
 }
 
 interface ProjectSidebarProps {
+  activeProfileId: string | null;
   selectedProjectId: string | null;
   onSelectProject: (id: string | null) => void;
 }
 
 export function ProjectSidebar({
+  activeProfileId,
   selectedProjectId,
   onSelectProject
 }: ProjectSidebarProps) {
   const [projects, setProjects] = useState<Project[]>([]);
   const [editing, setEditing] = useState<Project | null>(null);
   const [draftName, setDraftName] = useState("");
+  const [pendingDeleteProject, setPendingDeleteProject] = useState<Project | null>(null);
+  const projectsRefreshDebounceRef = useRef<number | null>(null);
+  const [activeProfileName, setActiveProfileName] = useState<string | null>(null);
+  const isShowcaseReadOnlyActive = activeProfileName?.trim().toLowerCase() === "test";
+
+  const notifyToast = (title: string, message: string) => {
+    if (typeof window !== "undefined" && "dispatchEvent" in window) {
+      window.dispatchEvent(
+        new CustomEvent("pst:toast", { detail: { kind: "info", title, message } })
+      );
+    }
+  };
 
   const notifyProjectsChanged = () => {
     if (typeof window !== "undefined" && "dispatchEvent" in window) {
@@ -34,10 +49,14 @@ export function ProjectSidebar({
     const controller = new AbortController();
     async function load() {
       try {
-        const res = await fetch("/api/projects", { signal: controller.signal });
+        const base = new URL("/api/projects", window.location.origin);
+        if (activeProfileId) base.searchParams.set("profileId", activeProfileId);
+        const res = await fetch(base.toString(), { signal: controller.signal });
         if (!res.ok) return;
         const data: Project[] = await res.json();
-        setProjects(data);
+        setProjects(
+          activeProfileId ? data.filter((p) => (p.profileId ?? null) === activeProfileId) : data
+        );
       } catch (err) {
         if (err instanceof DOMException && err.name === "AbortError") {
           // fetch was aborted on unmount; safe to ignore
@@ -48,45 +67,94 @@ export function ProjectSidebar({
     }
     load();
     return () => controller.abort();
-  }, []);
+  }, [activeProfileId]);
+
+  useEffect(() => {
+    if (!activeProfileId) {
+      setActiveProfileName(null);
+      return;
+    }
+    const controller = new AbortController();
+    const run = async () => {
+      try {
+        const res = await fetch("/api/profiles", { signal: controller.signal });
+        if (!res.ok) return;
+        const data = (await res.json()) as Array<{ id: string; name: string }>;
+        const active = data.find((p) => p.id === activeProfileId);
+        setActiveProfileName(active?.name ?? null);
+      } catch (error) {
+        if (error instanceof DOMException && error.name === "AbortError") return;
+      }
+    };
+    void run();
+    return () => controller.abort();
+  }, [activeProfileId]);
 
   useEffect(() => {
     const onProjectsChanged = () => {
-      const controller = new AbortController();
-      const run = async () => {
+      if (projectsRefreshDebounceRef.current) {
+        window.clearTimeout(projectsRefreshDebounceRef.current);
+      }
+      projectsRefreshDebounceRef.current = window.setTimeout(async () => {
+        projectsRefreshDebounceRef.current = null;
+        const controller = new AbortController();
         try {
-          const res = await fetch("/api/projects", { signal: controller.signal });
+          const base = new URL("/api/projects", window.location.origin);
+          if (activeProfileId) base.searchParams.set("profileId", activeProfileId);
+          const res = await fetch(base.toString(), { signal: controller.signal });
           if (!res.ok) return;
           const data: Project[] = await res.json();
-          setProjects(data);
+          setProjects(
+            activeProfileId ? data.filter((p) => (p.profileId ?? null) === activeProfileId) : data
+          );
         } catch {
           // ignore
         }
-      };
-      void run();
+      }, 180);
     };
     window.addEventListener("pst:projects-changed", onProjectsChanged);
-    return () =>
+    return () => {
       window.removeEventListener("pst:projects-changed", onProjectsChanged);
-  }, []);
+      if (projectsRefreshDebounceRef.current) {
+        window.clearTimeout(projectsRefreshDebounceRef.current);
+        projectsRefreshDebounceRef.current = null;
+      }
+    };
+  }, [activeProfileId]);
 
   const startNew = () => {
+    if (isShowcaseReadOnlyActive) {
+      notifyToast(
+        "Showcase mode",
+        'Profile "Test" is read-only. Project create, edit, and delete are disabled.'
+      );
+      return;
+    }
     setEditing({ id: "new", name: "" });
     setDraftName("");
   };
 
   const startEdit = (project: Project) => {
+    if (isShowcaseReadOnlyActive) {
+      notifyToast(
+        "Showcase mode",
+        'Profile "Test" is read-only. Project create, edit, and delete are disabled.'
+      );
+      return;
+    }
     setEditing(project);
     setDraftName(project.name);
   };
 
   const saveProject = async () => {
+    if (isShowcaseReadOnlyActive) return;
     if (!draftName.trim() || !editing) return;
+    if (!activeProfileId) return;
     if (editing.id === "new") {
       const res = await fetch("/api/projects", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ name: draftName.trim() })
+        body: JSON.stringify({ name: draftName.trim(), profileId: activeProfileId })
       });
       if (res.ok) {
         const created: Project = await res.json();
@@ -98,7 +166,7 @@ export function ProjectSidebar({
       const res = await fetch(`/api/projects/${editing.id}`, {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ name: draftName.trim() })
+        body: JSON.stringify({ name: draftName.trim(), profileId: activeProfileId })
       });
       if (res.ok) {
         const updated: Project = await res.json();
@@ -112,10 +180,7 @@ export function ProjectSidebar({
   };
 
   const deleteProject = async (project: Project) => {
-    const ok = window.confirm(
-      `Delete project "${project.name}" and all its tasks?`
-    );
-    if (!ok) return;
+    if (isShowcaseReadOnlyActive) return;
     const res = await fetch(`/api/projects/${project.id}`, {
       method: "DELETE"
     });
@@ -128,6 +193,7 @@ export function ProjectSidebar({
       // Deleting a project deletes its tasks on the backend too.
       notifyTasksChanged();
     }
+    setPendingDeleteProject(null);
   };
 
   return (
@@ -138,6 +204,7 @@ export function ProjectSidebar({
           className="ghost-button small"
           onClick={startNew}
           title="Create a new project (group tasks by context)."
+          disabled={!activeProfileId || isShowcaseReadOnlyActive}
         >
           New
         </button>
@@ -169,14 +236,16 @@ export function ProjectSidebar({
                 aria-label="Edit project"
                 onClick={() => startEdit(project)}
                 title="Rename this project."
+                disabled={isShowcaseReadOnlyActive}
               >
                 ✎
               </button>
               <button
                 className="icon-button"
                 aria-label="Delete project"
-                onClick={() => deleteProject(project)}
+                onClick={() => setPendingDeleteProject(project)}
                 title="Delete this project and all tasks in it."
+                disabled={isShowcaseReadOnlyActive}
               >
                 ×
               </button>
@@ -213,6 +282,39 @@ export function ProjectSidebar({
           </div>
         </div>
       )}
+      {pendingDeleteProject ? (
+        <div className="drawer-backdrop" onClick={() => setPendingDeleteProject(null)}>
+          <aside className="drawer" onClick={(e) => e.stopPropagation()}>
+            <header className="drawer-header">
+              <h2>Delete project</h2>
+            </header>
+            <div className="drawer-body">
+              <p>
+                Delete project "<strong>{pendingDeleteProject.name}</strong>"?
+              </p>
+              <p className="muted" style={{ marginTop: "0.5rem" }}>
+                This will permanently remove the project and all tasks inside it.
+              </p>
+            </div>
+            <footer className="drawer-footer">
+              <button
+                className="ghost-button"
+                type="button"
+                onClick={() => setPendingDeleteProject(null)}
+              >
+                Cancel
+              </button>
+              <button
+                className="primary-button"
+                type="button"
+                onClick={() => void deleteProject(pendingDeleteProject)}
+              >
+                Delete
+              </button>
+            </footer>
+          </aside>
+        </div>
+      ) : null}
     </aside>
   );
 }

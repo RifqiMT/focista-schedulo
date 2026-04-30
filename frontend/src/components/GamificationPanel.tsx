@@ -10,6 +10,7 @@ import {
 import { ProductivityAnalysisModal } from "./ProductivityAnalysisModal";
 
 interface Stats {
+  profileId?: string | null;
   completedToday: number;
   streakDays: number;
   level: number;
@@ -106,12 +107,13 @@ function capMilestoneBadges(values: number[], maxBadges: number): number[] {
   return head.concat(sampledTail).slice(0, maxBadges);
 }
 
-export function GamificationPanel() {
+export function GamificationPanel({ activeProfileId }: { activeProfileId: string | null }) {
   const [stats, setStats] = useState<Stats | null>(null);
+  const [profileById, setProfileById] = useState<Record<string, { name: string; title: string }>>({});
   const latestFetchIdRef = useRef(0);
-  const refreshInFlightRef = useRef(false);
-  const refreshQueuedRef = useRef(false);
+  const statsAbortRef = useRef<AbortController | null>(null);
   const sseRef = useRef<EventSource | null>(null);
+  const statsRefreshDebounceRef = useRef<number | null>(null);
   const [badgesOpen, setBadgesOpen] = useState(false);
   const [analysisOpen, setAnalysisOpen] = useState(false);
   const [hoveredBadge, setHoveredBadge] = useState<{
@@ -134,37 +136,58 @@ export function GamificationPanel() {
   const badgesLayoutToastSentRef = useRef(false);
 
   const fetchStats = useCallback(async () => {
-    if (refreshInFlightRef.current) {
-      refreshQueuedRef.current = true;
-      return;
-    }
-    refreshInFlightRef.current = true;
     const fetchId = ++latestFetchIdRef.current;
+    statsAbortRef.current?.abort();
+    const controller = new AbortController();
+    statsAbortRef.current = controller;
     try {
-      const res = await fetch("/api/stats", { cache: "no-store" });
+      const requestedProfileId = activeProfileId ?? null;
+      const url = new URL("/api/stats", window.location.origin);
+      if (activeProfileId) url.searchParams.set("profileId", activeProfileId);
+      const res = await fetch(url.toString(), { cache: "no-store", signal: controller.signal });
       if (!res.ok) return;
       const data: Stats = await res.json();
       // Ignore late responses from older requests.
       if (fetchId !== latestFetchIdRef.current) return;
-      setStats(data);
-    } catch {
-      // ignore transient network errors
-    } finally {
-      refreshInFlightRef.current = false;
-      if (refreshQueuedRef.current) {
-        refreshQueuedRef.current = false;
-        void fetchStats();
+      const responseProfileId = data.profileId ?? null;
+      if (import.meta.env.DEV && responseProfileId !== requestedProfileId) {
+        console.warn("[progress-scope-mismatch]", {
+          requestedProfileId,
+          responseProfileId
+        });
       }
+      if (responseProfileId !== requestedProfileId) return;
+      setStats(data);
+    } catch (error) {
+      if (error instanceof DOMException && error.name === "AbortError") return;
+      // ignore transient network errors
     }
-  }, []);
+  }, [activeProfileId]);
 
   useEffect(() => {
     // Initial load
     void fetchStats();
 
-    const onDataChanged = () => {
-      // Queue-safe immediate refresh after any task/project mutation.
-      void fetchStats();
+    const onDataChanged = (ev?: Event) => {
+      const source = (ev as CustomEvent<{ source?: string }> | undefined)?.detail?.source;
+      // Local task/project mutations are shown optimistically in TaskBoard.
+      // Refresh progress immediately so Progress stays in lock-step with visible task status.
+      if (source === "local") {
+        if (statsRefreshDebounceRef.current) {
+          window.clearTimeout(statsRefreshDebounceRef.current);
+          statsRefreshDebounceRef.current = null;
+        }
+        void fetchStats();
+        return;
+      }
+      // Coalesce rapid task/project mutation bursts into one stats refresh.
+      if (statsRefreshDebounceRef.current) {
+        window.clearTimeout(statsRefreshDebounceRef.current);
+      }
+      statsRefreshDebounceRef.current = window.setTimeout(() => {
+        statsRefreshDebounceRef.current = null;
+        void fetchStats();
+      }, 180);
     };
 
     const onVisibilityChange = () => {
@@ -202,6 +225,10 @@ export function GamificationPanel() {
 
     return () => {
       window.clearInterval(intervalId);
+      if (statsRefreshDebounceRef.current) {
+        window.clearTimeout(statsRefreshDebounceRef.current);
+        statsRefreshDebounceRef.current = null;
+      }
       if (sseRef.current) {
         try {
           sseRef.current.close();
@@ -217,6 +244,12 @@ export function GamificationPanel() {
     };
   }, [fetchStats]);
 
+  useEffect(() => {
+    // Prevent showing stale cross-profile numbers while new scoped data is loading.
+    setStats(null);
+    void fetchStats();
+  }, [activeProfileId, fetchStats]);
+
   const completedToday = stats?.completedToday ?? 0;
   const streakDays = stats?.streakDays ?? 0;
   const level = stats?.level ?? 1;
@@ -230,6 +263,32 @@ export function GamificationPanel() {
   const maxDaily = Math.max(1, ...last7.map((d) => d.completed));
   const achievements = stats?.achievements ?? [];
   const milestones = stats?.milestoneAchievements ?? null;
+  const activeProfileLabel = activeProfileId
+    ? (() => {
+        const p = profileById[activeProfileId];
+        if (!p) return "Selected profile";
+        return p.title ? `${p.name} - ${p.title}` : p.name;
+      })()
+    : null;
+
+  useEffect(() => {
+    const run = async () => {
+      try {
+        const res = await fetch("/api/profiles");
+        if (!res.ok) return;
+        const data = (await res.json()) as Array<{ id: string; name: string; title: string }>;
+        setProfileById(
+          data.reduce<Record<string, { name: string; title: string }>>((acc, p) => {
+            acc[p.id] = { name: p.name, title: p.title ?? "" };
+            return acc;
+          }, {})
+        );
+      } catch {
+        // ignore transient failures
+      }
+    };
+    void run();
+  }, []);
 
   const closeBadgesModal = useCallback(() => {
     void exitBrowserFullscreenAll();
@@ -457,23 +516,40 @@ export function GamificationPanel() {
   return (
     <section className="gamification-panel">
       <div className="panel-head">
-        <h2>Progress</h2>
-        <div className="panel-head-actions">
+        <div>
+          <h2>Progress</h2>
+          <div className="muted small">
+            {activeProfileId ? `Profile: ${activeProfileLabel}` : "Profile: All profiles"}
+          </div>
+        </div>
+        <div className="progress-toolbar" role="group" aria-label="Progress actions">
           <button
-            className="ghost-button small"
+            className="progress-toolbar-btn"
             type="button"
             onClick={() => setAnalysisOpen(true)}
             title="Open historical charts for completions, XP, level, and milestones."
+            aria-label="Open productivity analysis"
           >
-            Productivity analysis
+            <span className="progress-toolbar-glyph" aria-hidden="true">
+              <svg viewBox="0 0 24 24" focusable="false">
+                <path d="M4 18h16M7 15l3-4 3 2 4-6" />
+              </svg>
+            </span>
+            <span className="progress-toolbar-label">Analysis</span>
           </button>
           <button
-            className="ghost-button small"
+            className="progress-toolbar-btn"
             type="button"
             onClick={() => setBadgesOpen(true)}
             title="Browse milestone badge tiers and your unlock progress."
+            aria-label="Open badges"
           >
-            Badges
+            <span className="progress-toolbar-glyph" aria-hidden="true">
+              <svg viewBox="0 0 24 24" focusable="false">
+                <path d="M12 3l2.8 5.6 6.2.9-4.5 4.4 1.1 6.1L12 17.1 6.4 20l1.1-6.1L3 9.5l6.2-.9L12 3z" />
+              </svg>
+            </span>
+            <span className="progress-toolbar-label">Badges</span>
           </button>
         </div>
       </div>
@@ -650,7 +726,12 @@ export function GamificationPanel() {
           )
         : null}
 
-      <ProductivityAnalysisModal open={analysisOpen} onClose={() => setAnalysisOpen(false)} />
+      <ProductivityAnalysisModal
+        open={analysisOpen}
+        onClose={() => setAnalysisOpen(false)}
+        activeProfileId={activeProfileId}
+        activeProfileName={activeProfileLabel}
+      />
     </section>
   );
 }
