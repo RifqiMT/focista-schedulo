@@ -10,6 +10,7 @@ function downloadDataUrl(dataUrl: string, filename: string) {
 export async function exportBadgeCardPng(opts: {
   node: HTMLElement;
   filenameBase: string;
+  profileName?: string;
   sizePx?: number;
 }) {
   const { toPng } = await import("html-to-image");
@@ -50,6 +51,7 @@ export async function exportBadgeCardPng(opts: {
         // Put badge name and star number on the same row.
         const content = card.querySelector(".badge-content") as HTMLElement | null;
         const label = card.querySelector(".badge-label") as HTMLElement | null;
+        const profile = card.querySelector(".badge-profile-name") as HTMLElement | null;
         const stars = card.querySelector(".badge-stars") as HTMLElement | null;
         if (content && label && stars) {
           const row = doc.createElement("div");
@@ -86,6 +88,21 @@ export async function exportBadgeCardPng(opts: {
           row.appendChild(label);
           row.appendChild(stars);
           content.appendChild(row);
+
+          const profileName = (opts.profileName ?? "").trim();
+          if (profileName) {
+            const profileRow = doc.createElement("div");
+            profileRow.textContent = profileName;
+            profileRow.style.marginTop = "6px";
+            profileRow.style.fontSize = "22px";
+            profileRow.style.fontWeight = "700";
+            profileRow.style.lineHeight = "1.15";
+            profileRow.style.color = "rgba(30, 41, 59, 0.92)";
+            profileRow.style.textAlign = "center";
+            content.appendChild(profileRow);
+          } else if (profile) {
+            profile.style.display = "none";
+          }
 
           // Reduce extra bottom spacing so art stays dominant.
           content.style.paddingBottom = "8px";

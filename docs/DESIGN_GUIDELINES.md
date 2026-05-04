@@ -1,6 +1,6 @@
 # Design Guidelines
 
-**Last updated:** 2026-04-30  
+**Last updated:** 2026-05-04  
 **Owner:** Design + Frontend Engineering
 
 ---
@@ -48,6 +48,7 @@ The same priority semantics must be reused across cards, pills, hovercards, and 
 - Keep profile actions compact and clearly discoverable.
 - Display active profile identity consistently.
 - Password-related controls should be explicit and reversible.
+- Use a consistent **lock** icon (or equivalent) next to password-protected profiles in selectors and summaries so protection state is scannable.
 - When profile policy is read-only (e.g., `Test`), disable destructive controls and provide clear explanatory tooltips/toasts.
 
 ### Task Board
@@ -62,7 +63,10 @@ The same priority semantics must be reused across cards, pills, hovercards, and 
 
 ### Progress and Productivity
 - Present summary KPIs first, deep analysis second.
+- **Weekly chart:** seven bars for the **current local Monday–Sunday**; label or helper copy should avoid implying a rolling “last seven days” window unless product copy is explicitly aligned with implementation.
+- **Bar tooltips:** structure content as (1) day totals, (2) per-task XP spread, (3) weekday-historical comparison so users can parse density without cognitive overload.
 - Badge/milestone visuals should reinforce progression without distracting from task execution.
+- **Badges modal:** header pattern `Profile: Name - Title`; exported PNG cards may use **name only** for compact artwork—keep this distinction intentional and consistent.
 
 ---
 

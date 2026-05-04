@@ -1,6 +1,6 @@
 # API Contracts
 
-**Last updated:** 2026-04-30  
+**Last updated:** 2026-05-04  
 **Owner:** Engineering
 
 Base local backend URL: `http://localhost:4000`
@@ -49,6 +49,28 @@ Base local backend URL: `http://localhost:4000`
 - `GET /api/stats`
 - `GET /api/productivity-insights`
 - `GET /api/events` (SSE version/event updates)
+
+### `GET /api/stats`
+
+- **Query:** optional `profileId` — omit or pass sentinel for all profiles (see backend `scopedDataForProfile`).
+- **Caching:** response sets `Cache-Control: no-store`; server may use an in-memory stats cache keyed by scoped profile (invalidated around mutations).
+- **Time basis:** “today”, streaks, and weekly buckets use the **server machine’s local calendar** (`toIsoLocal`), matching date pickers and progress UI in normal single-user local deployments.
+
+**Weekly series (`last7Days`):** The response field **`last7Days`** is a legacy name. It is an array of **seven** objects for the **current calendar week Monday–Sunday** (local), ordered Monday → Sunday. Each element includes:
+
+| Field | Type | Description |
+|---|---|---|
+| `date` | string | `YYYY-MM-DD` |
+| `completed` | number | Task completions on that progress day |
+| `points` | number | Sum of priority-based XP for those completions |
+| `taskXpMin` | number \| null | Min per-task XP that day |
+| `taskXpMax` | number \| null | Max per-task XP that day |
+| `taskXpAvg` | number \| null | Average per-task XP that day |
+| `weekdayTaskMin` | number | Historical min completions for this weekday (see `VARIABLES.md`) |
+| `weekdayTaskMax` | number | Historical max for this weekday |
+| `weekdayTaskAvg` | number | Historical average for this weekday |
+
+Other top-level fields (illustrative, not exhaustive): `totalPoints`, `level`, `xpToNext`, `completedToday`, `streakDays`, `pointsByPriority`, milestone structures, `achievements`, badge-related data — refer to `backend/src/index.ts` and `VARIABLES.md` for full catalogs.
 
 ---
 

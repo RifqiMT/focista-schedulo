@@ -1,12 +1,13 @@
 # Product and Engineering Guardrails
 
-**Last updated:** 2026-04-30  
+**Last updated:** 2026-05-04  
 **Owner:** Product + Engineering
 
 ---
 
 ## Business Guardrails
 
+- **User-facing copy accuracy:** Achievement or chart labels must match shipped formulas (e.g. any text implying a rolling seven-day window must match code, or be revised). Prefer a single source of truth documented in `VARIABLES.md`.
 - Keep profile data boundaries strict; no cross-profile leakage.
 - Preserve user data ownership with reliable import/export capability.
 - Prioritize execution reliability over feature volume.
@@ -17,6 +18,7 @@
 
 ## Technical Guardrails
 
+- **API field names vs. semantics:** Some response keys are historical (e.g. `last7Days` carrying a **calendar-week** series). Do not rename lightly without a coordinated frontend migration; when behavior changes, update `API_CONTRACTS.md`, `VARIABLES.md`, and consumer components in the same release.
 - Runtime persistence must remain non-monolith for high-frequency operations.
 - Validate all mutation payloads before persistence.
 - Avoid destructive save/sync patterns that can wipe valid datasets.

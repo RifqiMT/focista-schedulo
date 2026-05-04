@@ -1,6 +1,6 @@
 # Architecture
 
-**Last updated:** 2026-04-30  
+**Last updated:** 2026-05-04  
 **Owner:** Engineering
 
 ---
@@ -53,7 +53,7 @@ Used for import/export/admin interoperability workflows.
 - API contracts and request validation
 - Recurrence identity normalization (parent/child determinism)
 - Profile/project/task scope integrity
-- Stats and productivity aggregate computation
+- Stats and productivity aggregate computation (local-calendar semantics; weekly series keyed `last7Days` is seven **Monday–Sunday** buckets; see `API_CONTRACTS.md`)
 - Safe persistence with debounced flush strategy
 - Read-only showcase profile policy enforcement for mutation endpoints
 

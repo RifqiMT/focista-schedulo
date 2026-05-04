@@ -1,7 +1,17 @@
 # Changelog
 
-**Last updated:** 2026-04-30  
+**Last updated:** 2026-05-04  
 **Owner:** Engineering
+
+---
+
+## 2026-05-04
+
+### Documentation
+
+- Documentation suite refresh aligned with shipped **progress** behavior: calendar-week weekly chart (JSON key `last7Days`), rich bar tooltips (per-task XP and weekday-historical stats), badge PNG export and modal naming, and profile **lock** affordance.
+- Updated: `PRODUCT_DOCUMENTATION_STANDARD.md` (§4.1 variables/API discipline), `PRD.md`, `USER_PERSONAS.md`, `USER_STORIES.md` (US-403–US-406), `VARIABLES.md` (relationship diagram + `/api/stats` weekly fields), `API_CONTRACTS.md` (`GET /api/stats` contract notes), `DESIGN_GUIDELINES.md`, `GUARDRAILS.md` (copy vs. implementation; legacy API keys), `TRACEABILITY_MATRIX.md`, `PRODUCT_METRICS.md`, `METRICS_AND_OKRS.md`, `DOCS_CODE_CROSSWALK.md`, `ARCHITECTURE.md`, `TEST_STRATEGY.md`, `OPERATING_MODEL.md`, `RACI_MATRIX.md`, `RELEASE_CHECKLIST_TEMPLATE.md`, `releases/README.md`.
+- Callout: some achievement **UI copy** may still say “last 7 days” while eligibility iterates the calendar-week series—documented in `VARIABLES.md` / `GUARDRAILS.md` for product alignment.
 
 ---
 

@@ -2785,15 +2785,84 @@ app.get("/api/stats", (req, res) => {
   })();
 
   const last7Days = (() => {
+    const weekdayTaskStats = (() => {
+      const out = new Map<number, { min: number; max: number; avg: number }>();
+      const completionDates = Array.from(completionsByDay.keys()).sort();
+      if (completionDates.length === 0) return out;
+
+      // Build weekday series across the full filtered timeline (including zero-completion days).
+      // This yields meaningful weekday stats per bar instead of one repeated global period stat.
+      const buckets = new Map<number, number[]>();
+      for (let i = 0; i < 7; i += 1) buckets.set(i, []);
+
+      const earliest = new Date(`${completionDates[0]}T12:00:00`);
+      const cursor = new Date(earliest.getTime());
+      while (cursor.getTime() <= now.getTime()) {
+        const iso = toIsoLocal(cursor);
+        const weekday = cursor.getDay(); // 0..6 (Sun..Sat)
+        const list = buckets.get(weekday) ?? [];
+        list.push(completionsByDay.get(iso) ?? 0);
+        buckets.set(weekday, list);
+        cursor.setDate(cursor.getDate() + 1);
+      }
+
+      for (let i = 0; i < 7; i += 1) {
+        const values = buckets.get(i) ?? [];
+        if (values.length === 0) {
+          out.set(i, { min: 0, max: 0, avg: 0 });
+          continue;
+        }
+        const min = Math.min(...values);
+        const max = Math.max(...values);
+        const avg = Math.round((values.reduce((sum, v) => sum + v, 0) / values.length) * 10) / 10;
+        out.set(i, { min, max, avg });
+      }
+      return out;
+    })();
+
     // oldest -> newest
-    const days: { date: string; completed: number; points: number }[] = [];
-    for (let i = 6; i >= 0; i -= 1) {
-      const iso = toIsoLocal(addDaysLocal(now, -i));
-      const completed = completionsByDay.get(iso) ?? 0;
-      const points = completedTasksWithDate
-        .filter((t) => t.completionDateIso === iso)
-        .reduce((sum, t) => sum + scoreFor(t.task), 0);
-      days.push({ date: iso, completed, points });
+    const days: {
+      date: string;
+      completed: number;
+      points: number;
+      taskXpMin: number | null;
+      taskXpMax: number | null;
+      taskXpAvg: number | null;
+      weekdayTaskMin: number;
+      weekdayTaskMax: number;
+      weekdayTaskAvg: number;
+    }[] = [];
+    // Current calendar week (Mon..Sun), local timezone.
+    const weekday = now.getDay(); // 0..6 (Sun..Sat)
+    const mondayOffset = (weekday + 6) % 7; // Mon => 0, Sun => 6
+    const weekStart = addDaysLocal(now, -mondayOffset);
+    for (let i = 0; i < 7; i += 1) {
+      const iso = toIsoLocal(addDaysLocal(weekStart, i));
+      const dayTasks = completedTasksWithDate.filter((t) => t.completionDateIso === iso);
+      const completed = dayTasks.length;
+      const points = dayTasks.reduce((sum, t) => sum + scoreFor(t.task), 0);
+      const weekday = new Date(`${iso}T12:00:00`).getDay();
+      const weekdayStats = weekdayTaskStats.get(weekday) ?? { min: 0, max: 0, avg: 0 };
+      let taskXpMin: number | null = null;
+      let taskXpMax: number | null = null;
+      let taskXpAvg: number | null = null;
+      if (dayTasks.length > 0) {
+        const xps = dayTasks.map((row) => scoreFor(row.task));
+        taskXpMin = Math.min(...xps);
+        taskXpMax = Math.max(...xps);
+        taskXpAvg = Math.round((points / dayTasks.length) * 10) / 10;
+      }
+      days.push({
+        date: iso,
+        completed,
+        points,
+        taskXpMin,
+        taskXpMax,
+        taskXpAvg,
+        weekdayTaskMin: weekdayStats.min,
+        weekdayTaskMax: weekdayStats.max,
+        weekdayTaskAvg: weekdayStats.avg
+      });
     }
     return days;
   })();

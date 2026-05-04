@@ -1,6 +1,6 @@
 # Operating Model
 
-**Last updated:** 2026-04-30  
+**Last updated:** 2026-05-04  
 **Owner:** Product Operations + Engineering Management
 
 ---
@@ -37,7 +37,7 @@ Define how product, engineering, design, and analytics collaborate to deliver re
 1. Confirm intended scope in `PRD.md`.
 2. Verify requirement coverage in `TRACEABILITY_MATRIX.md`.
 3. Validate quality evidence against `TEST_STRATEGY.md`.
-4. Reconcile variable and metric definitions.
+4. Reconcile variable and metric definitions (`VARIABLES.md`, `PRODUCT_METRICS.md`), API shapes (`API_CONTRACTS.md`), and the docs-code crosswalk when payloads or formulas change.
 5. Update changelog and documentation index.
 6. Release only after documentation completeness gate passes.
 

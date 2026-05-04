@@ -1,6 +1,6 @@
 # User Personas
 
-**Last updated:** 2026-04-30  
+**Last updated:** 2026-05-04  
 **Owner:** Product
 
 ---
@@ -26,6 +26,7 @@
 - Profile-based scoping remains strict
 - Common actions complete quickly
 - Recurring workflows stay predictable
+- Locked profiles are **visually obvious** in the selector so the user does not confuse access-controlled scope with a technical error
 
 ---
 
@@ -69,6 +70,7 @@
 
 - Stats and productivity analysis remain reliable and profile-aware
 - Milestone feedback is timely and understandable
+- The **current-week** completion chart and **weekday-context** tooltips make daily performance interpretable without exporting data
 
 ---
 
@@ -78,7 +80,7 @@
 |---|---|
 | Multi-Context Professional | profiles, project filters, bulk edit/move/delete, calendar planning |
 | Routine Builder | recurrence engine, historical loading, completion robustness |
-| Progress-Motivated Planner | stats, productivity insights, badges, streaks |
+| Progress-Motivated Planner | stats, productivity insights, badges, streaks, weekly progress chart, PNG badge export |
 
 ---
 

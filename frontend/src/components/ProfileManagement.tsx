@@ -17,6 +17,22 @@ type Props = {
   onToast: (payload: { kind: "success" | "error" | "info"; title: string; message?: string }) => void;
 };
 
+function profileSelectOptionLabel(p: Profile): string {
+  return p.isPasswordProtected ? `${p.name} · 🔒` : p.name;
+}
+
+function ProfileLockIcon({ className }: { className?: string }) {
+  return (
+    <span className={className} aria-hidden="true">
+      <svg className="profile-lock-icon-svg" viewBox="0 0 24 24" focusable="false" aria-hidden="true">
+        <path d="M7 11V8a5 5 0 0 1 10 0v3" />
+        <rect x="5" y="11" width="14" height="10" rx="2" />
+        <path d="M12 15v2" />
+      </svg>
+    </span>
+  );
+}
+
 export function ProfileManagement({ activeProfileId, onChooseProfile, onToast }: Props) {
   const [profiles, setProfiles] = useState<Profile[]>([]);
   const [loading, setLoading] = useState(false);
@@ -443,8 +459,12 @@ export function ProfileManagement({ activeProfileId, onChooseProfile, onToast }:
                 Select profile
               </option>
               {profiles.map((p) => (
-                <option key={p.id} value={p.id}>
-                  {p.name}
+                <option
+                  key={p.id}
+                  value={p.id}
+                  title={p.isPasswordProtected ? "Password protected" : undefined}
+                >
+                  {profileSelectOptionLabel(p)}
                 </option>
               ))}
             </select>
@@ -454,9 +474,21 @@ export function ProfileManagement({ activeProfileId, onChooseProfile, onToast }:
           </span>
           {currentProfile ? (
             <div className="profile-selected-summary" aria-live="polite">
-              <strong>
-                {currentProfile.name}
-                {currentProfile.title ? ` — ${currentProfile.title}` : ""}
+              <strong className="profile-selected-name-row">
+                <span>
+                  {currentProfile.name}
+                  {currentProfile.title ? ` — ${currentProfile.title}` : ""}
+                </span>
+                {currentProfile.isPasswordProtected ? (
+                  <span
+                    className="profile-select-lock-wrap"
+                    title="Password protected"
+                    role="img"
+                    aria-label="Password protected"
+                  >
+                    <ProfileLockIcon />
+                  </span>
+                ) : null}
               </strong>
             </div>
           ) : null}

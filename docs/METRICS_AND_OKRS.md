@@ -1,6 +1,6 @@
 # Metrics and OKRs
 
-**Last updated:** 2026-04-30  
+**Last updated:** 2026-05-04  
 **Owner:** Product
 
 ---
@@ -50,6 +50,7 @@
 - NSM-01 WCST
 - EM-01 Streak Continuity
 - EM-03 Productivity Insight Usage
+- EM-05 Progress Chart Engagement (instrumentation roadmap)
 
 ---
 

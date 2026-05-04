@@ -1,6 +1,6 @@
 # Variables Documentation
 
-**Last updated:** 2026-04-30  
+**Last updated:** 2026-05-04  
 **Owner:** Product Analytics + Engineering
 
 This catalog defines core application variables with professional, implementation-aligned descriptions.
@@ -14,16 +14,26 @@ flowchart LR
   Profile[Profile]
   Project[Project]
   Task[Task]
-  Stats[Stats API]
-  Insights[Productivity Insights API]
-  UI[TaskBoard/Gamification UI]
+  PD[Progress day ISO]
+  CBD[Completions by calendar day]
+  WTS[Weekday historical series]
+  L7[last7Days weekly payload]
+  Stats[GET /api/stats]
+  Insights[GET /api/productivity-insights]
+  UI[Gamification and analysis UI]
 
   Profile --> Project
   Profile --> Task
   Project --> Task
+  Task --> PD
+  PD --> CBD
+  CBD --> WTS
+  CBD --> L7
+  WTS --> L7
   Task --> Stats
-  Task --> Insights
+  L7 --> Stats
   Stats --> UI
+  Task --> Insights
   Insights --> UI
 ```
 
@@ -87,6 +97,27 @@ flowchart LR
 | `isShowcaseReadOnlyActive` | Showcase Read-only Flag | Boolean guard that disables mutation interactions for profile `Test`. | `lower(trim(activeProfileName)) == "test"` | `TaskBoard.tsx`, `ProjectSidebar.tsx`, `ProfileManagement.tsx` | `true` |
 | `SHOWCASE_READONLY_MESSAGE` | Showcase Policy Message | Canonical backend message for blocked read-only profile mutations. | constant string | `backend/src/index.ts` | `Showcase mode: profile "Test" is read-only...` |
 | `friendlyErrorMessage` | Friendly Error Message | Human-readable error root cause shown in toaster UI. | `backendError || fallbackByStatus(httpStatus)` | `frontend/src/utils/friendlyError.ts` | `Verification failed. Please re-check your password...` |
+
+---
+
+## `/api/stats` response variables (weekly series and tooltips)
+
+The JSON key `last7Days` is a **legacy name**. Shipped behavior: an ordered array of **seven** objects for the **current calendar week** in the server’s local timezone (**Monday through Sunday**), not a rolling trailing-seven-day window.
+
+| Variable Name | Friendly Name | Definition | Formula / derivation | App Location | Example |
+|---|---|---|---|---|---|
+| `stats.last7Days` | Weekly progress series | Seven day-buckets for charting and achievement checks that iterate this array. | Week starts at Monday 00:00 local (`mondayOffset` from `now`), then `toIsoLocal(addDaysLocal(weekStart, i))` for `i = 0..6` | `backend/src/index.ts` (`GET /api/stats`), `GamificationPanel.tsx` | Array length `7` |
+| `stats.last7Days[].date` | Series day | ISO calendar date for the bar. | Local date string `YYYY-MM-DD` | stats payload, chart axis | `2026-05-04` |
+| `stats.last7Days[].completed` | Completions count | Tasks completed on that progress day. | count of `completedTasksWithDate` where `completionDateIso === date` | chart height, tooltip | `3` |
+| `stats.last7Days[].points` | Day XP | Sum of priority weights for tasks completed that day. | `sum(scoreFor(task))` for day’s tasks | tooltip, achievements | `7` |
+| `stats.last7Days[].taskXpMin` | Per-task XP minimum | Smallest priority score among tasks completed that day. | `min(xps)` or `null` if no completions | rich tooltip | `2` |
+| `stats.last7Days[].taskXpMax` | Per-task XP maximum | Largest priority score among tasks completed that day. | `max(xps)` or `null` | rich tooltip | `4` |
+| `stats.last7Days[].taskXpAvg` | Per-task XP average | Mean priority score for tasks completed that day (one decimal). | `round((points / n) * 10) / 10` or `null` | rich tooltip | `2.7` |
+| `stats.last7Days[].weekdayTaskMin` | Weekday historical minimum | Min completions on this **weekday** (0=Sun … 6=Sat) across every calendar day from first completion through `now`, including zero-completion days. | `min(count per that weekday)` | rich tooltip | `0` |
+| `stats.last7Days[].weekdayTaskMax` | Weekday historical maximum | Max completions on this weekday over the same span. | `max(count per that weekday)` | rich tooltip | `5` |
+| `stats.last7Days[].weekdayTaskAvg` | Weekday historical average | Mean completions for this weekday (one decimal). | `round(mean * 10) / 10` | rich tooltip | `2.4` |
+
+**Implementation note:** Achievements that loop over `last7Days` (for example Consistency Builder progress) therefore use the **same seven calendar-week dates** as the weekly chart, not an independent rolling seven-day window. Product copy that refers to “last seven days” should be reconciled with this behavior in a future wording pass.
 
 ---
 

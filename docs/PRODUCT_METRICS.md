@@ -1,6 +1,6 @@
 # Product Metrics
 
-**Last updated:** 2026-04-30  
+**Last updated:** 2026-05-04  
 **Owner:** Product Analytics
 
 ---
@@ -38,6 +38,7 @@
 | EM-02 | XP Gain Momentum | Weekly change in `pointsToday` and cumulative XP |
 | EM-03 | Productivity Insight Usage | Frequency of productivity analysis feature use |
 | EM-04 | Bulk Action Adoption | Share of task maintenance done through batch operations |
+| EM-05 | Progress Chart Engagement | Sessions where users open or hover the weekly progress chart (proxy: instrumentation if enabled) | qualitative until instrumented |
 
 ---
 

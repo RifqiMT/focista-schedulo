@@ -1,6 +1,6 @@
 # Product Requirements Document (PRD)
 
-**Last updated:** 2026-04-30  
+**Last updated:** 2026-05-04  
 **Owner:** Product
 
 ---
@@ -82,9 +82,11 @@ Detailed profiles are documented in `USER_PERSONAS.md`.
 
 ### 6.5 Progress and Insights
 
-- `/api/stats` for streak, XP, level, milestones
+- `/api/stats` for streak, XP, level, milestones, and the **current calendar week** completion series (local Monday–Sunday; exposed under the legacy response key `last7Days`)
+- Per-day bar tooltips: completions and XP for that day, per-task XP (priority score) min/max/average, and **weekday-historical** completion min/max/average across the filtered timeline
 - `/api/productivity-insights` for trend visualization and longitudinal analysis
-- Badges/milestone UI with export support
+- Badges and milestone UI with **high-resolution PNG export**; modal titling uses `Profile: Name - Title` while badge cards and exports emphasize **profile name** for legibility
+- Profile selector surfaces a **lock indicator** for password-protected profiles
 
 ### 6.6 Data Operations
 

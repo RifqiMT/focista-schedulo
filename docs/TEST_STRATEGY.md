@@ -1,6 +1,6 @@
 # Test Strategy
 
-**Last updated:** 2026-04-30  
+**Last updated:** 2026-05-04  
 **Owner:** Engineering + QA
 
 ---
@@ -39,6 +39,10 @@ Provide a practical and auditable testing strategy that validates functional cor
 5. **Error clarity**
    - Failure paths show friendly root-cause toasts.
    - No status-only generic error text in key user flows.
+6. **Progress surface**
+   - `/api/stats` `last7Days` has seven entries for the **current local Monday–Sunday** and aligns with completion counts by progress day.
+   - Weekly chart tooltips expose day totals, per-task XP spread, and weekday-historical stats when the UI is exercised.
+   - Badge PNG export completes without layout regression (cards vs. modal header naming).
 
 ---
 

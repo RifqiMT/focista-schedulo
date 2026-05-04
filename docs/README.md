@@ -1,6 +1,6 @@
 # Focista Schedulo Documentation Index
 
-**Last updated:** 2026-04-30  
+**Last updated:** 2026-05-04  
 **Owner:** Product Operations
 
 This index provides a complete map of product, engineering, design, analytics, and governance documentation for Focista Schedulo.

@@ -1,6 +1,6 @@
 # User Stories
 
-**Last updated:** 2026-04-30  
+**Last updated:** 2026-05-04  
 **Owner:** Product
 
 ---
@@ -81,6 +81,32 @@ As a user, I want historical productivity analysis so that I can improve plannin
 **Acceptance criteria**
 - Insights endpoint powers trend charts and summary views.
 - Data reflects completion logic consistently.
+
+### US-403 Interpret the current week at a glance
+As a progress-motivated user, I want a **calendar-week** completion chart so that I can compare Monday–Sunday execution in my local week.
+
+**Acceptance criteria**
+- Chart renders seven bars aligned to the **current** local Monday–Sunday window for the active profile scope.
+- Data source documents the legacy `last7Days` key while behaving as a calendar-week series (see `API_CONTRACTS.md`).
+
+### US-404 Understand a day in historical weekday context
+As a user, I want rich bar tooltips so that I can see same-weekday completion patterns, not only the current week.
+
+**Acceptance criteria**
+- Tooltip shows counts, day XP, per-task XP min/max/average when completions exist.
+- Tooltip includes weekday-historical min/max/average completion counts over the filtered timeline.
+
+### US-405 Export and share badges
+As a user, I want to export badge artwork so that I can share milestones outside the app.
+
+**Acceptance criteria**
+- PNG export produces high-resolution images; cards emphasize profile **name**; modal header may show **name and title** for consistency with other dialogs.
+
+### US-406 See locked profiles in the selector
+As a security-conscious user, I want a clear **lock** affordance on password-protected profiles so that I know which scope requires unlock or export credentials.
+
+**Acceptance criteria**
+- Workspace profile dropdown/summary shows a lock indicator for protected profiles (see `ProfileManagement`).
 
 ---
 

@@ -18,7 +18,17 @@ interface Stats {
   xpToNext: number;
   pointsToday: number;
   totalPoints: number;
-  last7Days?: { date: string; completed: number; points: number }[];
+  last7Days?: {
+    date: string;
+    completed: number;
+    points: number;
+    taskXpMin?: number | null;
+    taskXpMax?: number | null;
+    taskXpAvg?: number | null;
+    weekdayTaskMin?: number;
+    weekdayTaskMax?: number;
+    weekdayTaskAvg?: number;
+  }[];
   pointsByPriority?: { low: number; medium: number; high: number; urgent: number };
   achievements?: {
     id: string;
@@ -132,6 +142,23 @@ export function GamificationPanel({ activeProfileId }: { activeProfileId: string
   } | null>(null);
   const hovercardRef = useRef<HTMLDivElement | null>(null);
   const [hovercardPos, setHovercardPos] = useState<{ left: number; top: number } | null>(null);
+  const [weeklyBarHover, setWeeklyBarHover] = useState<{
+    date: string;
+    completed: number;
+    points: number;
+    taskXpMin: number | null;
+    taskXpMax: number | null;
+    taskXpAvg: number | null;
+    weekdayTaskMin: number;
+    weekdayTaskMax: number;
+    weekdayTaskAvg: number;
+    mouseX: number;
+    mouseY: number;
+  } | null>(null);
+  const weeklyTooltipRef = useRef<HTMLDivElement | null>(null);
+  const [weeklyTooltipPos, setWeeklyTooltipPos] = useState<{ left: number; top: number } | null>(
+    null
+  );
   const [expandedBadgeSections, setExpandedBadgeSections] = useState<Record<string, boolean>>({});
   const badgePanelRef = useRef<HTMLDivElement | null>(null);
   const badgesLayoutToastSentRef = useRef(false);
@@ -263,10 +290,13 @@ export function GamificationPanel({ activeProfileId }: { activeProfileId: string
 
   const pointsIntoLevel = totalPoints % 50;
   const xpBarPercent = Math.min(100, (pointsIntoLevel / 50) * 100);
-  const last7 = stats?.last7Days ?? [];
+  const last7 = useMemo(() => stats?.last7Days ?? [], [stats?.last7Days]);
   const maxDaily = Math.max(1, ...last7.map((d) => d.completed));
   const achievements = stats?.achievements ?? [];
   const milestones = stats?.milestoneAchievements ?? null;
+  const activeProfileNameOnly = activeProfileId
+    ? (profileById[activeProfileId]?.name ?? "Selected profile")
+    : null;
   const activeProfileLabel = activeProfileId
     ? (() => {
         const p = profileById[activeProfileId];
@@ -445,6 +475,46 @@ export function GamificationPanel({ activeProfileId }: { activeProfileId: string
     return () => window.removeEventListener("scroll", onScroll, { capture: true } as any);
   }, [hoveredBadge]);
 
+  useEffect(() => {
+    if (!weeklyBarHover) return;
+    const onScroll = () => setWeeklyBarHover(null);
+    window.addEventListener("scroll", onScroll, { passive: true, capture: true });
+    return () => window.removeEventListener("scroll", onScroll, { capture: true } as any);
+  }, [weeklyBarHover]);
+
+  useLayoutEffect(() => {
+    if (!weeklyBarHover) {
+      setWeeklyTooltipPos(null);
+      return;
+    }
+    const el = weeklyTooltipRef.current;
+    if (!el) return;
+
+    const place = () => {
+      const rect = el.getBoundingClientRect();
+      const vw = window.innerWidth;
+      const vh = window.innerHeight;
+      const pad = 12;
+      const ox = 10;
+      const oy = 10;
+      const { mouseX, mouseY } = weeklyBarHover;
+      let left = mouseX + ox;
+      let top = mouseY + oy;
+      if (left + rect.width > vw - pad) {
+        left = mouseX - rect.width - ox;
+      }
+      if (top + rect.height > vh - pad) {
+        top = mouseY - rect.height - oy;
+      }
+      left = Math.max(pad, Math.min(vw - rect.width - pad, left));
+      top = Math.max(pad, Math.min(vh - rect.height - pad, top));
+      setWeeklyTooltipPos({ left, top });
+    };
+
+    const raf = window.requestAnimationFrame(place);
+    return () => window.cancelAnimationFrame(raf);
+  }, [weeklyBarHover]);
+
   useLayoutEffect(() => {
     if (!hoveredBadge) {
       setHovercardPos(null);
@@ -516,6 +586,44 @@ export function GamificationPanel({ activeProfileId }: { activeProfileId: string
         return p;
     }
   };
+
+  const formatWeeklyBarAccessibilityTitle = (d: {
+    date: string;
+    completed: number;
+    points: number;
+    taskXpMin?: number | null;
+    taskXpMax?: number | null;
+    taskXpAvg?: number | null;
+    weekdayTaskMin?: number;
+    weekdayTaskMax?: number;
+    weekdayTaskAvg?: number;
+  }): string => {
+    const when = new Date(d.date + "T12:00:00").toLocaleDateString(undefined, {
+      weekday: "long",
+      month: "short",
+      day: "numeric",
+      year: "numeric"
+    });
+    const weekdayMin = d.weekdayTaskMin ?? 0;
+    const weekdayMax = d.weekdayTaskMax ?? 0;
+    const weekdayAvg = d.weekdayTaskAvg ?? 0;
+    if (d.completed <= 0) {
+      return `${when}. No tasks completed. This weekday (filtered history): min ${weekdayMin}, max ${weekdayMax}, average ${formatStatAvg(weekdayAvg)}.`;
+    }
+    const min = d.taskXpMin;
+    const max = d.taskXpMax;
+    const avg = d.taskXpAvg;
+    let base = `${when}. ${d.completed} task(s) completed, ${d.points} XP total.`;
+    if (min != null && max != null && avg != null) {
+      const avgStr = Number.isInteger(avg) ? String(avg) : avg.toFixed(1);
+      base += ` Per-task XP (priority): min ${min}, max ${max}, average ${avgStr}.`;
+    }
+    base += ` This weekday (filtered history): min ${weekdayMin}, max ${weekdayMax}, average ${formatStatAvg(weekdayAvg)}.`;
+    return base;
+  };
+
+  const formatStatAvg = (n: number): string =>
+    Number.isInteger(n) ? String(n) : n.toFixed(1);
 
   return (
     <section className="gamification-panel">
@@ -589,18 +697,58 @@ export function GamificationPanel({ activeProfileId }: { activeProfileId: string
         {last7.length > 0 && (
           <div className="weekly-section">
             <div className="weekly-header">
-              <div className="stat-label">Last 7 days</div>
+              <div className="stat-label">Current week</div>
               <div className="muted">{last7.reduce((s, d) => s + d.completed, 0)} completed</div>
             </div>
-            <div className="weekly-bars" aria-label="Weekly completion chart">
+            <div
+              className="weekly-bars"
+              aria-label="Weekly completion chart"
+              onMouseLeave={() => {
+                setWeeklyBarHover(null);
+                setWeeklyTooltipPos(null);
+              }}
+            >
               {last7.map((d) => {
                 const height = Math.max(8, Math.round((d.completed / maxDaily) * 42));
                 const label = new Date(d.date + "T12:00:00").toLocaleDateString(undefined, {
                   weekday: "short"
                 });
+                const taskXpMin = d.taskXpMin ?? null;
+                const taskXpMax = d.taskXpMax ?? null;
+                const taskXpAvg = d.taskXpAvg ?? null;
+                const weekdayTaskMin = d.weekdayTaskMin ?? 0;
+                const weekdayTaskMax = d.weekdayTaskMax ?? 0;
+                const weekdayTaskAvg = d.weekdayTaskAvg ?? 0;
                 return (
-                  <div key={d.date} className="weekly-bar-col">
-                    <div className="weekly-bar" style={{ height }} title={`${d.date}: ${d.completed} completed`} />
+                  <div
+                    key={d.date}
+                    className="weekly-bar-col"
+                    aria-label={formatWeeklyBarAccessibilityTitle(d)}
+                    onMouseEnter={(e) => {
+                      setWeeklyTooltipPos(null);
+                      setWeeklyBarHover({
+                        date: d.date,
+                        completed: d.completed,
+                        points: d.points,
+                        taskXpMin,
+                        taskXpMax,
+                        taskXpAvg,
+                        weekdayTaskMin,
+                        weekdayTaskMax,
+                        weekdayTaskAvg,
+                        mouseX: e.clientX,
+                        mouseY: e.clientY
+                      });
+                    }}
+                    onMouseMove={(e) => {
+                      setWeeklyBarHover((h) =>
+                        h && h.date === d.date
+                          ? { ...h, mouseX: e.clientX, mouseY: e.clientY }
+                          : h
+                      );
+                    }}
+                  >
+                    <div className="weekly-bar" style={{ height }} aria-hidden="true" />
                     <div className="weekly-bar-label">{label}</div>
                   </div>
                 );
@@ -713,6 +861,8 @@ export function GamificationPanel({ activeProfileId }: { activeProfileId: string
                 <BadgesModalDialogBody
                   panelRef={badgePanelRef}
                   closeBadgesModal={closeBadgesModal}
+                  activeProfileName={activeProfileNameOnly ?? "All profiles"}
+                  activeProfileHeader={activeProfileLabel ?? "All profiles"}
                   badgeSections={badgeSections}
                   expandedBadgeSections={expandedBadgeSections}
                   setExpandedBadgeSections={setExpandedBadgeSections}
@@ -736,6 +886,72 @@ export function GamificationPanel({ activeProfileId }: { activeProfileId: string
         activeProfileId={activeProfileId}
         activeProfileName={activeProfileLabel}
       />
+
+      {weeklyBarHover
+        ? createPortal(
+            <div
+              ref={weeklyTooltipRef}
+              className="weekly-bar-tooltip"
+              style={{
+                position: "fixed",
+                left: weeklyTooltipPos?.left ?? weeklyBarHover.mouseX + 10,
+                top: weeklyTooltipPos?.top ?? weeklyBarHover.mouseY + 10,
+                zIndex: 10050,
+                pointerEvents: "none"
+              }}
+              role="tooltip"
+            >
+              <div className="weekly-bar-tooltip-title">
+                {new Date(weeklyBarHover.date + "T12:00:00").toLocaleDateString(undefined, {
+                  weekday: "long",
+                  month: "short",
+                  day: "numeric",
+                  year: "numeric"
+                })}
+              </div>
+              {weeklyBarHover.completed <= 0 ? (
+                <div className="weekly-bar-tooltip-empty">No tasks completed this day.</div>
+              ) : (
+                <>
+                  <div className="weekly-bar-tooltip-line">
+                    <span className="weekly-bar-tooltip-k">Tasks completed</span>
+                    <span className="weekly-bar-tooltip-v">{weeklyBarHover.completed}</span>
+                  </div>
+                  <div className="weekly-bar-tooltip-line">
+                    <span className="weekly-bar-tooltip-k">Total XP</span>
+                    <span className="weekly-bar-tooltip-v">{weeklyBarHover.points}</span>
+                  </div>
+                  {weeklyBarHover.taskXpMin != null &&
+                  weeklyBarHover.taskXpMax != null &&
+                  weeklyBarHover.taskXpAvg != null ? (
+                    <div className="weekly-bar-tooltip-xp">
+                      <div className="weekly-bar-tooltip-xp-label">Per-task XP (priority)</div>
+                      <div className="weekly-bar-tooltip-xp-row">
+                        <span>Min {weeklyBarHover.taskXpMin}</span>
+                        <span>Max {weeklyBarHover.taskXpMax}</span>
+                        <span>Avg {formatStatAvg(weeklyBarHover.taskXpAvg)}</span>
+                      </div>
+                    </div>
+                  ) : null}
+                  <div className="weekly-bar-tooltip-xp">
+                    <div className="weekly-bar-tooltip-xp-label">
+                      This weekday (filtered history)
+                    </div>
+                    <div className="weekly-bar-tooltip-xp-row">
+                      <span>Min {weeklyBarHover.weekdayTaskMin}</span>
+                      <span>Max {weeklyBarHover.weekdayTaskMax}</span>
+                      <span>Avg {formatStatAvg(weeklyBarHover.weekdayTaskAvg)}</span>
+                    </div>
+                    <div className="weekly-bar-tooltip-footnote">
+                      Computed from this weekday across the filtered timeline, including zero days.
+                    </div>
+                  </div>
+                </>
+              )}
+            </div>,
+            document.body
+          )
+        : null}
     </section>
   );
 }

@@ -1,6 +1,6 @@
 # Product Documentation Standard
 
-**Last updated:** 2026-04-30  
+**Last updated:** 2026-05-04  
 **Owner:** Product (with Design + Engineering)
 
 This standard defines how product documentation is authored, reviewed, versioned, and maintained for Focista Schedulo.
@@ -66,6 +66,15 @@ Each document must include:
 - Avoid ambiguous phrases without scope/timeframe.
 - For formulas and metrics, include explicit definitions and examples.
 - For API behavior, include contract-level request/response summaries.
+
+### 4.1 Variables and API shape discipline
+
+When stats, task fields, or API payloads change in code:
+
+1. Update `docs/VARIABLES.md` (definitions, formulas, locations, examples) and extend the Mermaid relationship diagram if new links appear.
+2. Update `docs/API_CONTRACTS.md` when request/response shapes or semantics change (note field names that diverge from behavior, e.g. calendar-week stats under a legacy key).
+3. Update `docs/DOCS_CODE_CROSSWALK.md` and `docs/TRACEABILITY_MATRIX.md` so requirements and verification stay aligned.
+4. Add a dated entry to `docs/CHANGELOG.md` describing doc and product impact.
 
 ---
 

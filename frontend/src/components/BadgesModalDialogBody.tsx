@@ -125,6 +125,8 @@ function DownloadIcon() {
 type BadgesModalDialogBodyProps = {
   panelRef: RefObject<HTMLDivElement | null>;
   closeBadgesModal: () => void;
+  activeProfileName: string;
+  activeProfileHeader: string;
   badgeSections: BadgesModalSection[];
   expandedBadgeSections: Record<string, boolean>;
   setExpandedBadgeSections: Dispatch<SetStateAction<Record<string, boolean>>>;
@@ -140,6 +142,8 @@ type BadgesModalDialogBodyProps = {
 export function BadgesModalDialogBody({
   panelRef,
   closeBadgesModal,
+  activeProfileName,
+  activeProfileHeader,
   badgeSections,
   expandedBadgeSections,
   setExpandedBadgeSections,
@@ -164,6 +168,7 @@ export function BadgesModalDialogBody({
             <div className="badge-modal-sub">
               Unlock badges by hitting milestone targets across streaks, tasks, XP, and levels.
             </div>
+            <div className="badge-modal-sub">Profile: {activeProfileHeader}</div>
           </div>
           <div className="badge-modal-head-actions">
             <button
@@ -311,6 +316,7 @@ export function BadgesModalDialogBody({
                             void exportBadgeCardPng({
                               node: card,
                               filenameBase: `${s.title}_${label}_star_${badgeNumber}`,
+                              profileName: activeProfileName,
                               sizePx: 1600
                             });
                           }}
@@ -328,6 +334,7 @@ export function BadgesModalDialogBody({
                       </div>
                       <div className="badge-content">
                         <div className="badge-label">{label}</div>
+                        <div className="badge-profile-name">{activeProfileName}</div>
                         <div className="badge-stars" aria-label={`Badge ${badgeNumber}`}>
                           <span className="badge-stars-icon" aria-hidden="true">
                             ★

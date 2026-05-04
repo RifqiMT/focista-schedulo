@@ -1,6 +1,6 @@
 # Docs-Code Crosswalk
 
-**Last updated:** 2026-04-30  
+**Last updated:** 2026-05-04  
 **Owner:** Engineering + Product Operations
 
 This file maps documentation artifacts to the primary implementation locations.
@@ -14,7 +14,7 @@ This file maps documentation artifacts to the primary implementation locations.
 | Task CRUD and list/calendar UX | `frontend/src/components/TaskBoard.tsx`, task routes in `backend/src/index.ts` |
 | Task editor and parsing | `frontend/src/components/TaskEditorDrawer.tsx` |
 | Project management | `frontend/src/components/ProjectSidebar.tsx`, project routes in `backend/src/index.ts` |
-| Progress panel and badges | `frontend/src/components/GamificationPanel.tsx`, `/api/stats` in `backend/src/index.ts` |
+| Progress panel, weekly chart, tooltips, badges | `frontend/src/components/GamificationPanel.tsx`, `frontend/src/components/BadgesModalDialogBody.tsx`, `frontend/src/components/badgePngExport.ts`; `/api/stats` (incl. `last7Days` calendar-week series) in `backend/src/index.ts` |
 | Productivity analysis | `frontend/src/components/ProductivityAnalysisModal.tsx`, `/api/productivity-insights` |
 | Runtime persistence model | persistence helpers in `backend/src/index.ts`, `backend/data/*.runtime.json` |
 | Import/export/sync/save admin flows | admin routes in `backend/src/index.ts`, actions in `frontend/src/App.tsx` and `TaskBoard.tsx` |
@@ -32,4 +32,5 @@ This file maps documentation artifacts to the primary implementation locations.
 - Profile-scoped behavior reflected in product and technical docs
 - API route inventory matches backend route declarations
 - Metrics/variable formulas match current backend calculations
+- Weekly progress: `last7Days` in `/api/stats` is documented as a **calendar-week** (Mon–Sun) series, not a rolling seven-day window
 

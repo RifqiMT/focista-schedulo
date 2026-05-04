@@ -1,6 +1,6 @@
 # Focista Schedulo
 
-**Last updated:** 2026-04-30  
+**Last updated:** 2026-05-04  
 **Owner:** Product + Engineering  
 **Tagline:** Plan with clarity, focus without noise, and celebrate what you complete.
 
@@ -37,6 +37,16 @@ Focista Schedulo helps users:
 | Planning UI | List + calendar month + day-agenda timeline with timeframe filters and historical loading controls. |
 | Productivity | `/api/stats` and `/api/productivity-insights` power progress summaries, milestones, badges, and trend charts. |
 | Data Ops | Import, sync-from-data, save, export, reload with merge/dedupe safeguards and validation. |
+
+### Progress surface (calendar week & tooltips)
+
+- The **Progress** panel includes a **current calendar week** completion chart (local **Monday–Sunday**), scoped to the active profile (or all profiles when unscoped).
+- Hovering a day shows a **rich tooltip**: tasks completed and XP for that day, **per-task XP (priority) min/max/average**, and **weekday-historical** completion min/max/average (same weekday across the filtered timeline, including zero days).
+- **Badges** can be exported as high-resolution PNG; each card shows the **profile name**, while the badges modal header uses **`Profile: Name - Title`** for consistency with other modals (e.g. Analysis).
+
+### Profile selector
+
+- Password-protected profiles show a **lock indicator** in the workspace profile dropdown and summary (see `ProfileManagement`).
 
 ---
 
