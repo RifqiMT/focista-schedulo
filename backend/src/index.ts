@@ -19,7 +19,12 @@ import {
 } from "./profileService";
 
 const app = express();
-app.use(cors());
+const FRONTEND_ORIGIN = process.env.FRONTEND_ORIGIN?.trim();
+if (FRONTEND_ORIGIN) {
+  app.use(cors({ origin: FRONTEND_ORIGIN, credentials: false }));
+} else {
+  app.use(cors());
+}
 app.use(compression());
 // Accept larger JSON bodies for import workflows.
 app.use(express.json({ limit: "10mb" }));

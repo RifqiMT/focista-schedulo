@@ -1,6 +1,6 @@
 import { FormEvent, useCallback, useEffect, useRef, useState } from "react";
 import { getFriendlyErrorMessage } from "../utils/friendlyError";
-import { apiUrl } from "../apiOrigin";
+import { apiFetch } from "../apiClient";
 
 type Profile = {
   id: string;
@@ -54,7 +54,7 @@ export function ProfileManagement({ activeProfileId, onChooseProfile, onToast }:
   const loadProfiles = useCallback(async () => {
     setLoading(true);
     try {
-      const res = await fetch(apiUrl("/api/profiles"));
+      const res = await apiFetch("/api/profiles");
       if (!res.ok) throw new Error(await getFriendlyErrorMessage(res));
       const data = (await res.json()) as Profile[];
       setProfiles(data);
@@ -99,7 +99,7 @@ export function ProfileManagement({ activeProfileId, onChooseProfile, onToast }:
     const run = async () => {
       autoFallbackRunningRef.current = true;
       try {
-        const res = await fetch(apiUrl("/api/profiles/task-counts"));
+        const res = await apiFetch("/api/profiles/task-counts");
         if (!res.ok) throw new Error(await getFriendlyErrorMessage(res));
         const countsPayload = (await res.json()) as {
           countsByProfileId?: Record<string, number>;
@@ -155,7 +155,7 @@ export function ProfileManagement({ activeProfileId, onChooseProfile, onToast }:
     }
     setSubmitting(true);
     try {
-      const res = await fetch(apiUrl("/api/profiles"), {
+      const res = await apiFetch("/api/profiles", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -231,7 +231,7 @@ export function ProfileManagement({ activeProfileId, onChooseProfile, onToast }:
         body.newPassword = newPassword;
         body.confirmNewPassword = confirmNewPassword;
       }
-      const res = await fetch(apiUrl(`/api/profiles/${editingId}`), {
+      const res = await apiFetch(`/api/profiles/${editingId}`, {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(body)
@@ -274,7 +274,7 @@ export function ProfileManagement({ activeProfileId, onChooseProfile, onToast }:
     if (!pendingUnlockProfile) return;
     setUnlocking(true);
     try {
-      const res = await fetch(apiUrl(`/api/profiles/${pendingUnlockProfile.id}/unlock`), {
+      const res = await apiFetch(`/api/profiles/${pendingUnlockProfile.id}/unlock`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ password: unlockPassword })
@@ -311,7 +311,7 @@ export function ProfileManagement({ activeProfileId, onChooseProfile, onToast }:
     }
     setSubmitting(true);
     try {
-      const res = await fetch(apiUrl(`/api/profiles/${profile.id}`), {
+      const res = await apiFetch(`/api/profiles/${profile.id}`, {
         method: "DELETE",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({

@@ -1,136 +1,131 @@
-# Production deployment — Vercel (frontend) + API host
+# Production deployment on Vercel (full-stack guidance)
 
-**Last updated:** 2026-05-04  
+**Last updated:** 2026-04-30  
 **Owner:** Engineering
 
 ---
 
-## 1) Architecture decision
+## 1) What you are deploying
 
-Focista Schedulo is a **full-stack** product:
+Focista Schedulo is a **split architecture** today:
 
-| Layer | Runtime needs |
-| --- | --- |
-| **Frontend** | Static SPA (ideal for **Vercel**). |
-| **Backend** | Long-lived **Express** server, **filesystem JSON** persistence, **SSE** (`/api/events`), large import bodies. |
+| Layer | Technology | Role |
+|---|---|---|
+| UI | React + Vite (`frontend/`) | Browser SPA; talks to HTTP APIs |
+| API | Express + TypeScript (`backend/`) | Validates input, applies business rules, persists JSON runtime files |
 
-Vercel is optimized for static sites and short-lived serverless/edge functions. The current backend **requires a writable data directory** and a persistent process for SSE. Therefore:
+**Vercel is ideal for the static/Vite frontend.** The Express API is **not** a drop-in Vercel serverless app in this repository: it relies on a long-running Node process and **writable JSON files** under `backend/data/`. Vercel’s default serverless runtime does **not** provide durable, writable local disk the way this backend expects.
 
-- **Deploy the React app on Vercel.**
-- **Deploy the Express API on a host that supports a Node server + persistent disk** (or migrate storage to a database/object store in a future phase).
+**Recommended production topology**
 
-This document describes the **recommended split**: Vercel + external API.
+1. **Vercel:** host the built frontend (`frontend/dist`).
+2. **A Node-capable host with persistent storage:** host the backend (examples: Fly.io volume, Render disk, Railway volume, a small VPS).  
+3. **Environment wiring:** the browser calls the API using `VITE_API_BASE_URL` (see below).
+
+This preserves **all features**, including **import** and **export**, because those flows are implemented in the API and/or orchestrated from the UI against the API.
 
 ---
 
-## 2) Frontend on Vercel
+## 2) “Local storage” in this product (current reality)
 
-### Production URL (this project)
+The app already uses the browser for **some** local persistence:
 
-After a successful production deploy, Vercel assigns a stable **production alias** such as:
+- **Active profile id** is stored in `localStorage` (`pst.activeProfileId` in `frontend/src/App.tsx`).
+- **Import** reads a user-selected file in the browser, then posts content to `/api/admin/import`.
+- **Export** requests a snapshot from `/api/admin/export-data` and downloads blobs in the browser.
 
-- `https://focista-schedulo.vercel.app`
+**Important distinction**
 
-Each deploy also receives a unique deployment URL (shown in the Vercel dashboard and CLI). Use the production alias for sharing and bookmarks.
+- **Local-first UX** (files + browser storage for preferences) is already part of the experience.
+- **Fully offline / no server** operation would require a large engineering effort: porting persistence, merge/dedupe, recurrence normalization, stats, and admin routes to a client-side store (for example **IndexedDB**) or bundling a different storage backend. That is **not** shipped in the current codebase.
 
-**Important:** Keep `vercel.json` limited to the **Vite frontend build** only. Do not enable Vercel “multi-service” auto-detection for the Express app unless you have intentionally migrated the API to Vercel-compatible serverless or another supported runtime; a root `npm run build` that includes the backend TypeScript project can fail on CI if types or install layout differ from local machines.
+If you need **100% browser-only** production (no hosted API), treat it as a **separate product milestone** and plan explicit work for a client-side repository layer.
+
+---
+
+## 3) Frontend: Vercel configuration
 
 ### Repository layout
 
-- Monorepo root: `focista-schedulo/`
-- `vercel.json` at repo root configures install/build/output for the **frontend** workspace.
+Use the Vercel project **Root Directory**: `frontend/`.
 
-### Required environment variable (production build)
+### Build settings
 
-| Variable | Example | Purpose |
-| --- | --- | --- |
-| `VITE_API_BASE_URL` | `https://api.yourdomain.com` | Origin of the Express API **without** trailing slash. Injected at **build** time into the SPA. |
+- **Install command:** `npm install` (workspace installs can be handled at repo root; simplest is install in `frontend/` if you deploy only that folder)
+- **Build command:** `npm run build`
+- **Output directory:** `dist`
 
-In the Vercel project:
+### SPA routing
 
-1. **Settings → Environment Variables**
-2. Add `VITE_API_BASE_URL` for **Production** (and Preview if you use a staging API).
-3. Redeploy after changing this value (Vite bakes it into the client bundle).
+`frontend/vercel.json` rewrites unknown paths to `index.html` so React Router (if used at root) and direct URL loads work.
 
-If `VITE_API_BASE_URL` is **not** set, the client falls back to `window.location.origin` (correct for local dev with the Vite proxy, **incorrect** for a static-only Vercel deploy unless you add a separate reverse proxy).
+### Required environment variable (production)
 
-### Vercel project settings
+Set in Vercel → Project → Settings → Environment Variables (Production):
 
-| Setting | Value |
-| --- | --- |
-| Root Directory | Repository root (`focista-schedulo` if the repo root is the monorepo) |
-| Framework Preset | *Other* (build is driven by `vercel.json`) |
-| Build Command | *(from `vercel.json`)* `npm run build --workspace focista-schedulo-frontend` |
-| Output Directory | `frontend/dist` |
-| Install Command | `npm install` |
+| Name | Example | Purpose |
+|---|---|---|
+| `VITE_API_BASE_URL` | `https://api.yourdomain.com` | Absolute origin of the Express API **without** a trailing slash |
 
-### Custom domain
+At build time, Vite inlines this value. The UI uses `frontend/src/apiClient.ts` so all `/api/...` calls resolve to your API host.
 
-Add your apex or `www` domain under **Domains**. Point DNS as instructed by Vercel.
+**Development note:** leave `VITE_API_BASE_URL` unset locally so `window.location.origin` is used and the Vite dev proxy (`vite.config.ts`) continues to forward `/api` to `localhost:4000`.
 
 ---
 
-## 3) Backend API host (not Vercel)
+## 4) Backend: production host checklist
 
-Choose one pattern:
+### Process
 
-### Option A — PaaS with persistent disk (simplest migration)
+- Run `npm run build` then `npm run start` (or run `ts-node-dev` only in dev).
+- Expose port `4000` (or set `PORT`).
 
-Examples: **Railway**, **Render** (with disk), **Fly.io** (volume), **Google Cloud Run** (volume).
+### Persistence
 
-1. **Build:** `npm run build --workspace focista-schedulo-backend`
-2. **Start:** `npm run start --workspace focista-schedulo-backend` (runs `node dist/index.js`)
-3. **Working directory:** repo root or `backend/` with correct `DATA_DIR` (see below).
-4. **Environment:** `PORT` provided by platform; ensure `backend/data/` exists and is on a **persistent** volume mounted at `backend/data`.
+- Ensure `backend/data/` is on a **persistent volume** (otherwise restarts wipe tasks/projects/profiles).
+- Keep `focista-unified-data.json` behavior aligned with your operational policy (interchange/import/export workflows).
 
-### Option B — VPS (Docker)
+### CORS / browser security
 
-Use a single container with Node, copy `backend/dist` + `backend/package.json` + production `node_modules`, mount a volume at `/app/backend/data`.
+The backend supports an optional strict origin:
 
-### Data directory
+| Name | Example | Purpose |
+|---|---|---|
+| `FRONTEND_ORIGIN` | `https://your-app.vercel.app` | Restrict CORS to your deployed UI origin |
 
-The server resolves data under `backend/data/` (see `backend/src/index.ts`). For production:
-
-- Mount persistent storage so `tasks.runtime.json`, `projects.runtime.json`, `profiles.runtime.json`, and optional `focista-unified-data.json` survive restarts.
-- **Do not** rely on container ephemeral filesystem for production data.
-
-### CORS
-
-The backend uses open CORS today (`cors()`). For stricter production, restrict to your Vercel URL and custom domain via `ALLOWED_ORIGINS` (future hardening).
+If unset, the server remains open (`cors()` default) which is convenient for local dev but looser for production.
 
 ---
 
-## 4) Connectivity checklist
+## 5) Operational limitations to plan for
 
-- [ ] API HTTPS URL works (`GET /health` or equivalent).
-- [ ] `VITE_API_BASE_URL` set on Vercel to that origin.
-- [ ] Browser: no mixed content (both HTTPS).
-- [ ] CORS allows the Vercel deployment URL (and preview URLs if needed).
-- [ ] SSE: `EventSource` targets the same API origin via `apiUrl("/api/events")` — corporate proxies must allow SSE.
-
----
-
-## 5) Build commands reference (local parity)
-
-```bash
-# From monorepo root
-npm install
-npm run build --workspace focista-schedulo-frontend
-npm run build --workspace focista-schedulo-backend
-```
+| Topic | Guidance |
+|---|---|
+| **SSE** (`/api/events`) | Works when UI and API share an origin **or** when API supports CORS for EventSource from the UI origin. Cross-origin SSE can be sensitive to proxies; validate in staging. |
+| **Large imports** | Backend sets a large JSON body limit for imports; still validate infra timeouts (reverse proxy / platform limits). |
+| **Secrets** | Never commit tokens or `.env` files. Configure secrets in Vercel/host dashboards only. |
 
 ---
 
-## 6) Security notes
+## 6) Verification checklist (staging)
 
-- Never commit API keys or tokens; use Vercel/host env vars only.
-- Do not commit `backend/data/*.json` (already gitignored).
-- Rotate any credentials that were ever pasted into chat or committed by mistake.
+- [ ] UI loads from Vercel domain
+- [ ] API health responds from API domain
+- [ ] Create/edit/complete/delete task works end-to-end
+- [ ] Import JSON + CSV works
+- [ ] Export JSON + CSV + Both works
+- [ ] Progress panel (`/api/stats`) matches active profile scope
+- [ ] Productivity insights (`/api/productivity-insights`) loads for the active profile
 
 ---
 
-## 7) Future improvements (optional)
+## 7) Roadmap: true offline / IndexedDB “local storage”
 
-- Single-origin production via a reverse proxy (nginx) in front of API + static files.
-- Replace file persistence with Postgres/S3 for multi-instance and serverless-friendly APIs.
-- Tighten CORS to explicit allowlist.
+If the goal is **no hosted API** in production:
+
+1. Introduce a `StorageAdapter` interface (remote REST vs local IndexedDB).
+2. Port merge/dedupe/import/export semantics carefully (today centralized in `backend/src/index.ts`).
+3. Add conflict resolution UX for multi-tab usage.
+4. Add automated tests for parity between modes.
+
+This is a substantial project; do not assume it is implied by deploying the UI to Vercel alone.

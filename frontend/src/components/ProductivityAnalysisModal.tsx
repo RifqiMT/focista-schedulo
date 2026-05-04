@@ -18,7 +18,7 @@ import {
   afterProductivityChartOverlayPaint,
   toastProductivityAnalysisFullscreenBusy
 } from "../productivityAnalysisFullscreen";
-import { apiUrl } from "../apiOrigin";
+import { apiFetch, apiUrl } from "../apiClient";
 
 type Timeframe = "daily" | "weekly" | "monthly" | "quarterly" | "annually";
 
@@ -3268,7 +3268,7 @@ export function ProductivityAnalysisModal({
       try {
         const url = new URL(apiUrl("/api/productivity-insights"));
         if (activeProfileId) url.searchParams.set("profileId", activeProfileId);
-        const res = await fetch(url.toString(), { cache: "no-store" });
+        const res = await apiFetch(`${url.pathname}${url.search}`, { cache: "no-store" });
         if (!res.ok) {
           throw new Error(`Request failed with status ${res.status}`);
         }

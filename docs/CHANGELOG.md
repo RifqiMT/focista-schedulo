@@ -5,16 +5,13 @@
 
 ---
 
-## 2026-05-04
+## 2026-04-30
 
 ### Added
 
-- Vercel-oriented production deployment: root `vercel.json`, `docs/DEPLOYMENT_VERCEL.md`, and `frontend/.env.example`.
-- `frontend/src/apiOrigin.ts` with `apiUrl()` so REST and SSE target `VITE_API_BASE_URL` when the SPA and API are on different origins.
-
----
-
-## 2026-04-30
+- Production-oriented Vercel deployment guide: `docs/DEPLOYMENT_VERCEL.md`.
+- Configurable API origin for split hosting: `frontend/src/apiClient.ts`, `frontend/.env.example`, `frontend/vercel.json`.
+- Optional strict CORS for production API: `FRONTEND_ORIGIN` (`backend/src/index.ts`, `backend/.env.example`).
 
 ### Changed
 

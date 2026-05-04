@@ -5,6 +5,7 @@ dist-ssr
 *.log
 .env
 .env.local
+.vercel/
 
 # Local persistence (never commit, including unified data)
 backend/data/*.json
@@ -21,4 +22,3 @@ backend/data/*.json
 *.njsproj
 *.sln
 *.sw?
-.vercel

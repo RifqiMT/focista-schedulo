@@ -8,7 +8,7 @@ import {
   PST_TRUE_FULLSCREEN_CONTEXT_EVENT
 } from "../fullscreenApi";
 import { ProductivityAnalysisModal } from "./ProductivityAnalysisModal";
-import { apiUrl } from "../apiOrigin";
+import { apiFetch, apiUrl } from "../apiClient";
 
 interface Stats {
   profileId?: string | null;
@@ -145,7 +145,10 @@ export function GamificationPanel({ activeProfileId }: { activeProfileId: string
       const requestedProfileId = activeProfileId ?? null;
       const url = new URL(apiUrl("/api/stats"));
       if (activeProfileId) url.searchParams.set("profileId", activeProfileId);
-      const res = await fetch(url.toString(), { cache: "no-store", signal: controller.signal });
+      const res = await apiFetch(`${url.pathname}${url.search}`, {
+        cache: "no-store",
+        signal: controller.signal
+      });
       if (!res.ok) return;
       const data: Stats = await res.json();
       // Ignore late responses from older requests.
@@ -275,7 +278,7 @@ export function GamificationPanel({ activeProfileId }: { activeProfileId: string
   useEffect(() => {
     const run = async () => {
       try {
-        const res = await fetch(apiUrl("/api/profiles"));
+        const res = await apiFetch("/api/profiles");
         if (!res.ok) return;
         const data = (await res.json()) as Array<{ id: string; name: string; title: string }>;
         setProfileById(

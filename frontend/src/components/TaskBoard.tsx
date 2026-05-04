@@ -1,8 +1,8 @@
 import React, { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { TaskEditorDrawer } from "./TaskEditorDrawer";
+import { apiFetch, apiUrl } from "../apiClient";
 import { getFriendlyErrorMessage } from "../utils/friendlyError";
-import { apiUrl } from "../apiOrigin";
 
 export interface Task {
   id: string;
@@ -955,7 +955,7 @@ export function TaskBoard({
     const controller = new AbortController();
     const run = async () => {
       try {
-        const res = await fetch(apiUrl("/api/profiles"), { signal: controller.signal });
+        const res = await apiFetch("/api/profiles", { signal: controller.signal });
         if (!res.ok) return;
         const data = (await res.json()) as Array<{ id: string; name: string }>;
         const active = data.find((p) => p.id === activeProfileId);
@@ -1237,7 +1237,7 @@ export function TaskBoard({
         }
       }
 
-      const res = await fetch(base.toString(), { signal: controller.signal });
+      const res = await apiFetch(`${base.pathname}${base.search}`, { signal: controller.signal });
       const elapsed = performance.now() - started;
       if (!res.ok) {
         const message = await getFriendlyErrorMessage(res);
@@ -1379,7 +1379,7 @@ export function TaskBoard({
         const requestedProfileId = activeProfileId ?? null;
         const base = new URL(apiUrl("/api/projects"));
         if (requestedProfileId) base.searchParams.set("profileId", requestedProfileId);
-        const res = await fetch(base.toString(), { signal: controller.signal });
+        const res = await apiFetch(`${base.pathname}${base.search}`, { signal: controller.signal });
         if (!res.ok) return;
         const data: { id: string; name: string }[] = await res.json();
         if (requestId !== latestProjectsRequestRef.current) return;
@@ -1404,7 +1404,7 @@ export function TaskBoard({
       const requestedProfileId = activeProfileId ?? null;
       const base = new URL(apiUrl("/api/projects"));
       if (requestedProfileId) base.searchParams.set("profileId", requestedProfileId);
-      const res = await fetch(base.toString(), { signal: controller.signal });
+      const res = await apiFetch(`${base.pathname}${base.search}`, { signal: controller.signal });
       const elapsed = performance.now() - started;
       if (!res.ok) {
         const message = await getFriendlyErrorMessage(res);
@@ -1483,7 +1483,7 @@ export function TaskBoard({
       setExportProfilePasswords({});
       setShowExportProfilePasswords({});
       try {
-        const res = await fetch(apiUrl("/api/profiles"));
+        const res = await apiFetch("/api/profiles");
         if (!res.ok) throw new Error(await getFriendlyErrorMessage(res));
         const data = (await res.json()) as Array<{
           id: string;
@@ -1538,7 +1538,7 @@ export function TaskBoard({
     const profilePasswords = exportIncludeLockedProfiles
       ? Object.fromEntries(lockedProfiles.map((p) => [p.id, exportProfilePasswords[p.id] ?? ""]))
       : {};
-    const snapshotRes = await fetch(apiUrl("/api/admin/export-data"), {
+    const snapshotRes = await apiFetch("/api/admin/export-data", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ profilePasswords })
@@ -2453,7 +2453,7 @@ export function TaskBoard({
 
     const promise = (async () => {
       const started = performance.now();
-      const res = await fetch(apiUrl("/api/tasks"), {
+      const res = await apiFetch("/api/tasks", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -2520,8 +2520,8 @@ export function TaskBoard({
             t.id === target.id ? { ...t, completed: !t.completed } : t
           )
         );
-        const res = await fetch(
-          apiUrl(`/api/tasks/${encodeURIComponent(target.id)}/complete`),
+        const res = await apiFetch(
+          `/api/tasks/${encodeURIComponent(target.id)}/complete`,
           { method: "PATCH" }
         );
         if (!res.ok) {
@@ -2571,7 +2571,7 @@ export function TaskBoard({
 
       const seriesMembers = tasks.filter(seriesKey);
       const ids = Array.from(new Set(seriesMembers.map((member) => member.id)));
-      const batchRes = await fetch(apiUrl("/api/tasks/batch-delete"), {
+      const batchRes = await apiFetch("/api/tasks/batch-delete", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ ids })
@@ -2590,7 +2590,7 @@ export function TaskBoard({
         });
       }
     } else {
-      const res = await fetch(apiUrl(`/api/tasks/${target.id}`), {
+      const res = await apiFetch(`/api/tasks/${target.id}`, {
         method: "DELETE"
       });
       if (!res.ok && res.status !== 204) return false;
@@ -2661,7 +2661,7 @@ export function TaskBoard({
         }
       }
       const uniqueIds = Array.from(new Set(materialized.map((t) => t.id)));
-      const res = await fetch(apiUrl("/api/tasks/batch-delete"), {
+      const res = await apiFetch("/api/tasks/batch-delete", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ ids: uniqueIds })
@@ -2748,7 +2748,7 @@ export function TaskBoard({
         id: task.id,
         task: { ...task, projectId: targetProjectId }
       }));
-      const res = await fetch(apiUrl("/api/tasks/batch-update"), {
+      const res = await apiFetch("/api/tasks/batch-update", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ updates })
@@ -5650,7 +5650,7 @@ export function TaskBoard({
               }
             ) => {
               const started = performance.now();
-              const res = await fetch(apiUrl("/api/tasks"), {
+              const res = await apiFetch("/api/tasks", {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({
@@ -5750,7 +5750,7 @@ export function TaskBoard({
                   target;
                 updates.push({ id: target.id, task: rest as Task });
               }
-              const res = await fetch(apiUrl("/api/tasks/batch-update"), {
+              const res = await apiFetch("/api/tasks/batch-update", {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({ updates })
@@ -5799,7 +5799,7 @@ export function TaskBoard({
               }
               const { deadlineDate: _deadlineDate, deadlineTime: _deadlineTime, virtual: _virtual, ...rest } =
                 target;
-              const res = await fetch(apiUrl(`/api/tasks/${target.id}`), {
+              const res = await apiFetch(`/api/tasks/${target.id}`, {
                 method: "PUT",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify(rest)
