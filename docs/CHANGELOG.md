@@ -5,6 +5,15 @@
 
 ---
 
+## 2026-05-04
+
+### Added
+
+- Vercel-oriented production deployment: root `vercel.json`, `docs/DEPLOYMENT_VERCEL.md`, and `frontend/.env.example`.
+- `frontend/src/apiOrigin.ts` with `apiUrl()` so REST and SSE target `VITE_API_BASE_URL` when the SPA and API are on different origins.
+
+---
+
 ## 2026-04-30
 
 ### Changed

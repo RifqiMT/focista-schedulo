@@ -90,6 +90,14 @@ flowchart LR
 
 ---
 
+## Build and deployment variables
+
+| Variable Name | Friendly Name | Definition | Formula | App Location | Example |
+| --- | --- | --- | --- | --- | --- |
+| `VITE_API_BASE_URL` | Public API origin | Absolute origin of the Express API used when the SPA is not served from the same host (e.g. Vercel + Railway). Omit in local dev to use same-origin + Vite proxy. | n/a | Vercel/host build env; consumed by `apiUrl()` in `frontend/src/apiOrigin.ts` | `https://api.example.com` |
+
+---
+
 ## Notes on Source of Truth
 
 - Runtime entity truth is persisted in split runtime JSON files:

@@ -21,3 +21,4 @@ backend/data/*.json
 *.njsproj
 *.sln
 *.sw?
+.vercel

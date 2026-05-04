@@ -21,6 +21,7 @@ This file maps documentation artifacts to the primary implementation locations.
 | Performance instrumentation | action logging in `TaskBoard.tsx`, `X-Server-Time-Ms` header middleware in backend |
 | Friendly error root-cause formatting | `frontend/src/utils/friendlyError.ts`, integrated in `App.tsx`, `TaskBoard.tsx`, `ProfileManagement.tsx` |
 | Showcase read-only policy | mutation guards in `backend/src/index.ts`, UI disable gates in profile/project/task components |
+| Production API base URL (Vercel split deploy) | `frontend/src/apiOrigin.ts`, `VITE_API_BASE_URL`, `vercel.json`, `docs/DEPLOYMENT_VERCEL.md` |
 
 ---
 

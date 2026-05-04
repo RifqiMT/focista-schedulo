@@ -123,6 +123,14 @@ npm run ready:dev
 
 ---
 
+## Production deployment (Vercel)
+
+The React app can be deployed to **Vercel**; the Express API must run on a host with a **persistent writable data directory** (file-based JSON today). Configure **`VITE_API_BASE_URL`** at build time so the SPA calls your API origin.
+
+See [docs/DEPLOYMENT_VERCEL.md](docs/DEPLOYMENT_VERCEL.md) and root [vercel.json](vercel.json).
+
+---
+
 ## Documentation Suite
 
 All professional product documentation artifacts are maintained in `docs/`:
@@ -142,6 +150,7 @@ All professional product documentation artifacts are maintained in `docs/`:
 - [docs/API_CONTRACTS.md](docs/API_CONTRACTS.md)
 - [docs/DOCS_CODE_CROSSWALK.md](docs/DOCS_CODE_CROSSWALK.md)
 - [docs/CHANGELOG.md](docs/CHANGELOG.md)
+- [docs/DEPLOYMENT_VERCEL.md](docs/DEPLOYMENT_VERCEL.md)
 - [docs/OPERATING_MODEL.md](docs/OPERATING_MODEL.md)
 - [docs/TEST_STRATEGY.md](docs/TEST_STRATEGY.md)
 - [docs/RACI_MATRIX.md](docs/RACI_MATRIX.md)

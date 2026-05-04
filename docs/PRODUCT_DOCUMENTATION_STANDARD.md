@@ -35,6 +35,7 @@ The following files are mandatory and must remain current:
 - `docs/GUARDRAILS.md`
 - `docs/ARCHITECTURE.md`
 - `docs/API_CONTRACTS.md`
+- `docs/DEPLOYMENT_VERCEL.md`
 - `docs/DOCS_CODE_CROSSWALK.md`
 - `docs/CHANGELOG.md`
 - `docs/OPERATING_MODEL.md`

@@ -18,6 +18,7 @@ import {
   afterProductivityChartOverlayPaint,
   toastProductivityAnalysisFullscreenBusy
 } from "../productivityAnalysisFullscreen";
+import { apiUrl } from "../apiOrigin";
 
 type Timeframe = "daily" | "weekly" | "monthly" | "quarterly" | "annually";
 
@@ -3265,7 +3266,7 @@ export function ProductivityAnalysisModal({
       setError(null);
       const started = performance.now();
       try {
-        const url = new URL("/api/productivity-insights", window.location.origin);
+        const url = new URL(apiUrl("/api/productivity-insights"));
         if (activeProfileId) url.searchParams.set("profileId", activeProfileId);
         const res = await fetch(url.toString(), { cache: "no-store" });
         if (!res.ok) {

@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { apiUrl } from "../apiOrigin";
 
 interface Project {
   id: string;
@@ -49,7 +50,7 @@ export function ProjectSidebar({
     const controller = new AbortController();
     async function load() {
       try {
-        const base = new URL("/api/projects", window.location.origin);
+        const base = new URL(apiUrl("/api/projects"));
         if (activeProfileId) base.searchParams.set("profileId", activeProfileId);
         const res = await fetch(base.toString(), { signal: controller.signal });
         if (!res.ok) return;
@@ -77,7 +78,7 @@ export function ProjectSidebar({
     const controller = new AbortController();
     const run = async () => {
       try {
-        const res = await fetch("/api/profiles", { signal: controller.signal });
+        const res = await fetch(apiUrl("/api/profiles"), { signal: controller.signal });
         if (!res.ok) return;
         const data = (await res.json()) as Array<{ id: string; name: string }>;
         const active = data.find((p) => p.id === activeProfileId);
@@ -99,7 +100,7 @@ export function ProjectSidebar({
         projectsRefreshDebounceRef.current = null;
         const controller = new AbortController();
         try {
-          const base = new URL("/api/projects", window.location.origin);
+          const base = new URL(apiUrl("/api/projects"));
           if (activeProfileId) base.searchParams.set("profileId", activeProfileId);
           const res = await fetch(base.toString(), { signal: controller.signal });
           if (!res.ok) return;
@@ -151,7 +152,7 @@ export function ProjectSidebar({
     if (!draftName.trim() || !editing) return;
     if (!activeProfileId) return;
     if (editing.id === "new") {
-      const res = await fetch("/api/projects", {
+      const res = await fetch(apiUrl("/api/projects"), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ name: draftName.trim(), profileId: activeProfileId })
@@ -163,7 +164,7 @@ export function ProjectSidebar({
         notifyProjectsChanged();
       }
     } else {
-      const res = await fetch(`/api/projects/${editing.id}`, {
+      const res = await fetch(apiUrl(`/api/projects/${editing.id}`), {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ name: draftName.trim(), profileId: activeProfileId })
@@ -181,7 +182,7 @@ export function ProjectSidebar({
 
   const deleteProject = async (project: Project) => {
     if (isShowcaseReadOnlyActive) return;
-    const res = await fetch(`/api/projects/${project.id}`, {
+    const res = await fetch(apiUrl(`/api/projects/${project.id}`), {
       method: "DELETE"
     });
     if (res.ok) {

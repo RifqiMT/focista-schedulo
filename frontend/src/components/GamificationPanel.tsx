@@ -8,6 +8,7 @@ import {
   PST_TRUE_FULLSCREEN_CONTEXT_EVENT
 } from "../fullscreenApi";
 import { ProductivityAnalysisModal } from "./ProductivityAnalysisModal";
+import { apiUrl } from "../apiOrigin";
 
 interface Stats {
   profileId?: string | null;
@@ -142,7 +143,7 @@ export function GamificationPanel({ activeProfileId }: { activeProfileId: string
     statsAbortRef.current = controller;
     try {
       const requestedProfileId = activeProfileId ?? null;
-      const url = new URL("/api/stats", window.location.origin);
+      const url = new URL(apiUrl("/api/stats"));
       if (activeProfileId) url.searchParams.set("profileId", activeProfileId);
       const res = await fetch(url.toString(), { cache: "no-store", signal: controller.signal });
       if (!res.ok) return;
@@ -211,7 +212,7 @@ export function GamificationPanel({ activeProfileId }: { activeProfileId: string
 
     // Real-time updates via SSE (fallback is the interval + events above).
     try {
-      const es = new EventSource("/api/events");
+      const es = new EventSource(apiUrl("/api/events"));
       sseRef.current = es;
       es.addEventListener("dataVersion", () => {
         void fetchStats();
@@ -274,7 +275,7 @@ export function GamificationPanel({ activeProfileId }: { activeProfileId: string
   useEffect(() => {
     const run = async () => {
       try {
-        const res = await fetch("/api/profiles");
+        const res = await fetch(apiUrl("/api/profiles"));
         if (!res.ok) return;
         const data = (await res.json()) as Array<{ id: string; name: string; title: string }>;
         setProfileById(

@@ -10,6 +10,7 @@ import {
   PST_TRUE_FULLSCREEN_CONTEXT_EVENT
 } from "./fullscreenApi";
 import { getFriendlyErrorMessage } from "./utils/friendlyError";
+import { apiUrl } from "./apiOrigin";
 
 type TimeScope =
   | "all"
@@ -68,15 +69,15 @@ export function App() {
     try {
       if (!activeProfileId) return;
       const currentRes = await fetch(
-        `/api/tasks?profileId=${encodeURIComponent(activeProfileId)}`
+        apiUrl(`/api/tasks?profileId=${encodeURIComponent(activeProfileId)}`)
       );
       if (!currentRes.ok) return;
       const currentTasks = (await currentRes.json()) as Array<{ id: string }>;
       if (currentTasks.length > 0) return;
 
       const [profilesRes, tasksRes] = await Promise.all([
-        fetch("/api/profiles"),
-        fetch("/api/tasks")
+        fetch(apiUrl("/api/profiles")),
+        fetch(apiUrl("/api/tasks"))
       ]);
       if (!profilesRes.ok || !tasksRes.ok) return;
       const profiles = (await profilesRes.json()) as Array<{ id: string; name: string }>;
@@ -133,8 +134,8 @@ export function App() {
     const bootstrapActiveProfile = async () => {
       try {
         const [profilesRes, countsRes] = await Promise.all([
-          fetch("/api/profiles"),
-          fetch("/api/profiles/task-counts")
+          fetch(apiUrl("/api/profiles")),
+          fetch(apiUrl("/api/profiles/task-counts"))
         ]);
         if (!profilesRes.ok || !countsRes.ok) return;
         const profiles = (await profilesRes.json()) as Array<{ id: string; name: string }>;
@@ -198,7 +199,7 @@ export function App() {
     const validateSelection = async () => {
       if (selectedProjectId === null) return;
       try {
-        const base = new URL("/api/projects", window.location.origin);
+        const base = new URL(apiUrl("/api/projects"));
         if (activeProfileId) base.searchParams.set("profileId", activeProfileId);
         const res = await fetch(base.toString());
         if (!res.ok) return;
@@ -237,7 +238,7 @@ export function App() {
     setSyncingData(true);
     const started = performance.now();
     try {
-      const res = await fetch("/api/admin/save-data", { method: "POST" });
+      const res = await fetch(apiUrl("/api/admin/save-data"), { method: "POST" });
       const elapsed = performance.now() - started;
       if (!res.ok) {
         const message = await getFriendlyErrorMessage(res);
@@ -262,7 +263,7 @@ export function App() {
     setSyncingFromData(true);
     const started = performance.now();
     try {
-      const res = await fetch("/api/admin/sync-from-data", { method: "POST" });
+      const res = await fetch(apiUrl("/api/admin/sync-from-data"), { method: "POST" });
       const elapsed = performance.now() - started;
       if (!res.ok) {
         const message = await getFriendlyErrorMessage(res);
@@ -307,7 +308,7 @@ export function App() {
         return;
       }
       const content = await file.text();
-      const res = await fetch("/api/admin/import", {
+      const res = await fetch(apiUrl("/api/admin/import"), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ format, content })

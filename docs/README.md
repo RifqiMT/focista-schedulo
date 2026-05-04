@@ -42,6 +42,7 @@ This index provides a complete map of product, engineering, design, analytics, a
 |---|---|
 | `ARCHITECTURE.md` | Current system architecture, runtime topology, data flow, persistence strategy. |
 | `API_CONTRACTS.md` | API endpoint contracts, request/response shapes, and integration notes. |
+| `DEPLOYMENT_VERCEL.md` | Production deployment: Vercel (SPA) + external API host, env vars, and operations checklist. |
 | `DOCS_CODE_CROSSWALK.md` | Trace map between documentation claims and concrete code locations. |
 | `OPERATING_MODEL.md` | Team operating model for release governance, ownership, and decision rights. |
 | `TEST_STRATEGY.md` | Unit/integration/E2E expectations, regression gates, and quality evidence templates. |
