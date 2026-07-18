@@ -79,8 +79,13 @@ export function AppFooter() {
   return (
     <footer className="app-footer" role="contentinfo">
       <div className="app-footer-inner">
-        <p className="app-footer-credit">
-          Developed, managed, and maintained by{" "}
+        <p
+          className="app-footer-credit"
+          title="Developed, managed, and maintained by Rifqi Tjahyono"
+        >
+          <span className="app-footer-credit-lead">
+            Developed, managed, and maintained by{" "}
+          </span>
           <span className="app-footer-name">Rifqi Tjahyono</span>
         </p>
         <nav className="app-footer-links" aria-label="Creator links">
