@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import type { Dispatch, SetStateAction } from "react";
 import { createPortal } from "react-dom";
 import { toastBadgesFullWindowLayout } from "../badgeFullscreen";
 import { BadgesModalDialogBody } from "./BadgesModalDialogBody";
@@ -10,6 +11,35 @@ import {
 import { ProductivityAnalysisModal } from "./ProductivityAnalysisModal";
 import { apiFetch, apiUrl } from "../apiClient";
 import { apiFetchWarming } from "../apiWarming";
+import { claimExclusiveTooltip } from "../uiExclusiveOverlay";
+
+type HoveredBadgeState = {
+  title: string;
+  subtitle: string;
+  status: "Unlocked" | "Locked";
+  progressLine: string;
+  metaLines?: string[];
+  progressPct?: number;
+  whenLine?: string;
+  taskLine?: string;
+  chips?: { label: string; value: string }[];
+  mouseX: number;
+  mouseY: number;
+};
+
+type WeeklyBarHoverState = {
+  date: string;
+  completed: number;
+  points: number;
+  taskXpMin: number | null;
+  taskXpMax: number | null;
+  taskXpAvg: number | null;
+  weekdayTaskMin: number;
+  weekdayTaskMax: number;
+  weekdayTaskAvg: number;
+  mouseX: number;
+  mouseY: number;
+};
 
 interface Stats {
   profileId?: string | null;
@@ -52,6 +82,7 @@ interface Stats {
 interface MilestoneBlock {
   id: string;
   name: string;
+  description?: string;
   unit: string;
   current: number;
   next: number | null;
@@ -128,34 +159,10 @@ export function GamificationPanel({ activeProfileId }: { activeProfileId: string
   const statsRefreshDebounceRef = useRef<number | null>(null);
   const [badgesOpen, setBadgesOpen] = useState(false);
   const [analysisOpen, setAnalysisOpen] = useState(false);
-  const [hoveredBadge, setHoveredBadge] = useState<{
-    title: string;
-    subtitle: string;
-    status: "Unlocked" | "Locked";
-    progressLine: string;
-    metaLines?: string[];
-    progressPct?: number;
-    whenLine?: string;
-    taskLine?: string;
-    chips?: { label: string; value: string }[];
-    mouseX: number;
-    mouseY: number;
-  } | null>(null);
+  const [hoveredBadge, setHoveredBadge] = useState<HoveredBadgeState | null>(null);
   const hovercardRef = useRef<HTMLDivElement | null>(null);
   const [hovercardPos, setHovercardPos] = useState<{ left: number; top: number } | null>(null);
-  const [weeklyBarHover, setWeeklyBarHover] = useState<{
-    date: string;
-    completed: number;
-    points: number;
-    taskXpMin: number | null;
-    taskXpMax: number | null;
-    taskXpAvg: number | null;
-    weekdayTaskMin: number;
-    weekdayTaskMax: number;
-    weekdayTaskAvg: number;
-    mouseX: number;
-    mouseY: number;
-  } | null>(null);
+  const [weeklyBarHover, setWeeklyBarHover] = useState<WeeklyBarHoverState | null>(null);
   const weeklyTooltipRef = useRef<HTMLDivElement | null>(null);
   const [weeklyTooltipPos, setWeeklyTooltipPos] = useState<{ left: number; top: number } | null>(
     null
@@ -492,12 +499,51 @@ export function GamificationPanel({ activeProfileId }: { activeProfileId: string
     return () => window.removeEventListener("scroll", onScroll, { capture: true } as any);
   }, [hoveredBadge]);
 
+  const badgeTipActive = hoveredBadge != null;
+  useEffect(() => {
+    if (!badgeTipActive) return;
+    return claimExclusiveTooltip(() => setHoveredBadge(null));
+  }, [badgeTipActive]);
+
   useEffect(() => {
     if (!weeklyBarHover) return;
     const onScroll = () => setWeeklyBarHover(null);
     window.addEventListener("scroll", onScroll, { passive: true, capture: true });
     return () => window.removeEventListener("scroll", onScroll, { capture: true } as any);
   }, [weeklyBarHover]);
+
+  const weeklyTipActive = weeklyBarHover != null;
+  useEffect(() => {
+    if (!weeklyTipActive) return;
+    return claimExclusiveTooltip(() => setWeeklyBarHover(null));
+  }, [weeklyTipActive]);
+
+  const setExclusiveHoveredBadge: Dispatch<SetStateAction<HoveredBadgeState | null>> = useCallback(
+    (next) => {
+      if (typeof next === "function") {
+        setHoveredBadge((prev) => {
+          const resolved = next(prev);
+          if (resolved) setWeeklyBarHover(null);
+          return resolved;
+        });
+        return;
+      }
+      if (next) setWeeklyBarHover(null);
+      setHoveredBadge(next);
+    },
+    []
+  );
+
+  const setExclusiveWeeklyBarHover: Dispatch<SetStateAction<WeeklyBarHoverState | null>> =
+    useCallback((next) => {
+      if (typeof next === "function") {
+        // Mouse-move updates: keep the tip, don't thrash the other overlay.
+        setWeeklyBarHover(next);
+        return;
+      }
+      if (next) setHoveredBadge(null);
+      setWeeklyBarHover(next);
+    }, []);
 
   useLayoutEffect(() => {
     if (!weeklyBarHover) {
@@ -642,13 +688,15 @@ export function GamificationPanel({ activeProfileId }: { activeProfileId: string
   const formatStatAvg = (n: number): string =>
     Number.isInteger(n) ? String(n) : n.toFixed(1);
 
+  const weekCompleted = last7.reduce((s, d) => s + d.completed, 0);
+
   return (
     <section className="gamification-panel">
-      <div className="panel-head">
-        <div>
+      <div className="panel-head progress-head">
+        <div className="progress-head-copy">
           <h2>Progress</h2>
-          <div className="muted small">
-            {activeProfileId ? `Profile: ${activeProfileLabel}` : "Profile: All profiles"}
+          <div className="muted small progress-head-sub">
+            {activeProfileId ? activeProfileLabel : "All profiles"}
           </div>
         </div>
         <div className="progress-toolbar" role="group" aria-label="Progress actions">
@@ -656,7 +704,7 @@ export function GamificationPanel({ activeProfileId }: { activeProfileId: string
             className="progress-toolbar-btn"
             type="button"
             onClick={() => setAnalysisOpen(true)}
-            title="Open historical charts for completions, XP, level, and milestones."
+            title="Open productivity analysis"
             aria-label="Open productivity analysis"
           >
             <span className="progress-toolbar-glyph" aria-hidden="true">
@@ -670,7 +718,7 @@ export function GamificationPanel({ activeProfileId }: { activeProfileId: string
             className="progress-toolbar-btn"
             type="button"
             onClick={() => setBadgesOpen(true)}
-            title="Browse milestone badge tiers and your unlock progress."
+            title="Browse badges"
             aria-label="Open badges"
           >
             <span className="progress-toolbar-glyph" aria-hidden="true">
@@ -682,51 +730,97 @@ export function GamificationPanel({ activeProfileId }: { activeProfileId: string
           </button>
         </div>
       </div>
-      <div className="gamification-card">
-        <div className="stat-row">
-          <div>
-            <div className="stat-label">Completed today</div>
-            <div className="stat-value">{completedToday}</div>
-          </div>
-          <div>
-            <div className="stat-label">Streak</div>
-            <div className="stat-value">{streakDays}d</div>
-          </div>
-        </div>
+      <div className="gamification-card progress-card">
+        <div
+          className="progress-status"
+          title={`${xpToNext} XP to level ${level + 1}`}
+        >
+          <div className="progress-status-primary">
+            <div className="progress-level" aria-label={`Level ${level}`}>
+              <span className="progress-level-kicker">Level</span>
+              <span className="progress-level-value">{level}</span>
+            </div>
 
-        <div className="xp-section">
-          <div className="stat-label">Level {level}</div>
-          <div className="xp-bar">
-            <div
-              className="xp-bar-fill"
-              style={{ width: `${xpBarPercent}%` }}
-            />
+            <div className="progress-xp">
+              <div className="progress-xp-head">
+                <span className="progress-xp-title">
+                  Next · Level {level + 1}
+                </span>
+                <span className="progress-xp-frac">
+                  <span className="progress-xp-now">{pointsIntoLevel}</span>
+                  <span className="progress-xp-denom">/50</span>
+                </span>
+              </div>
+
+              <div
+                className="xp-bar progress-meter"
+                role="progressbar"
+                aria-valuemin={0}
+                aria-valuemax={50}
+                aria-valuenow={pointsIntoLevel}
+                aria-label={`${pointsIntoLevel} of 50 XP this level, ${xpToNext} XP to level ${level + 1}`}
+              >
+                <div
+                  className="xp-bar-fill progress-meter-fill"
+                  style={{ width: `${xpBarPercent}%` }}
+                />
+              </div>
+
+              <div className="progress-xp-foot">
+                <span className="progress-xp-pct">{Math.round(xpBarPercent)}%</span>
+                <span className="progress-xp-caption">
+                  {xpToNext} XP to go
+                </span>
+              </div>
+            </div>
           </div>
-          <div className="xp-caption">
-            <span>
-              {pointsIntoLevel}/50 XP this level ({xpToNext} to level {level + 1})
-            </span>
-            <span className="muted"> · </span>
-            <span>{pointsToday} XP from tasks completed today</span>
-          </div>
+
+          <ul className="progress-kpis" aria-label="Today at a glance">
+            <li className="progress-kpi">
+              <span className="progress-kpi-value">{completedToday}</span>
+              <span className="progress-kpi-label">Today</span>
+            </li>
+            <li className="progress-kpi progress-kpi--sep" aria-hidden="true">
+              <span className="progress-kpi-sep" />
+            </li>
+            <li className="progress-kpi">
+              <span className="progress-kpi-value">{streakDays}</span>
+              <span className="progress-kpi-label">
+                Streak
+              </span>
+            </li>
+            <li className="progress-kpi progress-kpi--sep" aria-hidden="true">
+              <span className="progress-kpi-sep" />
+            </li>
+            <li className="progress-kpi">
+              <span className="progress-kpi-value">{pointsToday}</span>
+              <span className="progress-kpi-label">XP</span>
+            </li>
+          </ul>
         </div>
 
         {last7.length > 0 && (
-          <div className="weekly-section">
-            <div className="weekly-header">
-              <div className="stat-label">Current week</div>
-              <div className="muted">{last7.reduce((s, d) => s + d.completed, 0)} completed</div>
+          <div className="weekly-section progress-section">
+            <div className="weekly-header progress-section-head">
+              <div className="progress-section-copy">
+                <div className="progress-section-eyebrow">Activity</div>
+                <div className="progress-section-title">This week</div>
+              </div>
+              <div className="progress-section-meta">
+                <span className="progress-section-meta-strong">{weekCompleted}</span>
+                completed
+              </div>
             </div>
             <div
               className="weekly-bars"
               aria-label="Weekly completion chart"
               onMouseLeave={() => {
-                setWeeklyBarHover(null);
+                setExclusiveWeeklyBarHover(null);
                 setWeeklyTooltipPos(null);
               }}
             >
-              {last7.map((d) => {
-                const height = Math.max(8, Math.round((d.completed / maxDaily) * 42));
+              {last7.map((d, i) => {
+                const height = Math.max(10, Math.round((d.completed / maxDaily) * 48));
                 const label = new Date(d.date + "T12:00:00").toLocaleDateString(undefined, {
                   weekday: "short"
                 });
@@ -736,14 +830,15 @@ export function GamificationPanel({ activeProfileId }: { activeProfileId: string
                 const weekdayTaskMin = d.weekdayTaskMin ?? 0;
                 const weekdayTaskMax = d.weekdayTaskMax ?? 0;
                 const weekdayTaskAvg = d.weekdayTaskAvg ?? 0;
+                const isToday = i === last7.length - 1;
                 return (
                   <div
                     key={d.date}
-                    className="weekly-bar-col"
+                    className={`weekly-bar-col${isToday ? " weekly-bar-col--today" : ""}`}
                     aria-label={formatWeeklyBarAccessibilityTitle(d)}
                     onMouseEnter={(e) => {
                       setWeeklyTooltipPos(null);
-                      setWeeklyBarHover({
+                      setExclusiveWeeklyBarHover({
                         date: d.date,
                         completed: d.completed,
                         points: d.points,
@@ -758,13 +853,16 @@ export function GamificationPanel({ activeProfileId }: { activeProfileId: string
                       });
                     }}
                     onMouseMove={(e) => {
-                      setWeeklyBarHover((h) =>
+                      setExclusiveWeeklyBarHover((h) =>
                         h && h.date === d.date
                           ? { ...h, mouseX: e.clientX, mouseY: e.clientY }
                           : h
                       );
                     }}
                   >
+                    <div className="weekly-bar-value" aria-hidden="true">
+                      {d.completed > 0 ? d.completed : "·"}
+                    </div>
                     <div className="weekly-bar" style={{ height }} aria-hidden="true" />
                     <div className="weekly-bar-label">{label}</div>
                   </div>
@@ -775,24 +873,60 @@ export function GamificationPanel({ activeProfileId }: { activeProfileId: string
         )}
 
         {achievements.length > 0 && (
-          <div className="achievements">
-            <div className="stat-label">Achievements</div>
+          <div className="achievements progress-section">
+            <div className="progress-section-head">
+              <div className="progress-section-copy">
+                <div className="progress-section-eyebrow">Goals</div>
+                <div className="progress-section-title">Achievements</div>
+              </div>
+              <div className="progress-section-meta">
+                <span className="progress-section-meta-strong">
+                  {achievements.filter((a) => a.achieved).length}
+                </span>
+                /{achievements.length}
+              </div>
+            </div>
             <ul className="achievement-list">
               {achievements.map((a) => {
                 const pct = Math.min(100, Math.round((a.progress / a.goal) * 100));
                 return (
-                  <li key={a.id} className={`achievement ${a.achieved ? "achieved" : ""}`}>
+                  <li
+                    key={a.id}
+                    className={`achievement${a.achieved ? " achievement--done" : ""}`}
+                  >
                     <div className="achievement-top">
-                      <div>
-                        <div className="achievement-name">{a.name}</div>
+                      <div className="achievement-copy">
+                        <div className="achievement-name-row">
+                          <div className="achievement-name">{a.name}</div>
+                          {a.achieved ? (
+                            <span className="achievement-badge">Done</span>
+                          ) : null}
+                        </div>
                         <div className="achievement-desc">{a.description}</div>
                       </div>
-                      <div className="achievement-metric">
-                        {a.progress}/{a.goal}
+                      <div
+                        className={`achievement-metric${a.achieved ? " achievement-metric--done" : ""}`}
+                        aria-label={`${a.progress} of ${a.goal}`}
+                      >
+                        {a.progress}
+                        <span className="achievement-metric-sep">/</span>
+                        {a.goal}
                       </div>
                     </div>
-                    <div className="achievement-bar">
-                      <div className="achievement-bar-fill" style={{ width: `${pct}%` }} />
+                    <div className="achievement-track">
+                      <div
+                        className="achievement-bar"
+                        role="progressbar"
+                        aria-valuemin={0}
+                        aria-valuemax={a.goal}
+                        aria-valuenow={a.progress}
+                      >
+                        <div
+                          className="achievement-bar-fill"
+                          style={{ width: `${pct}%` }}
+                        />
+                      </div>
+                      <span className="achievement-pct">{pct}%</span>
                     </div>
                   </li>
                 );
@@ -802,8 +936,13 @@ export function GamificationPanel({ activeProfileId }: { activeProfileId: string
         )}
 
         {milestones && (
-          <div className="milestones">
-            <div className="stat-label">Milestones</div>
+          <div className="milestones progress-section">
+            <div className="progress-section-head">
+              <div className="progress-section-copy">
+                <div className="progress-section-eyebrow">Long game</div>
+                <div className="progress-section-title">Milestones</div>
+              </div>
+            </div>
             <div className="milestone-grid">
               {(
                 [
@@ -815,37 +954,79 @@ export function GamificationPanel({ activeProfileId }: { activeProfileId: string
                 ] as MilestoneBlock[]
               ).map((m) => {
                 const pct = Math.min(100, Math.round((m.progressToNext ?? 0) * 100));
+                const unlockedCount = m.achievedCount ?? m.recentUnlocked.length;
+                const isMaxed = !m.next;
                 return (
-                  <div key={m.id} className="milestone-card">
+                  <div
+                    key={m.id}
+                    className={`milestone-card${isMaxed ? " milestone-card--maxed" : ""}`}
+                  >
                     <div className="milestone-top">
-                      <div>
+                      <div className="milestone-copy">
                         <div className="milestone-name">{m.name}</div>
+                        {m.description ? (
+                          <div className="milestone-desc">{m.description}</div>
+                        ) : null}
                         <div className="milestone-sub">
-                          {m.current.toLocaleString()} {m.unit}
+                          <span className="milestone-current">
+                            {m.current.toLocaleString()}
+                          </span>
+                          <span className="milestone-unit"> {m.unit}</span>
                         </div>
                       </div>
                       <div className="milestone-next">
-                        {m.next ? `Next: ${m.next.toLocaleString()}` : "Maxed"}
+                        {m.next ? (
+                          <>
+                            <span className="milestone-next-label">Next</span>
+                            <span className="milestone-next-value">
+                              {m.next.toLocaleString()}
+                            </span>
+                          </>
+                        ) : (
+                          <span className="milestone-next-value">Maxed</span>
+                        )}
                       </div>
                     </div>
-                    <div className="milestone-bar" aria-label={`${m.name} progress`}>
-                      <div className="milestone-bar-fill" style={{ width: `${pct}%` }} />
+
+                    <div
+                      className="milestone-bar"
+                      role="progressbar"
+                      aria-valuemin={0}
+                      aria-valuemax={100}
+                      aria-valuenow={pct}
+                      aria-label={`${m.name} progress`}
+                    >
+                      <div
+                        className="milestone-bar-fill"
+                        style={{ width: `${pct}%` }}
+                      />
                     </div>
+
                     <div className="milestone-foot">
                       <div className="milestone-pct">{pct}%</div>
-                      <div className="milestone-unlocked">
-                        <span className="milestone-unlocked-summary" aria-label="Unlocked milestones">
-                          Unlocked: {m.achievedCount ?? m.recentUnlocked.length}
+                      <div className="milestone-unlocked" tabIndex={0}>
+                        <span
+                          className="milestone-unlocked-summary"
+                          aria-label="Unlocked milestones"
+                        >
+                          {unlockedCount} unlocked
                         </span>
-                        <span className="milestone-unlocked-hint">Hover to view</span>
-                        <div className="milestone-popover" role="tooltip" aria-label="Unlocked milestones list">
+                        <span className="milestone-unlocked-hint">View</span>
+                        <div
+                          className="milestone-popover"
+                          role="tooltip"
+                          aria-label="Unlocked milestones list"
+                        >
                           <div className="milestone-popover-title">Unlocked</div>
                           <div className="milestone-popover-chips">
-                            {m.recentUnlocked.slice().reverse().map((v) => (
-                              <span key={v} className="milestone-chip">
-                                {v}
-                              </span>
-                            ))}
+                            {m.recentUnlocked
+                              .slice()
+                              .reverse()
+                              .map((v) => (
+                                <span key={v} className="milestone-chip">
+                                  {v}
+                                </span>
+                              ))}
                           </div>
                           <div className="milestone-popover-note">
                             Showing recent milestones. Next target shown on the card.
@@ -874,7 +1055,7 @@ export function GamificationPanel({ activeProfileId }: { activeProfileId: string
                 closeBadgesModal();
               }}
             >
-              <div className="pa-fs-chrome" onClick={(e) => e.stopPropagation()}>
+              <div className="pa-fs-chrome pa-fs-chrome--pro" onClick={(e) => e.stopPropagation()}>
                 <BadgesModalDialogBody
                   panelRef={badgePanelRef}
                   closeBadgesModal={closeBadgesModal}
@@ -884,7 +1065,7 @@ export function GamificationPanel({ activeProfileId }: { activeProfileId: string
                   expandedBadgeSections={expandedBadgeSections}
                   setExpandedBadgeSections={setExpandedBadgeSections}
                   hoveredBadge={hoveredBadge}
-                  setHoveredBadge={setHoveredBadge}
+                  setHoveredBadge={setExclusiveHoveredBadge}
                   hovercardRef={hovercardRef}
                   hovercardPos={hovercardPos}
                   formatHoverDate={formatHoverDate}
@@ -908,7 +1089,7 @@ export function GamificationPanel({ activeProfileId }: { activeProfileId: string
         ? createPortal(
             <div
               ref={weeklyTooltipRef}
-              className="weekly-bar-tooltip"
+              className="weekly-bar-tooltip weekly-day-tip"
               style={{
                 position: "fixed",
                 left: weeklyTooltipPos?.left ?? weeklyBarHover.mouseX + 10,
@@ -918,51 +1099,79 @@ export function GamificationPanel({ activeProfileId }: { activeProfileId: string
               }}
               role="tooltip"
             >
-              <div className="weekly-bar-tooltip-title">
-                {new Date(weeklyBarHover.date + "T12:00:00").toLocaleDateString(undefined, {
-                  weekday: "long",
-                  month: "short",
-                  day: "numeric",
-                  year: "numeric"
-                })}
-              </div>
+              <header className="weekly-day-tip-head">
+                <div className="weekly-day-tip-title">
+                  {new Date(weeklyBarHover.date + "T12:00:00").toLocaleDateString(undefined, {
+                    weekday: "short",
+                    month: "short",
+                    day: "numeric",
+                    year: "numeric"
+                  })}
+                </div>
+                <div className="weekly-day-tip-sub">Day details</div>
+              </header>
+
               {weeklyBarHover.completed <= 0 ? (
-                <div className="weekly-bar-tooltip-empty">No tasks completed this day.</div>
+                <div className="weekly-day-tip-empty">No tasks completed this day.</div>
               ) : (
                 <>
-                  <div className="weekly-bar-tooltip-line">
-                    <span className="weekly-bar-tooltip-k">Tasks completed</span>
-                    <span className="weekly-bar-tooltip-v">{weeklyBarHover.completed}</span>
+                  <div className="weekly-day-tip-kpis" aria-label="Day summary">
+                    <div className="weekly-day-tip-kpi">
+                      <span className="weekly-day-tip-kpi-k">Tasks</span>
+                      <span className="weekly-day-tip-kpi-v">{weeklyBarHover.completed}</span>
+                    </div>
+                    <div className="weekly-day-tip-kpi">
+                      <span className="weekly-day-tip-kpi-k">XP</span>
+                      <span className="weekly-day-tip-kpi-v">{weeklyBarHover.points}</span>
+                    </div>
                   </div>
-                  <div className="weekly-bar-tooltip-line">
-                    <span className="weekly-bar-tooltip-k">Total XP</span>
-                    <span className="weekly-bar-tooltip-v">{weeklyBarHover.points}</span>
-                  </div>
+
                   {weeklyBarHover.taskXpMin != null &&
                   weeklyBarHover.taskXpMax != null &&
                   weeklyBarHover.taskXpAvg != null ? (
-                    <div className="weekly-bar-tooltip-xp">
-                      <div className="weekly-bar-tooltip-xp-label">Per-task XP (priority)</div>
-                      <div className="weekly-bar-tooltip-xp-row">
-                        <span>Min {weeklyBarHover.taskXpMin}</span>
-                        <span>Max {weeklyBarHover.taskXpMax}</span>
-                        <span>Avg {formatStatAvg(weeklyBarHover.taskXpAvg)}</span>
+                    <section className="weekly-day-tip-sec">
+                      <div className="weekly-day-tip-sec-title">Per-task XP</div>
+                      <div className="weekly-day-tip-stats" aria-label="Per-task XP range">
+                        <div className="weekly-day-tip-stat">
+                          <span className="weekly-day-tip-stat-k">Min</span>
+                          <span className="weekly-day-tip-stat-v">{weeklyBarHover.taskXpMin}</span>
+                        </div>
+                        <div className="weekly-day-tip-stat">
+                          <span className="weekly-day-tip-stat-k">Max</span>
+                          <span className="weekly-day-tip-stat-v">{weeklyBarHover.taskXpMax}</span>
+                        </div>
+                        <div className="weekly-day-tip-stat">
+                          <span className="weekly-day-tip-stat-k">Avg</span>
+                          <span className="weekly-day-tip-stat-v">
+                            {formatStatAvg(weeklyBarHover.taskXpAvg)}
+                          </span>
+                        </div>
+                      </div>
+                    </section>
+                  ) : null}
+
+                  <section className="weekly-day-tip-sec">
+                    <div className="weekly-day-tip-sec-title">This weekday</div>
+                    <div className="weekly-day-tip-stats" aria-label="Weekday history range">
+                      <div className="weekly-day-tip-stat">
+                        <span className="weekly-day-tip-stat-k">Min</span>
+                        <span className="weekly-day-tip-stat-v">{weeklyBarHover.weekdayTaskMin}</span>
+                      </div>
+                      <div className="weekly-day-tip-stat">
+                        <span className="weekly-day-tip-stat-k">Max</span>
+                        <span className="weekly-day-tip-stat-v">{weeklyBarHover.weekdayTaskMax}</span>
+                      </div>
+                      <div className="weekly-day-tip-stat">
+                        <span className="weekly-day-tip-stat-k">Avg</span>
+                        <span className="weekly-day-tip-stat-v">
+                          {formatStatAvg(weeklyBarHover.weekdayTaskAvg)}
+                        </span>
                       </div>
                     </div>
-                  ) : null}
-                  <div className="weekly-bar-tooltip-xp">
-                    <div className="weekly-bar-tooltip-xp-label">
-                      This weekday (filtered history)
-                    </div>
-                    <div className="weekly-bar-tooltip-xp-row">
-                      <span>Min {weeklyBarHover.weekdayTaskMin}</span>
-                      <span>Max {weeklyBarHover.weekdayTaskMax}</span>
-                      <span>Avg {formatStatAvg(weeklyBarHover.weekdayTaskAvg)}</span>
-                    </div>
-                    <div className="weekly-bar-tooltip-footnote">
-                      Computed from this weekday across the filtered timeline, including zero days.
-                    </div>
-                  </div>
+                    <p className="weekly-day-tip-note">
+                      Same weekday across the filtered timeline, including zero days.
+                    </p>
+                  </section>
                 </>
               )}
             </div>,

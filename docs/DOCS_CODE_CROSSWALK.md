@@ -29,7 +29,10 @@ This file maps documentation artifacts to the primary implementation locations.
 | Production CORS lock | `FRONTEND_ORIGIN` in `backend/src/index.ts`, `backend/.env.example` |
 | Vercel Blob runtime store | `BLOB_READ_WRITE_TOKEN`, `STORAGE_BACKEND`, `backend/src/storage/vercelBlobStorage.ts` |
 | Design tokens | `frontend/src/styles.css` `:root` and component theme rules |
-| Toast system | `frontend/src/components/Toaster.tsx` + toast CSS |
+| Toast system | `frontend/src/components/Toaster.tsx` + toast CSS; **single-toast** queue in `App.tsx` `enqueueToast` |
+| Exclusive tooltips / hovercards | `frontend/src/uiExclusiveOverlay.ts` (`claimExclusiveTooltip`, `dismissExclusiveTooltip`); consumers in `TaskBoard.tsx`, `GamificationPanel.tsx`, `ProductivityAnalysisModal.tsx` |
+| Achievement / milestone plain-English copy | Achievement + milestone `description` fields in `backend/src/index.ts` `/api/stats`; `badgesEarnedMilestone.ts`; rendered in `GamificationPanel.tsx` |
+| Header Import/Export actions | `App.tsx` `header-action-btn` + styles in `styles.css` |
 
 ---
 
@@ -44,7 +47,9 @@ This file maps documentation artifacts to the primary implementation locations.
 - [ ] API route inventory matches backend route declarations
 - [ ] Metrics/variable formulas match current backend calculations
 - [ ] Weekly progress: `last7Days` in `/api/stats` is documented as a **calendar-week** (Mon–Sun) series, not a rolling seven-day window
-- [ ] Traceability matrix includes FR-13–FR-18 and US-103 / US-504
+- [ ] Achievement/milestone `description` fields and canonical copy table are documented in `VARIABLES.md` / `API_CONTRACTS.md`
+- [ ] Exclusive tooltip + single-toast behavior is documented in Design, Architecture, Guardrails, and Stories (US-408)
+- [ ] Traceability matrix includes FR-13–FR-20 and US-103 / US-504 / US-407 / US-408
 
 ---
 

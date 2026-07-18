@@ -231,9 +231,11 @@ export function ProjectSidebar({
           <p className="projects-header-sub">Choose a board filter</p>
         </div>
         <button
-          className="ghost-button small projects-new-btn"
+          className="projects-new-btn"
+          type="button"
           onClick={startNew}
-          title="Create a new project (group tasks by context)."
+          title="Create a new project"
+          aria-label="Create a new project"
           disabled={!activeProfileId || isShowcaseReadOnlyActive}
         >
           <span className="projects-new-btn-icon" aria-hidden="true">
@@ -308,10 +310,11 @@ export function ProjectSidebar({
         {selectedProject ? (
           <div className="projects-picker-toolbar" role="group" aria-label="Selected project actions">
             <button
-              className="ghost-button small projects-toolbar-btn"
+              className="projects-toolbar-btn"
               type="button"
               onClick={() => startEdit(selectedProject)}
-              title="Rename this project."
+              title="Rename this project"
+              aria-label="Rename this project"
               disabled={isShowcaseReadOnlyActive}
             >
               <svg viewBox="0 0 24 24" focusable="false" aria-hidden="true">
@@ -320,10 +323,11 @@ export function ProjectSidebar({
               <span>Rename</span>
             </button>
             <button
-              className="ghost-button small projects-toolbar-btn projects-toolbar-btn--danger"
+              className="projects-toolbar-btn projects-toolbar-btn--danger"
               type="button"
               onClick={() => setPendingDeleteProject(selectedProject)}
-              title="Delete this project and all tasks in it."
+              title="Delete this project and all tasks in it"
+              aria-label="Delete this project"
               disabled={isShowcaseReadOnlyActive}
             >
               <svg viewBox="0 0 24 24" focusable="false" aria-hidden="true">

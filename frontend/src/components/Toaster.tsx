@@ -139,13 +139,13 @@ export function Toaster({
   toasts: Toast[];
   onDismiss: (id: string) => void;
 }) {
-  if (!toasts.length) return null;
+  // Hard cap: only the newest toast is shown (callers should also replace, not stack).
+  const toast = toasts[0];
+  if (!toast) return null;
 
   return (
     <div className="toaster" aria-label="Notifications">
-      {toasts.map((t) => (
-        <ToastCard key={t.id} toast={t} onDismiss={onDismiss} />
-      ))}
+      <ToastCard key={toast.id} toast={toast} onDismiss={onDismiss} />
     </div>
   );
 }

@@ -99,6 +99,8 @@ Detailed profiles: `USER_PERSONAS.md`.
 - `/api/productivity-insights` for trend visualization
 - Badges and milestone UI with high-resolution PNG export
 - Modal titling: `Profile: Name - Title`; badge cards/exports emphasize profile **name**
+- Achievement and milestone cards show short **plain-English `description`** lines from `/api/stats`
+- Progress overlays use an **exclusive tooltip** slot; toasts are **single-slot** and dismiss open tooltips
 
 ### 6.6 Data Operations
 
@@ -140,6 +142,8 @@ Detailed profiles: `USER_PERSONAS.md`.
 | FR-16 | Badge PNG export and consistent modal naming |
 | FR-17 | Lock affordance for password-protected profiles |
 | FR-18 | Staged profile boot progress and production fast-path loading |
+| FR-19 | Plain-English achievement and milestone descriptions on Progress cards |
+| FR-20 | Exclusive tooltip/hovercard slot and single-toast feedback layering |
 
 ---
 

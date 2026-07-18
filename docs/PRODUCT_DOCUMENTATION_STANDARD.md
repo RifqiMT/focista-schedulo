@@ -82,8 +82,9 @@ When stats, task fields, or API payloads change in code:
 
 1. Update `docs/VARIABLES.md` (definitions, formulas, locations, examples) and extend the Mermaid relationship diagram if new links appear.
 2. Update `docs/API_CONTRACTS.md` when request/response shapes or semantics change (note field names that diverge from behavior, e.g. calendar-week stats under legacy key `last7Days`).
-3. Update `docs/DOCS_CODE_CROSSWALK.md` and `docs/TRACEABILITY_MATRIX.md` so requirements and verification stay aligned.
-4. Add a dated entry to `docs/CHANGELOG.md` describing doc and product impact.
+3. When achievement or milestone **user-facing copy** changes, update the canonical description table in `VARIABLES.md` and the Progress sections of Design Guidelines / PRD / Stories.
+4. Update `docs/DOCS_CODE_CROSSWALK.md` and `docs/TRACEABILITY_MATRIX.md` so requirements and verification stay aligned.
+5. Add a dated entry to `docs/CHANGELOG.md` describing doc and product impact.
 
 ### 4.2 Persistence and transfer discipline
 
@@ -92,6 +93,13 @@ When storage backends, debounce policy, or import/export transfer paths change:
 1. Update `ARCHITECTURE.md`, `DEPLOYMENT_VERCEL.md`, `GUARDRAILS.md`, and `VARIABLES.md` (env/storage variables).
 2. Document Blob staging (`blobPathname`, presigned download) and body-size limits (`413`) explicitly.
 3. Clarify automated sync/save vs. any remaining admin endpoints.
+
+### 4.3 Feedback-layer discipline
+
+When toast or tooltip behavior changes:
+
+1. Document exclusive-overlay and single-toast invariants in Design Guidelines, Guardrails, Architecture, and Stories.
+2. Keep `uiExclusiveOverlay.ts` as the single source of exclusivity unless an approved redesign replaces it.
 
 ---
 

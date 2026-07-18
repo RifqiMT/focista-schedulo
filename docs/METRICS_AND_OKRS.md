@@ -90,6 +90,7 @@ Define product-team Objectives and Key Results (OKRs) for Focista Schedulo, with
 | KR5.1 | 100% of top user-facing failure paths use friendly root-cause messages | PM-07 | Error-path audit |
 | KR5.2 | Reduce “unclear error” user feedback incidents by 60% | PM-07 (qualitative companion) | Feedback triage |
 | KR5.3 | Keep showcase profile mutation-block correctness at 100% | PM-08 | `Test` regression suite |
+| KR5.4 | 100% of shipped achievement/milestone cards expose plain-English `description` | EM-08 | `/api/stats` + UI audit |
 
 ---
 

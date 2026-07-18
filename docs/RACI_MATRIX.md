@@ -42,6 +42,7 @@ Legend:
 | Profile scoping and policy enforcement | C | A | R | R | C | I | I |
 | Recurrence integrity and data safeguards | I | A | C | R | I | C | I |
 | Friendly error-message UX quality | C | A | R | R | C | I | I |
+| Exclusive tooltip + single-toast layering | C | A | R | I | C | I | I |
 | Progress chart / tooltip / badge export UX | C | A | R | C | C | C | I |
 | Blob persistence and large transfer paths | C | A | C | R | I | I | I |
 | Automated sync/save and boot progress UX | C | A | R | C | C | I | I |

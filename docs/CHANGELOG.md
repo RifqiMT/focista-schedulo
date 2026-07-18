@@ -16,11 +16,24 @@
 
 - Vercel Prod import/export for large payloads: stage via **Vercel Blob** (client upload + `blobPathname` import; export returns a short-lived presigned download URL) to avoid Hobby ~4.5MB serverless body limits (HTTP 413).
 
+### Added
+
+- Exclusive overlay helper `frontend/src/uiExclusiveOverlay.ts`: at most one custom tooltip/hovercard is visible app-wide; toasts dismiss the active tooltip.
+- Milestone blocks expose a `description` field (e.g. badges-earned: “Rewards for collecting badges themselves (every 5 badges).”).
+- Header Import/Export actions use icon + label (`header-action-btn`) for clearer data-ops affordances.
+
 ### Changed
 
+- Achievement and milestone cards now use short plain-English descriptions (achievements via `/api/stats` copy; milestones show a `description` line under each card title).
+- Toast queue is **single-toast** (replace, do not stack up to four).
 - Removed manual **Sync** and **Save** header buttons. Sync/save now run automatically after import (not on every boot).
 - Profile loading shows a **progress bar + staged status**; Vercel boot loads profiles via a fast path before the large tasks blob, and skips expensive boot-time sync/save.
 - Dead-code cleanup: removed unused backend helpers (`mergeTasks`, `makeCache`, `startOfWeekMondayIso`, `createImportClientToken`), unused logo assets, superseded Profile/Projects/Productivity CSS (~1k lines), and corrected `VARIABLES.md` profile ID / friendly-error examples.
+- Follow-up dead-code pass: removed unused TaskEditorDrawer link/location formatters, unused `fsOverlayPeak` / `started` locals, superseded PA/tooltip/drawer CSS (~1.6k lines), and corrected `BLOB_RUNTIME_PREFIX` docs location.
+
+### Documentation
+
+- Follow-up suite sync for exclusive tooltips, single-toast UX, achievement/milestone `description` fields, and header action patterns (README, PRD, personas, stories, VARIABLES, design, API, architecture, traceability, guardrails, crosswalk, tests).
 
 ---
 

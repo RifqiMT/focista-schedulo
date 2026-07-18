@@ -99,3 +99,4 @@ Baseline aligned to shipped behavior as of **2026-07-18**, including:
 - Staged profile boot progress and production fast-path profile loading
 - Calendar-week progress series under legacy key `last7Days`
 - Pluggable `fs` / `vercel-blob` storage without Redis/MongoDB
+- Plain-English achievement/milestone descriptions; exclusive tooltip + single-toast feedback

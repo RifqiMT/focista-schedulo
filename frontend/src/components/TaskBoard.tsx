@@ -4,6 +4,7 @@ import { TaskEditorDrawer } from "./TaskEditorDrawer";
 import { apiFetch, apiUrl } from "../apiClient";
 import { apiFetchWarming } from "../apiWarming";
 import { getFriendlyErrorMessage } from "../utils/friendlyError";
+import { claimExclusiveTooltip } from "../uiExclusiveOverlay";
 
 export interface Task {
   id: string;
@@ -133,6 +134,19 @@ function isTaskCardInteractiveHoverTarget(ev: { target: EventTarget | null }): b
   return Boolean(ctl && card.contains(ctl));
 }
 
+/** Hover-open menus / hovercards only on fine pointers (skip accidental opens on touch). */
+function prefersFineHover(): boolean {
+  if (typeof window === "undefined") return true;
+  return window.matchMedia("(hover: hover) and (pointer: fine)").matches;
+}
+
+/** Phones, tablets, and narrow viewports: no task tooltip (tap opens the editor instead). */
+function shouldOmitTaskHoverCard(): boolean {
+  if (typeof window === "undefined") return false;
+  if (!prefersFineHover()) return true;
+  return window.matchMedia("(max-width: 1024px)").matches;
+}
+
 function isRepeating(task: Task): boolean {
   return !!task.repeat && task.repeat !== "none";
 }
@@ -247,6 +261,8 @@ function stripDoubleColonSuffix(id: string | null | undefined): string {
   if (!id) return "";
   return id.split("::")[0];
 }
+
+export { stripDoubleColonSuffix };
 
 function canonicalParentKey(task: Task): string {
   // Parent/series identity should ignore any virtual or disambiguation suffixes.
@@ -775,7 +791,6 @@ export function TaskBoard({
   timeScope,
   onTimeScopeChange
 }: TaskBoardProps) {
-  const PERF_DEBUG_PROFILE_NAME = "Rifqi Tjahyono";
   const [tasks, setTasks] = useState<Task[]>([]);
   const [editingTask, setEditingTask] = useState<Task | Task[] | null>(null);
   const [loading, setLoading] = useState(false);
@@ -823,6 +838,7 @@ export function TaskBoard({
   const hoverAutoCloseTimerRef = useRef<ReturnType<typeof window.setTimeout> | null>(
     null
   );
+  const clusterLeaveTimerRef = useRef<ReturnType<typeof window.setTimeout> | null>(null);
   const [viewMode, setViewMode] = useState<"list" | "calendar">("list");
   const [calendarMonthAnchor, setCalendarMonthAnchor] = useState(() => {
     const d = new Date();
@@ -838,12 +854,7 @@ export function TaskBoard({
   const [historyLoadingMore, setHistoryLoadingMore] = useState(false);
   const [historyJumpDate, setHistoryJumpDate] = useState("");
   const [activeProfileName, setActiveProfileName] = useState<string | null>(null);
-  const [perfDebugEnabled, setPerfDebugEnabled] = useState<boolean>(() => {
-    if (typeof window === "undefined") return false;
-    return window.localStorage.getItem("pst.perfDebug.rifqi") === "1";
-  });
   const hoveredTaskId = hoveredTask?.task.id;
-  const canUsePerfDebug = activeProfileName === PERF_DEBUG_PROFILE_NAME;
   const isShowcaseReadOnlyActive = activeProfileName?.trim().toLowerCase() === "test";
 
   const activeBaseTasks = useMemo(() => tasks.filter((t) => !t.cancelled), [tasks]);
@@ -869,6 +880,37 @@ export function TaskBoard({
     }
   }, [hoveredTaskId]);
 
+  // Drop any open tooltip when entering a phone/tablet layout.
+  useEffect(() => {
+    const mqFine = window.matchMedia("(hover: hover) and (pointer: fine)");
+    const mqNarrow = window.matchMedia("(max-width: 1024px)");
+    const sync = () => {
+      if (shouldOmitTaskHoverCard()) setHoveredTask(null);
+    };
+    sync();
+    mqFine.addEventListener("change", sync);
+    mqNarrow.addEventListener("change", sync);
+    return () => {
+      mqFine.removeEventListener("change", sync);
+      mqNarrow.removeEventListener("change", sync);
+    };
+  }, []);
+
+  // Escape clears the bulk selection when the dock is open (not while an overlay owns focus).
+  useEffect(() => {
+    if (selectedTaskIds.size === 0) return;
+    if (editingTask || moveDialogTasks || exportDialogOpen) return;
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key !== "Escape") return;
+      const target = e.target as HTMLElement | null;
+      if (target?.closest("input, textarea, select, [contenteditable='true']")) return;
+      e.preventDefault();
+      clearSelection();
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [selectedTaskIds.size, editingTask, moveDialogTasks, exportDialogOpen]);
+
   type ClusterKey = "timeframe" | "view" | "status" | "project-assoc";
 
   const closeHoverAndCompletedDetails = () => {
@@ -883,14 +925,57 @@ export function TaskBoard({
 
   const openExclusiveCluster = (cluster: ClusterKey) => {
     // Enforce: only one popup/dropdown should be visible at a time.
+    if (clusterLeaveTimerRef.current) {
+      window.clearTimeout(clusterLeaveTimerRef.current);
+      clusterLeaveTimerRef.current = null;
+    }
     setOpenCluster(cluster);
     closeHoverAndCompletedDetails();
   };
 
+  const openClusterOnHover = (cluster: ClusterKey) => {
+    if (!prefersFineHover()) return;
+    if (clusterLeaveTimerRef.current) {
+      window.clearTimeout(clusterLeaveTimerRef.current);
+      clusterLeaveTimerRef.current = null;
+    }
+    if (openCluster !== cluster) openExclusiveCluster(cluster);
+  };
+
+  const closeClusterOnHoverLeave = (cluster: ClusterKey) => {
+    // Hover-opened menus must close when the pointer leaves the trigger+menu.
+    // Short delay bridges the 8px gap between trigger and menu.
+    if (!prefersFineHover()) return;
+    if (clusterLeaveTimerRef.current) {
+      window.clearTimeout(clusterLeaveTimerRef.current);
+    }
+    clusterLeaveTimerRef.current = window.setTimeout(() => {
+      clusterLeaveTimerRef.current = null;
+      setOpenCluster((cur) => (cur === cluster ? null : cur));
+    }, 140);
+  };
+
   const toggleExclusiveCluster = (cluster: ClusterKey) => {
+    if (clusterLeaveTimerRef.current) {
+      window.clearTimeout(clusterLeaveTimerRef.current);
+      clusterLeaveTimerRef.current = null;
+    }
     const next = openCluster === cluster ? null : cluster;
     setOpenCluster(next);
     if (next) closeHoverAndCompletedDetails();
+  };
+
+  const openNewTaskEditor = () => {
+    openEditor({
+      id: "new",
+      title: "",
+      description: "",
+      priority: "medium",
+      labels: [],
+      profileId: activeProfileId,
+      projectId: selectedProjectId,
+      completed: false
+    } as Task);
   };
 
   const openEditor = (task: Task) => {
@@ -947,13 +1032,6 @@ export function TaskBoard({
     });
   };
 
-  const logSlowAction = (action: string, started: number) => {
-    if (!canUsePerfDebug || !perfDebugEnabled) return;
-    const elapsed = performance.now() - started;
-    if (elapsed < 1000) return;
-    console.info(`[perf][TaskBoard] ${action} took ${elapsed.toFixed(1)}ms`);
-  };
-
   useEffect(() => {
     if (!activeProfileId) {
       setActiveProfileName(null);
@@ -974,11 +1052,6 @@ export function TaskBoard({
     void run();
     return () => controller.abort();
   }, [activeProfileId]);
-
-  useEffect(() => {
-    if (canUsePerfDebug) return;
-    if (perfDebugEnabled) setPerfDebugEnabled(false);
-  }, [canUsePerfDebug, perfDebugEnabled]);
 
   useEffect(() => {
     const onOpenExport = () => {
@@ -1005,11 +1078,38 @@ export function TaskBoard({
       setOpenCluster(null);
     };
 
+    // Safety net: if mouseleave is skipped (re-render / portal), close when the
+    // pointer is clearly away from the open cluster on fine-hover devices.
+    const onPointerMove = (e: PointerEvent) => {
+      if (!prefersFineHover()) return;
+      const target = e.target as HTMLElement | null;
+      if (!target) return;
+      const openEl = target.closest(`.task-cluster[data-cluster="${openCluster}"]`);
+      if (openEl) {
+        if (clusterLeaveTimerRef.current) {
+          window.clearTimeout(clusterLeaveTimerRef.current);
+          clusterLeaveTimerRef.current = null;
+        }
+        return;
+      }
+      if (clusterLeaveTimerRef.current) return;
+      clusterLeaveTimerRef.current = window.setTimeout(() => {
+        clusterLeaveTimerRef.current = null;
+        setOpenCluster(null);
+      }, 140);
+    };
+
     window.addEventListener("keydown", onKeyDown);
     window.addEventListener("pointerdown", onPointerDown, { capture: true });
+    window.addEventListener("pointermove", onPointerMove, { passive: true });
     return () => {
       window.removeEventListener("keydown", onKeyDown);
       window.removeEventListener("pointerdown", onPointerDown, { capture: true } as any);
+      window.removeEventListener("pointermove", onPointerMove);
+      if (clusterLeaveTimerRef.current) {
+        window.clearTimeout(clusterLeaveTimerRef.current);
+        clusterLeaveTimerRef.current = null;
+      }
     };
   }, [openCluster]);
 
@@ -1037,6 +1137,12 @@ export function TaskBoard({
       window.removeEventListener("pointerdown", onPointerDown, { capture: true } as any);
     };
   }, [hoveredTask]);
+
+  // App-wide: only one tooltip/hovercard at a time.
+  useEffect(() => {
+    if (!hoveredTaskId) return;
+    return claimExclusiveTooltip(() => setHoveredTask(null));
+  }, [hoveredTaskId]);
 
   // If DOM refresh prevents `onMouseLeave` from firing, auto-close hovercard
   // when the pointer moves away from both the card and the hovercard.
@@ -2532,7 +2638,6 @@ export function TaskBoard({
       return;
     }
     const update = async () => {
-      const started = performance.now();
       let target = task;
       if (task.virtual) {
         const created = await materializeVirtualTask(task);
@@ -2565,7 +2670,6 @@ export function TaskBoard({
       } catch {
         void refreshTasks({ silent: true });
       } finally {
-        logSlowAction("toggleComplete", started);
         taskMutationInFlightRef.current.delete(target.id);
       }
     };
@@ -2711,7 +2815,6 @@ export function TaskBoard({
         message: `Deleted ${deletedCount} task(s).`,
         durationMs: performance.now() - started
       });
-      logSlowAction("deleteSelected", started);
     };
     void run();
   };
@@ -2797,7 +2900,6 @@ export function TaskBoard({
         message: `Moved ${uniqueSeriesMembers.length} task(s).`,
         durationMs: performance.now() - started
       });
-      logSlowAction("confirmMove", started);
     };
     void run();
   };
@@ -2882,9 +2984,12 @@ export function TaskBoard({
     return (
     <article
       key={task.id}
-      className={`task-card ${task.completed ? "task-card-completed" : ""}`}
+      className={`task-card ${task.completed ? "task-card-completed" : ""} ${
+        selectedTaskIds.has(task.id) ? "is-selected" : ""
+      }`}
       data-task-id={task.id}
-      title="Open task details (virtual occurrences will be materialized on interaction)."
+      aria-label={`${task.title}. Tap to open.`}
+      aria-selected={selectedTaskIds.has(task.id)}
       onMouseEnter={(ev) => {
         if (isTaskCardInteractiveHoverTarget(ev)) return;
         showTaskHoverCard({ task, clientX: ev.clientX, clientY: ev.clientY });
@@ -2938,15 +3043,15 @@ export function TaskBoard({
             e.stopPropagation();
             toggleSelect(task.id);
           }}
-          title="Select this task for bulk actions."
+          title="Select for bulk actions"
+          aria-label={`Select ${task.title}`}
         >
           <input
             type="checkbox"
             checked={selectedTaskIds.has(task.id)}
             onChange={() => toggleSelect(task.id)}
-            title="Select this task for bulk actions."
           />
-          <span />
+          <span aria-hidden="true" />
         </label>
         <div className="task-main-inner">
           <div>
@@ -2962,7 +3067,7 @@ export function TaskBoard({
             </div>
             <div className="task-meta-row">
               {task.dueDate && (
-                <span className="pill subtle">
+                <span className="pill subtle task-meta-primary">
                   {(() => {
                     const hasTime = !!task.dueTime;
                     const duration =
@@ -3018,7 +3123,7 @@ export function TaskBoard({
                 </span>
               )}
               {task.durationMinutes !== undefined && (
-                <span className="pill subtle">
+                <span className="pill subtle task-meta-secondary">
                   Duration{" "}
                   {(() => {
                     const mins = task.durationMinutes ?? 0;
@@ -3035,60 +3140,88 @@ export function TaskBoard({
                 </span>
               )}
               {task.priority && (
-                <span className={`pill priority-${task.priority}`}>
+                <span className={`pill priority-${task.priority} task-meta-primary`}>
                   {task.priority.toUpperCase()}
                 </span>
               )}
-              <span className="pill subtle">
+              <span className="pill subtle task-meta-primary">
                 Project:{" "}
                 {task.projectId
                   ? projects.find((p) => p.id === task.projectId)?.name ??
                     "Project"
                   : "All tasks"}
               </span>
-              <span className="pill subtle">
+              <span className="pill subtle task-meta-secondary">
                 {idLabel}: {idValue}
               </span>
               {task.labels.map((label) => (
-                <span key={label} className="pill label-pill">
+                <span key={label} className="pill label-pill task-meta-label">
                   {label}
                 </span>
               ))}
             </div>
           </div>
-          <div className="task-actions">
+          <div className="task-actions" role="group" aria-label="Task actions">
             <button
-              className="task-action-button"
-              aria-label="Mark complete / active"
+              type="button"
+              className={`task-action-button ${
+                task.completed ? "" : "task-action-button--accent"
+              }`}
+              aria-label={task.completed ? "Mark task active" : "Mark task complete"}
               onClick={(e) => {
                 e.stopPropagation();
                 toggleComplete(task);
               }}
-              title={task.completed ? "Mark this task active again." : "Mark this task completed."}
+              title={task.completed ? "Mark this task active again" : "Mark this task completed"}
             >
-              {task.completed ? "Mark active" : "Complete"}
+              <span className="task-action-icon" aria-hidden="true">
+                {task.completed ? (
+                  <svg viewBox="0 0 24 24" focusable="false">
+                    <path d="M4 12h12M12 6l6 6-6 6" />
+                  </svg>
+                ) : (
+                  <svg viewBox="0 0 24 24" focusable="false">
+                    <path d="M5 12.5l4.2 4.2L19 7" />
+                  </svg>
+                )}
+              </span>
+              <span className="task-action-label">
+                {task.completed ? "Active" : "Complete"}
+              </span>
             </button>
             <button
+              type="button"
               className="task-action-button"
               aria-label="Move to another project"
               onClick={(e) => {
                 e.stopPropagation();
                 moveTasks([task]);
               }}
-              title="Move this task to a different project."
+              title="Move this task to a different project"
             >
-              Move
+              <span className="task-action-icon" aria-hidden="true">
+                <svg viewBox="0 0 24 24" focusable="false">
+                  <path d="M4 7h11M15 7l-3-3M15 7l-3 3M20 17H9M9 17l3-3M9 17l3 3" />
+                </svg>
+              </span>
+              <span className="task-action-label">Move</span>
             </button>
             <button
-              className="task-action-button"
+              type="button"
+              className="task-action-button task-action-button--danger"
               aria-label="Delete task"
               onClick={(e) => {
                 e.stopPropagation();
                 void deleteTask(task);
               }}
-              title="Delete this task."
+              title="Delete this task"
             >
-              Delete
+              <span className="task-action-icon" aria-hidden="true">
+                <svg viewBox="0 0 24 24" focusable="false">
+                  <path d="M5 7h14M9 7V5h6v2M8 7l1 12h6l1-12" />
+                </svg>
+              </span>
+              <span className="task-action-label">Delete</span>
             </button>
           </div>
         </div>
@@ -3180,6 +3313,10 @@ export function TaskBoard({
     clientX: number;
     clientY: number;
   }) => {
+    // Phones/tablets/narrow: no tooltip — tap opens the editor instead.
+    if (shouldOmitTaskHoverCard()) return;
+    if (!prefersFineHover()) return;
+
     // Enforce: only one popup/dropdown should be visible at a time.
     setOpenCluster(null);
 
@@ -3235,10 +3372,11 @@ export function TaskBoard({
 
   const renderTaskHoverCard = () => {
     if (!hoveredTask || typeof document === "undefined") return null;
+    if (shouldOmitTaskHoverCard()) return null;
     const card = (
       <div
         ref={taskHoverCardRef}
-        className={`task-hovercard ${hoveredTask.task.completed ? "is-completed" : ""}`}
+        className={`task-hovercard task-hovercard--pro task-tip ${hoveredTask.task.completed ? "is-completed" : ""}`}
         data-priority={hoveredTask.task.priority}
         data-status={hoveredTask.task.completed ? "completed" : "active"}
         style={{ left: hoveredTask.x, top: hoveredTask.y }}
@@ -3261,7 +3399,7 @@ export function TaskBoard({
                 day: "numeric",
                 year: "numeric"
               }).format(new Date(hoveredTask.anchorIso + "T12:00:00"))
-            : "No date";
+            : null;
 
           const timeLabel = hoveredTask.isAllDay
             ? "All day"
@@ -3274,7 +3412,7 @@ export function TaskBoard({
                 )}:${String(hoveredTask.endMin % 60).padStart(2, "0")}`
               : task.dueTime
                 ? task.dueTime
-                : "—";
+                : null;
 
           const calendarWeekLabel = (() => {
             const isoSource = task.dueDate ?? hoveredTask.anchorIso;
@@ -3282,14 +3420,15 @@ export function TaskBoard({
             const d = new Date(isoSource + "T12:00:00");
             if (Number.isNaN(d.getTime())) return null;
             const tmp = new Date(Date.UTC(d.getFullYear(), d.getMonth(), d.getDate()));
-            const dayNum = tmp.getUTCDay() || 7; // Mon=1 ... Sun=7
+            const dayNum = tmp.getUTCDay() || 7;
             tmp.setUTCDate(tmp.getUTCDate() + 4 - dayNum);
             const isoYear = tmp.getUTCFullYear();
             const yearStart = new Date(Date.UTC(isoYear, 0, 1));
             const diffDays = Math.floor((tmp.getTime() - yearStart.getTime()) / 86400000);
             const weekNo = Math.floor(diffDays / 7) + 1;
-            return `CW ${String(weekNo).padStart(2, "0")}-${isoYear}`;
+            return `CW ${String(weekNo).padStart(2, "0")} · ${isoYear}`;
           })();
+
           const durationLabel =
             task.durationMinutes !== undefined
               ? formatDurationMinutesForOverview(task.durationMinutes)
@@ -3304,7 +3443,7 @@ export function TaskBoard({
               if (task.repeatEvery && task.repeatUnit) {
                 return `Every ${task.repeatEvery} ${task.repeatUnit}${task.repeatEvery === 1 ? "" : "s"}`;
               }
-              return "Custom repeat";
+              return "Custom";
             }
             if (task.repeat === "daily") return "Daily";
             if (task.repeat === "weekly") return "Weekly";
@@ -3316,232 +3455,180 @@ export function TaskBoard({
             return "Repeats";
           })();
 
+          const scheduleValue = [dateLabel, timeLabel].filter(Boolean).join(" · ") || null;
+          const occurrenceLabel = task.virtual
+            ? "Upcoming occurrence"
+            : task.cancelled
+              ? "Cancelled occurrence"
+              : null;
+
+          const locationNodes = (() => {
+            if (!task.location) return null;
+            const tokens = parseLocationTokens(task.location);
+            if (!tokens.length) return null;
+            return (
+              <span className="task-hovercard-labels">
+                {tokens.map((loc) => {
+                  const parsed = parseLocationAliasToken(loc);
+                  const query = parsed?.query ?? loc;
+                  const display = parsed?.label ?? query;
+                  const href = normalizeHyperlinkHref(query);
+                  return href ? (
+                    <a
+                      key={loc}
+                      className="task-hovercard-chip location-map-link"
+                      href={href}
+                      target="_blank"
+                      rel="noreferrer"
+                      onClick={(e) => e.stopPropagation()}
+                    >
+                      {display}
+                    </a>
+                  ) : (
+                    <span key={loc} className="task-hovercard-chip">
+                      {display}
+                    </span>
+                  );
+                })}
+              </span>
+            );
+          })();
+
+          const labelNodes =
+            task.labels.length > 0 ? (
+              <span className="task-hovercard-labels">
+                {task.labels.map((l) => (
+                  <span key={l} className="task-hovercard-chip">
+                    {l}
+                  </span>
+                ))}
+              </span>
+            ) : null;
+
+          const linkNodes =
+            (task.link ?? []).length > 0 ? (
+              <span className="task-hovercard-labels">
+                {(task.link ?? []).map((l) => {
+                  const parsed = parseLinkAliasToken(l);
+                  if (!parsed) {
+                    return (
+                      <span key={l} className="task-hovercard-chip">
+                        {l}
+                      </span>
+                    );
+                  }
+                  const href = parsed.href;
+                  const text = parsed.label ?? shortLinkText(href);
+                  return (
+                    <a
+                      key={l}
+                      className="task-hovercard-chip task-link-chip"
+                      href={href}
+                      target="_blank"
+                      rel="noreferrer"
+                      onClick={(e) => e.stopPropagation()}
+                    >
+                      {text}
+                    </a>
+                  );
+                })}
+              </span>
+            ) : null;
+
+          const childIdLabel = (() => {
+            if (!isRepeating(task)) return null;
+            const idx = completedChildIndex(task, tasksWithRepeats);
+            if (idx != null) return String(idx);
+            return task.childId ? stripDoubleColonSuffix(task.childId) : null;
+          })();
+
+          const tipRows: { key: string; label: string; value: React.ReactNode }[] = [];
+          if (calendarWeekLabel) tipRows.push({ key: "cw", label: "Week", value: calendarWeekLabel });
+          if (repeatLabel) tipRows.push({ key: "repeat", label: "Repeat", value: repeatLabel });
+          if (occurrenceLabel)
+            tipRows.push({ key: "occ", label: "Note", value: occurrenceLabel });
+          if (durationLabel) tipRows.push({ key: "dur", label: "Duration", value: durationLabel });
+          if (locationNodes) tipRows.push({ key: "loc", label: "Place", value: locationNodes });
+          if (reminderLabel) tipRows.push({ key: "rem", label: "Remind", value: reminderLabel });
+          if (labelNodes) tipRows.push({ key: "labels", label: "Labels", value: labelNodes });
+          if (linkNodes) tipRows.push({ key: "links", label: "Links", value: linkNodes });
+
+          const idMeta = [
+            { key: "id", label: "ID", value: stripDoubleColonSuffix(task.id) },
+            task.parentId
+              ? { key: "parent", label: "Parent", value: stripDoubleColonSuffix(task.parentId) }
+              : null,
+            childIdLabel ? { key: "child", label: "Child", value: childIdLabel } : null
+          ].filter((x): x is { key: string; label: string; value: string } => Boolean(x?.value));
+
           return (
             <>
-              <div className="task-hovercard-top">
-                <div className="task-hovercard-title">{task.title}</div>
-                <div className="task-hovercard-badges">
+              <header className="task-tip-head">
+                <div className="task-tip-title">{task.title}</div>
+                <div className="task-tip-kicker">
                   <span
-                    className={`task-hovercard-badge task-hovercard-badge-status ${
-                      task.completed ? "is-completed" : ""
-                    }`}
+                    className={`task-tip-status${task.completed ? " is-done" : ""}`}
                   >
                     {statusLabel}
                   </span>
-                  <span className="task-hovercard-badge task-hovercard-badge-priority">
-                    {priorityLabel}
+                  <span className="task-tip-sep" aria-hidden="true">
+                    ·
                   </span>
-                  <span className="task-hovercard-badge task-hovercard-badge-project">
-                    {projectName}
+                  <span className="task-tip-priority">{priorityLabel}</span>
+                  <span className="task-tip-sep" aria-hidden="true">
+                    ·
                   </span>
-                </div>
-              </div>
-
-              <div className="task-hovercard-meta">
-                {task.description ? (
-                  <div className="task-hovercard-row">
-                    <span className="task-hovercard-k">Description</span>
-                    <span className="task-hovercard-v task-hovercard-v-wrap">
-                      {task.description}
-                    </span>
-                  </div>
-                ) : null}
-
-                <div className="task-hovercard-section">
-                  <div className="task-hovercard-section-title">Schedule</div>
-                  <div className="task-hovercard-row">
-                    <span className="task-hovercard-k">When</span>
-                    <span className="task-hovercard-v task-hovercard-v-wrap">
-                      {dateLabel}
-                    </span>
-                  </div>
-
-                  <div className="task-hovercard-row">
-                    <span className="task-hovercard-k">Time</span>
-                    <span className="task-hovercard-v task-hovercard-v-wrap">
-                      {timeLabel}
-                    </span>
-                  </div>
-
-                  {calendarWeekLabel ? (
-                    <div className="task-hovercard-row">
-                      <span className="task-hovercard-k">Calendar week</span>
-                      <span className="task-hovercard-v task-hovercard-v-wrap">
-                        {calendarWeekLabel}
+                  <span className="task-tip-project">{projectName}</span>
+                  {task.cancelled ? (
+                    <>
+                      <span className="task-tip-sep" aria-hidden="true">
+                        ·
                       </span>
-                    </div>
+                      <span className="task-tip-cancelled">Cancelled</span>
+                    </>
                   ) : null}
-
-                  <div className="task-hovercard-row">
-                    <span className="task-hovercard-k">Schedule</span>
-                    <span className="task-hovercard-v task-hovercard-v-wrap">
-                      {task.virtual
-                        ? "Upcoming occurrence"
-                        : repeatLabel
-                          ? repeatLabel
-                          : "No repetition"}
-                    </span>
-                  </div>
-
-                  <div className="task-hovercard-row">
-                    <span className="task-hovercard-k">Repetition</span>
-                    <span className="task-hovercard-v task-hovercard-v-wrap">
-                      {repeatLabel ? repeatLabel : "No repetition"}
-                    </span>
-                  </div>
-
-                  <div className="task-hovercard-row">
-                    <span className="task-hovercard-k">Cancelled</span>
-                    <span className="task-hovercard-v task-hovercard-v-wrap">
-                      {task.cancelled ? "Yes" : "No"}
-                    </span>
-                  </div>
                 </div>
+                {scheduleValue ? (
+                  <div className="task-tip-schedule">{scheduleValue}</div>
+                ) : null}
+              </header>
 
-                <div className="task-hovercard-divider" aria-hidden="true" />
+              {task.description ? (
+                <p className="task-tip-desc">{task.description}</p>
+              ) : null}
 
-                <div className="task-hovercard-section">
-                  <div className="task-hovercard-section-title">Details</div>
-
-                  <div className="task-hovercard-row">
-                    <span className="task-hovercard-k">Duration</span>
-                    <span className="task-hovercard-v task-hovercard-v-wrap">
-                      {task.durationMinutes !== undefined
-                        ? durationLabel
-                        : "—"}
-                    </span>
-                  </div>
-
-                  <div className="task-hovercard-row">
-                    <span className="task-hovercard-k">Location</span>
-                    <span className="task-hovercard-v task-hovercard-v-wrap">
-                      {task.location ? (
-                        (() => {
-                          const tokens = parseLocationTokens(task.location);
-                          if (!tokens.length) return "—";
-                          return (
-                            <span className="task-hovercard-labels">
-                              {tokens.map((loc) => {
-                                const parsed = parseLocationAliasToken(loc);
-                                const query = parsed?.query ?? loc;
-                                const display = parsed?.label ?? query;
-                                const href = normalizeHyperlinkHref(query);
-                                return href ? (
-                                  <a
-                                    key={loc}
-                                    className="task-hovercard-chip location-map-link"
-                                    href={href ?? undefined}
-                                    target="_blank"
-                                    rel="noreferrer"
-                                    onClick={(e) => e.stopPropagation()}
-                                  >
-                                    {display}
-                                  </a>
-                                  ) : (
-                                    <span key={loc} className="task-hovercard-chip">
-                                      {display}
-                                    </span>
-                                  );
-                              })}
-                            </span>
-                          );
-                        })()
-                      ) : (
-                        "—"
-                      )}
-                    </span>
-                  </div>
-
-                  <div className="task-hovercard-row">
-                    <span className="task-hovercard-k">Reminder</span>
-                    <span className="task-hovercard-v task-hovercard-v-wrap">
-                      {task.reminderMinutesBefore !== undefined
-                        ? reminderLabel
-                        : "—"}
-                    </span>
-                  </div>
-                </div>
-
-                <div className="task-hovercard-divider" aria-hidden="true" />
-
-                <div className="task-hovercard-section">
-                  <div className="task-hovercard-section-title">Tags</div>
-
-                  <div className="task-hovercard-row">
-                    <span className="task-hovercard-k">Labels</span>
-                    <span className="task-hovercard-v task-hovercard-labels">
-                      {task.labels.length > 0 ? (
-                        task.labels.map((l) => (
-                          <span key={l} className="task-hovercard-chip">
-                            {l}
-                          </span>
-                        ))
-                      ) : (
-                        <span className="task-hovercard-chip">—</span>
-                      )}
-                    </span>
-                  </div>
-
-                  <div className="task-hovercard-row">
-                    <span className="task-hovercard-k">Links</span>
-                    <span className="task-hovercard-v task-hovercard-labels">
-                      {(task.link ?? []).length > 0 ? (
-                        (task.link ?? []).map((l) => {
-                          const parsed = parseLinkAliasToken(l);
-                          if (!parsed) {
-                            return (
-                              <span key={l} className="task-hovercard-chip">
-                                {l}
-                              </span>
-                            );
-                          }
-
-                          const href = parsed.href;
-                          const text = parsed.label ?? shortLinkText(href);
-                          return (
-                            <a
-                              key={l}
-                              className="task-hovercard-chip task-link-chip"
-                              href={href}
-                              target="_blank"
-                              rel="noreferrer"
-                              onClick={(e) => e.stopPropagation()}
-                            >
-                              {text}
-                            </a>
-                          );
-                        })
-                      ) : (
-                        <span className="task-hovercard-chip">—</span>
-                      )}
-                    </span>
-                  </div>
-                </div>
-
-                <div className="task-hovercard-divider" aria-hidden="true" />
-                <div className="task-hovercard-ids" aria-label="Identifiers">
-                  <div className="task-hovercard-ids-title">Identifiers</div>
-                  <div className="task-hovercard-ids-grid task-hovercard-mono">
-                    <div className="task-hovercard-ids-k">Task</div>
-                    <div className="task-hovercard-ids-v">
-                      {stripDoubleColonSuffix(task.id)}
+              {tipRows.length > 0 ? (
+                <div className="task-tip-rows">
+                  {tipRows.map((row, i) => (
+                    <div
+                      key={row.key}
+                      className="task-tip-row"
+                      style={{ animationDelay: `${Math.min(i, 8) * 28}ms` }}
+                    >
+                      <span className="task-tip-k">{row.label}</span>
+                      <span className="task-tip-v">{row.value}</span>
                     </div>
-                    <div className="task-hovercard-ids-k">Parent</div>
-                    <div className="task-hovercard-ids-v">
-                      {task.parentId ? stripDoubleColonSuffix(task.parentId) : "—"}
-                    </div>
-                    <div className="task-hovercard-ids-k">Child</div>
-                    <div className="task-hovercard-ids-v">
-                      {(() => {
-                        if (!isRepeating(task)) return "—";
-                        const idx = completedChildIndex(task, tasksWithRepeats);
-                        if (idx != null) return idx;
-                        return task.childId ? stripDoubleColonSuffix(task.childId) : "—";
-                      })()}
-                    </div>
-                  </div>
+                  ))}
                 </div>
-              </div>
+              ) : null}
+
+              {idMeta.length > 0 ? (
+                <footer className="task-tip-ids" aria-label="Identifiers">
+                  {idMeta.map((item, index) => (
+                    <span key={item.key} className="task-tip-id-pair">
+                      {index > 0 ? (
+                        <span className="task-tip-sep" aria-hidden="true">
+                          ·
+                        </span>
+                      ) : null}
+                      <span className="task-tip-id-k">{item.label}</span>
+                      <span className="task-tip-id-v" title={item.value}>
+                        {item.value}
+                      </span>
+                    </span>
+                  ))}
+                </footer>
+              ) : null}
             </>
           );
         })()}
@@ -3785,7 +3872,8 @@ export function TaskBoard({
           </div>
           <div style={{ display: "flex", gap: "0.5rem", alignItems: "center" }}>
             <button
-              className="ghost-button"
+              className="primary-button small"
+              type="button"
               onClick={() => {
                 openEditor({
                   id: "new",
@@ -3799,8 +3887,15 @@ export function TaskBoard({
                   dueDate: dayIso
                 } as Task);
               }}
+              title="Add a task for this day"
+              aria-label="Add task"
             >
-              Add task
+              <span className="btn-glyph" aria-hidden="true">
+                <svg viewBox="0 0 24 24" focusable="false">
+                  <path d="M12 5v14M5 12h14" />
+                </svg>
+              </span>
+              <span>Add task</span>
             </button>
             <button
               className="ghost-button"
@@ -4717,7 +4812,6 @@ export function TaskBoard({
                             <span
                               className="calendar-item-status"
                               aria-label={e.task.completed ? "Completed" : "Active"}
-                              title={e.task.completed ? "Completed" : "Active"}
                             >
                               {e.task.completed ? "✓" : "•"}
                             </span>
@@ -4754,29 +4848,143 @@ export function TaskBoard({
     );
   };
 
+  const renderBulkSelectionDock = () => {
+    // Keep selection, but never float the dock over the task editor / move / export overlays.
+    if (
+      selectedTaskIds.size === 0 ||
+      editingTask ||
+      moveDialogTasks ||
+      exportDialogOpen ||
+      typeof document === "undefined"
+    ) {
+      return null;
+    }
+    const count = selectedTaskIds.size;
+    const countLabel = count === 1 ? "task" : "tasks";
+
+    return createPortal(
+      <div className="task-bulk-dock" role="presentation">
+        <div
+          className="task-bulk-bar task-bulk-bar--dock"
+          role="toolbar"
+          aria-label={`${count} ${countLabel} selected`}
+        >
+          <div className="task-bulk-bar-summary" aria-live="polite">
+            <span className="task-bulk-bar-badge" key={count}>
+              {count}
+            </span>
+            <span className="task-bulk-bar-copy">
+              <span className="task-bulk-bar-title">Selected</span>
+              <span className="task-bulk-bar-subtitle">
+                {count} {countLabel}
+              </span>
+            </span>
+          </div>
+          <div className="task-bulk-bar-actions">
+            <button
+              type="button"
+              className="task-bulk-btn task-bulk-btn--primary"
+              onClick={() => {
+                const tasksToEdit = tasksWithRepeats.filter((t) => selectedTaskIds.has(t.id));
+                if (!tasksToEdit.length) return;
+                openMultiEditor(tasksToEdit);
+              }}
+              title="Edit selected tasks"
+              aria-label="Edit selected tasks"
+            >
+              <span className="task-bulk-btn-icon" aria-hidden="true">
+                <svg viewBox="0 0 24 24" focusable="false">
+                  <path d="M4 20h4l10.5-10.5a1.8 1.8 0 0 0-2.5-2.5L5.5 17.5V20z" />
+                  <path d="M13 6.5l4.5 4.5" />
+                </svg>
+              </span>
+              <span className="task-bulk-btn-text">Edit</span>
+            </button>
+            <button
+              type="button"
+              className="task-bulk-btn"
+              onClick={moveSelected}
+              title="Move selected tasks"
+              aria-label="Move selected tasks"
+            >
+              <span className="task-bulk-btn-icon" aria-hidden="true">
+                <svg viewBox="0 0 24 24" focusable="false">
+                  <path d="M4 7h11M15 7l-3-3M15 7l-3 3M20 17H9M9 17l3-3M9 17l3 3" />
+                </svg>
+              </span>
+              <span className="task-bulk-btn-text">Move</span>
+            </button>
+            <span className="task-bulk-bar-sep" aria-hidden="true" />
+            <button
+              type="button"
+              className="task-bulk-btn"
+              onClick={clearSelection}
+              title="Clear selection"
+              aria-label="Clear selection"
+            >
+              <span className="task-bulk-btn-icon" aria-hidden="true">
+                <svg viewBox="0 0 24 24" focusable="false">
+                  <path d="M6 6l12 12M18 6L6 18" />
+                </svg>
+              </span>
+              <span className="task-bulk-btn-text">Clear</span>
+            </button>
+            <button
+              type="button"
+              className="task-bulk-btn task-bulk-btn--danger"
+              onClick={deleteSelected}
+              title="Delete selected tasks"
+              aria-label="Delete selected tasks"
+            >
+              <span className="task-bulk-btn-icon" aria-hidden="true">
+                <svg viewBox="0 0 24 24" focusable="false">
+                  <path d="M5 7h14M9 7V5h6v2M8 7l1 12h6l1-12" />
+                </svg>
+              </span>
+              <span className="task-bulk-btn-text">Delete</span>
+            </button>
+          </div>
+        </div>
+      </div>,
+      document.body
+    );
+  };
+
   return (
-    <section className="task-board">
+    <section
+      className={`task-board ${selectedTaskIds.size > 0 ? "is-selecting" : ""}`}
+    >
       {renderTaskHoverCard()}
+      {renderBulkSelectionDock()}
       <div className="board-header">
-        <div>
-          <h2 style={{ display: "flex", alignItems: "center", gap: "0.5rem", flexWrap: "wrap" }}>
+        <div className="board-header-copy">
+          <h2 className="board-header-title">
             <span>Tasks</span>
             <span
-              className="pill subtle"
-              aria-label="Filtered active and completed counts"
+              className="pill subtle board-count-pill"
+              aria-label={`Active ${filteredTaskCounts.active}, completed ${filteredTaskCounts.completed}`}
               title={formatStatusBreakdownTooltip(filteredTaskCounts, filteredTasksRaw)}
             >
-              Active {filteredTaskCounts.active} • Completed {filteredTaskCounts.completed}
+              <span className="board-count-pill-full">
+                Active {filteredTaskCounts.active} • Completed {filteredTaskCounts.completed}
+              </span>
+              <span className="board-count-pill-compact" aria-hidden="true">
+                {filteredTaskCounts.active} active · {filteredTaskCounts.completed} done
+              </span>
             </span>
           </h2>
-          <p className="muted">
+          <p className="muted board-header-sub board-header-sub--full">
             Capture title, priority, reminders, labels, locations, and more. Showing{" "}
             {filteredTaskCounts.total} task{filteredTaskCounts.total === 1 ? "" : "s"} for the
             current filters.
           </p>
+          <p className="muted board-header-sub board-header-sub--short">
+            {filteredTaskCounts.total} task{filteredTaskCounts.total === 1 ? "" : "s"} · current filters
+          </p>
         </div>
         <div className="board-header-actions">
           <div className="task-toolbar" aria-label="Task controls">
+            <div className="task-toolbar-top">
             <div className="task-search" role="search" aria-label="Search tasks">
               <input
                 className="task-search-input"
@@ -4790,7 +4998,7 @@ export function TaskBoard({
                   setHoveredTask(null);
                   setExpandedGroups(new Set());
                 }}
-                placeholder="Search tasks (title, labels, location)…"
+                placeholder="Search tasks…"
                 list="task-search-suggestions"
               />
               <datalist id="task-search-suggestions">
@@ -4812,31 +5020,27 @@ export function TaskBoard({
                 </button>
               ) : null}
             </div>
-            {canUsePerfDebug ? (
-              <button
-                type="button"
-                className="task-cluster-trigger"
-                aria-pressed={perfDebugEnabled}
-                title="Toggle performance debug logs for this profile."
-                onClick={() => {
-                  setPerfDebugEnabled((prev) => {
-                    const next = !prev;
-                    if (typeof window !== "undefined") {
-                      window.localStorage.setItem("pst.perfDebug.rifqi", next ? "1" : "0");
-                    }
-                    return next;
-                  });
-                }}
-              >
-                Perf logs: {perfDebugEnabled ? "On" : "Off"}
-              </button>
-            ) : null}
+            <button
+              className="primary-button board-add-task"
+              type="button"
+              onClick={openNewTaskEditor}
+              title="Create a new task"
+              aria-label="Add task"
+            >
+              <span className="btn-glyph" aria-hidden="true">
+                <svg viewBox="0 0 24 24" focusable="false">
+                  <path d="M12 5v14M5 12h14" />
+                </svg>
+              </span>
+              <span>Add task</span>
+            </button>
+            </div>
+            <div className="task-toolbar-filters" role="group" aria-label="Task filters">
             <div
               className={`task-cluster ${openCluster === "timeframe" ? "is-open" : ""}`}
               data-cluster="timeframe"
-              onMouseEnter={() => {
-                if (openCluster !== "timeframe") openExclusiveCluster("timeframe");
-              }}
+              onMouseEnter={() => openClusterOnHover("timeframe")}
+              onMouseLeave={() => closeClusterOnHoverLeave("timeframe")}
             >
               <button
                 className="task-cluster-trigger"
@@ -4846,36 +5050,38 @@ export function TaskBoard({
                 aria-label="Timeframe"
                 onClick={() => toggleExclusiveCluster("timeframe")}
               >
-                Timeframe:{" "}
-                {timeScope === "today"
-                  ? "Today"
-                  : timeScope === "yesterday"
-                    ? "Yesterday"
-                  : timeScope === "tomorrow"
-                    ? "Tomorrow"
-                    : timeScope === "last_week"
-                      ? "Last week"
-                    : timeScope === "week"
-                      ? "This week"
-                      : timeScope === "next_week"
-                        ? "Next week"
-                        : timeScope === "sprint"
-                          ? "This sprint"
-                          : timeScope === "last_month"
-                            ? "Last month"
-                          : timeScope === "month"
-                            ? "This month"
-                            : timeScope === "next_month"
-                              ? "Next month"
-                              : timeScope === "last_quarter"
-                                ? "Last quarter"
-                              : timeScope === "quarter"
-                                ? "This quarter"
-                                : timeScope === "next_quarter"
-                                  ? "Next quarter"
-                              : timeScope === "custom"
-                                ? "Custom range"
-                              : "All"}
+                <span className="task-cluster-kicker">Timeframe</span>
+                <span className="task-cluster-value">
+                  {timeScope === "today"
+                    ? "Today"
+                    : timeScope === "yesterday"
+                      ? "Yesterday"
+                      : timeScope === "tomorrow"
+                        ? "Tomorrow"
+                        : timeScope === "last_week"
+                          ? "Last week"
+                          : timeScope === "week"
+                            ? "This week"
+                            : timeScope === "next_week"
+                              ? "Next week"
+                              : timeScope === "sprint"
+                                ? "This sprint"
+                                : timeScope === "last_month"
+                                  ? "Last month"
+                                  : timeScope === "month"
+                                    ? "This month"
+                                    : timeScope === "next_month"
+                                      ? "Next month"
+                                      : timeScope === "last_quarter"
+                                        ? "Last quarter"
+                                        : timeScope === "quarter"
+                                          ? "This quarter"
+                                          : timeScope === "next_quarter"
+                                            ? "Next quarter"
+                                            : timeScope === "custom"
+                                              ? "Custom range"
+                                              : "All"}
+                </span>
               </button>
               <div className="task-cluster-menu" role="menu" aria-label="Timeframe options">
                 <button
@@ -5090,9 +5296,8 @@ export function TaskBoard({
             <div
               className={`task-cluster ${openCluster === "view" ? "is-open" : ""}`}
               data-cluster="view"
-              onMouseEnter={() => {
-                if (openCluster !== "view") openExclusiveCluster("view");
-              }}
+              onMouseEnter={() => openClusterOnHover("view")}
+              onMouseLeave={() => closeClusterOnHoverLeave("view")}
             >
               <button
                 className="task-cluster-trigger"
@@ -5103,7 +5308,10 @@ export function TaskBoard({
                 onClick={() => toggleExclusiveCluster("view")}
                 title="Choose between list view and calendar view."
               >
-                View: {viewMode === "list" ? "List" : "Calendar"}
+                <span className="task-cluster-kicker">View</span>
+                <span className="task-cluster-value">
+                  {viewMode === "list" ? "List" : "Calendar"}
+                </span>
               </button>
               <div className="task-cluster-menu" role="menu" aria-label="View options">
                 <button
@@ -5139,9 +5347,8 @@ export function TaskBoard({
             <div
               className={`task-cluster ${openCluster === "status" ? "is-open" : ""}`}
               data-cluster="status"
-              onMouseEnter={() => {
-                if (openCluster !== "status") openExclusiveCluster("status");
-              }}
+              onMouseEnter={() => openClusterOnHover("status")}
+              onMouseLeave={() => closeClusterOnHoverLeave("status")}
             >
               <button
                 className="task-cluster-trigger"
@@ -5152,12 +5359,14 @@ export function TaskBoard({
                 onClick={() => toggleExclusiveCluster("status")}
                 title="Filter tasks by status: Active, Completed, or All."
               >
-                Status:{" "}
-                {completionFilter === "all"
-                  ? "All"
-                  : completionFilter === "active"
-                    ? "Active"
-                    : "Completed"}
+                <span className="task-cluster-kicker">Status</span>
+                <span className="task-cluster-value">
+                  {completionFilter === "all"
+                    ? "All"
+                    : completionFilter === "active"
+                      ? "Active"
+                      : "Completed"}
+                </span>
               </button>
               <div className="task-cluster-menu" role="menu" aria-label="Status options">
                 <button
@@ -5202,9 +5411,8 @@ export function TaskBoard({
             <div
               className={`task-cluster ${openCluster === "project-assoc" ? "is-open" : ""}`}
               data-cluster="project-assoc"
-              onMouseEnter={() => {
-                if (openCluster !== "project-assoc") openExclusiveCluster("project-assoc");
-              }}
+              onMouseEnter={() => openClusterOnHover("project-assoc")}
+              onMouseLeave={() => closeClusterOnHoverLeave("project-assoc")}
             >
               <button
                 className="task-cluster-trigger"
@@ -5215,12 +5423,14 @@ export function TaskBoard({
                 onClick={() => toggleExclusiveCluster("project-assoc")}
                 title="Filter tasks by project association."
               >
-                Project:{" "}
-                {projectAssocFilter === "all"
-                  ? "All"
-                  : projectAssocFilter === "with"
-                    ? "With"
-                    : "None"}
+                <span className="task-cluster-kicker">Project</span>
+                <span className="task-cluster-value">
+                  {projectAssocFilter === "all"
+                    ? "All"
+                    : projectAssocFilter === "with"
+                      ? "With"
+                      : "None"}
+                </span>
               </button>
               <div className="task-cluster-menu" role="menu" aria-label="Project association options">
                 <button
@@ -5260,62 +5470,9 @@ export function TaskBoard({
                 </button>
               </div>
             </div>
+            </div>
 
-            {selectedTaskIds.size > 0 && (
-              <div className="task-toolbar-cluster" role="group" aria-label="Bulk actions">
-                <button
-                  className="ghost-button small"
-                  onClick={clearSelection}
-                  title="Unselect all selected tasks."
-                >
-                  Unselect all
-                </button>
-                <button
-                  className="ghost-button small"
-                  onClick={() => {
-                    const tasksToEdit = tasksWithRepeats.filter((t) => selectedTaskIds.has(t.id));
-                    if (!tasksToEdit.length) return;
-                    openMultiEditor(tasksToEdit);
-                  }}
-                  title="Edit all selected tasks (latest due date first)."
-                >
-                  Edit selected
-                </button>
-                <button
-                  className="ghost-button small"
-                  onClick={moveSelected}
-                  title="Move all selected tasks to another project."
-                >
-                  Move selected
-                </button>
-                <button
-                  className="ghost-button small"
-                  onClick={deleteSelected}
-                  title="Delete all selected tasks."
-                >
-                  Delete selected
-                </button>
-              </div>
-            )}
           </div>
-          <button
-            className="primary-button"
-            onClick={() =>
-              openEditor({
-                id: "new",
-                title: "",
-                description: "",
-                priority: "medium",
-                labels: [],
-                profileId: activeProfileId,
-                projectId: selectedProjectId,
-                completed: false
-              } as Task)
-            }
-            title="Create a new task."
-          >
-            Add task
-          </button>
         </div>
       </div>
 
@@ -5396,16 +5553,19 @@ export function TaskBoard({
                 <div key={task.id}>
                   {renderTaskRow(task)}
                   {canExpand ? (
-                    <div style={{ marginTop: "0.35rem", display: "flex", justifyContent: "flex-end" }}>
+                    <div className="task-expand-row">
                       <button
-                        className="task-action-button"
+                        className="task-expand-button"
+                        type="button"
                         onClick={(e) => {
                           e.stopPropagation();
                           closeDropdownAndHover();
-                            toggleSingleExpandedGroup(parentKey);
+                          toggleSingleExpandedGroup(parentKey);
                         }}
                       >
-                        {expanded ? "Hide" : "Show"} occurrences
+                        {expanded
+                          ? "Hide occurrences"
+                          : `Show ${occurrences.length} occurrence${occurrences.length === 1 ? "" : "s"}`}
                       </button>
                     </div>
                   ) : null}
@@ -5427,19 +5587,22 @@ export function TaskBoard({
             }
 
             return (
-              <div key={key}>
-                <article className="task-card task-card-completed">
+              <div key={key} className="task-group">
+                <article className="task-card task-card-completed task-card-group">
                   <div className="task-main-inner">
-                    <div>
-                      <div className="task-title">{representative.title}</div>
+                    <div className="task-group-copy">
+                      <div className="task-title-row">
+                        <div className="task-title">{representative.title}</div>
+                        <span className="pill subtle task-group-count">{count} completed</span>
+                      </div>
                       <div className="task-meta-row">
                         {representative.projectId && (
-                          <span className="pill subtle">
+                          <span className="pill subtle task-meta-primary">
                             {projects.find((p) => p.id === representative.projectId)?.name ??
                               "Project"}
                           </span>
                         )}
-                        <span className="pill subtle">
+                        <span className="pill subtle task-meta-secondary">
                           Parent ID: {shortId(canonicalParentKey(representative))}
                         </span>
                       </div>
@@ -5447,16 +5610,18 @@ export function TaskBoard({
                     <div className="task-actions">
                       {count >= 1 && items.some((t) => isRepeating(t)) ? (
                         <button
-                          className="task-action-button"
+                          className="task-expand-button"
+                          type="button"
                           onClick={() => {
                             closeDropdownAndHover();
                             toggleSingleExpandedGroup(key);
                           }}
                         >
-                          {expandedGroups.has(key) ? "Hide" : "Show"} occurrences
+                          {expandedGroups.has(key)
+                            ? "Hide occurrences"
+                            : `Show ${count} occurrence${count === 1 ? "" : "s"}`}
                         </button>
                       ) : null}
-                      <span className="pill subtle">{count} completed</span>
                     </div>
                   </div>
                 </article>
@@ -5479,23 +5644,26 @@ export function TaskBoard({
             }
 
             return (
-              <div key={key}>
-                <article className="task-card task-card-completed">
+              <div key={key} className="task-group">
+                <article className="task-card task-card-completed task-card-group">
                   <div className="task-main-inner">
-                    <div>
-                      <div className="task-title">{representative.title}</div>
+                    <div className="task-group-copy">
+                      <div className="task-title-row">
+                        <div className="task-title">{representative.title}</div>
+                        <span className="pill subtle task-group-count">{count} completed</span>
+                      </div>
                       <div className="task-meta-row">
                         {representative.projectId && (
-                          <span className="pill subtle">
+                          <span className="pill subtle task-meta-primary">
                             {projects.find((p) => p.id === representative.projectId)?.name ??
                               "Project"}
                           </span>
                         )}
-                        <span className="pill subtle">
+                        <span className="pill subtle task-meta-secondary">
                           Parent ID: {shortId(canonicalParentKey(representative))}
                         </span>
                         {items.some((t) => t.durationMinutes !== undefined) && (
-                          <span className="pill subtle">
+                          <span className="pill subtle task-meta-secondary">
                             Duration{" "}
                             {(() => {
                               const mins =
@@ -5510,7 +5678,7 @@ export function TaskBoard({
                           </span>
                         )}
                         {representative.repeat && representative.repeat !== "none" && (
-                          <span className="pill subtle">
+                          <span className="pill subtle task-meta-secondary">
                             Repeats {representative.repeat}
                           </span>
                         )}
@@ -5519,16 +5687,18 @@ export function TaskBoard({
                     <div className="task-actions">
                       {count >= 1 && items.some((t) => isRepeating(t)) ? (
                         <button
-                          className="task-action-button"
+                          className="task-expand-button"
+                          type="button"
                           onClick={() => {
                             closeDropdownAndHover();
                             toggleSingleExpandedGroup(key);
                           }}
                         >
-                          {expandedGroups.has(key) ? "Hide" : "Show"} occurrences
+                          {expandedGroups.has(key)
+                            ? "Hide occurrences"
+                            : `Show ${count} occurrence${count === 1 ? "" : "s"}`}
                         </button>
                       ) : null}
-                      <span className="pill subtle">{count} completed</span>
                     </div>
                   </div>
                 </article>
@@ -5550,30 +5720,46 @@ export function TaskBoard({
           <div className="empty-state">
             <h3>No tasks in this view</h3>
             <p className="muted">
-              Try another timeframe, clear project filters, or switch workspace profile.
+              Try another timeframe, clear filters, or add a new task to get started.
             </p>
+            <div className="empty-state-actions">
+              <button
+                type="button"
+                className="primary-button"
+                onClick={openNewTaskEditor}
+                title="Create a new task"
+                aria-label="Add task"
+              >
+                <span className="btn-glyph" aria-hidden="true">
+                  <svg viewBox="0 0 24 24" focusable="false">
+                    <path d="M12 5v14M5 12h14" />
+                  </svg>
+                </span>
+                <span>Add task</span>
+              </button>
+              {taskSearchQuery.trim() ? (
+                <button
+                  type="button"
+                  className="ghost-button"
+                  onClick={() => setTaskSearchQuery("")}
+                  title="Clear the current search."
+                >
+                  Clear search
+                </button>
+              ) : null}
+            </div>
           </div>
         )}
         {!loading &&
           viewMode === "list" &&
           timeScope === "all" &&
           historyHasMore && (
-            <div
-              style={{
-                display: "flex",
-                justifyContent: "center",
-                alignItems: "center",
-                gap: "0.45rem",
-                paddingTop: "0.35rem",
-                flexWrap: "wrap"
-              }}
-            >
+            <div className="task-history-pager">
               <input
                 type="date"
                 value={historyJumpDate}
                 onChange={(e) => handleHistoryJumpDateChange(e.target.value)}
-                className="task-search-input"
-                style={{ width: "12rem", maxWidth: "100%" }}
+                className="task-search-input task-history-date"
                 disabled={historyLoadingMore}
                 aria-label="Jump to historical tasks on this date"
                 title="Select a date to load historical tasks around that day."
@@ -5757,7 +5943,6 @@ export function TaskBoard({
                   message: `Created ${okCount} task(s).`,
                   durationMs: performance.now() - started
                 });
-                logSlowAction("batchCreateTasks", started);
                 setEditingTask(null);
                 return;
               }
@@ -5804,7 +5989,6 @@ export function TaskBoard({
                 message: `Updated ${okCount} task(s).`,
                 durationMs: performance.now() - started
               });
-              logSlowAction("batchUpdateTasks", started);
               setEditingTask(null);
               return;
             }
@@ -5853,7 +6037,6 @@ export function TaskBoard({
                   durationMs: performance.now() - started
                 });
               }
-              logSlowAction("updateTask", started);
             }
             setEditingTask(null);
           };

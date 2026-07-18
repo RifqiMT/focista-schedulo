@@ -63,6 +63,7 @@ Provide a practical and auditable testing strategy that validates functional cor
 6. **Progress surface**
    - `/api/stats` `last7Days` has seven entries for the **current local Monday–Sunday** and aligns with completion counts by progress day.
    - Weekly chart tooltips expose day totals, per-task XP spread, and weekday-historical stats.
+   - Achievement/milestone cards show plain-English `description` lines matching `VARIABLES.md`.
    - Badge PNG export completes without layout regression (cards vs. modal header naming).
 7. **Boot UX**
    - Profile load shows progress bar / staged status.
@@ -70,6 +71,9 @@ Provide a practical and auditable testing strategy that validates functional cor
 8. **Persistence topology**
    - `/health` reports expected storage kind.
    - Split runtime objects remain the write path (fs or Blob).
+9. **Feedback layering**
+   - Exclusive tooltip slot: opening a new tooltip dismisses the previous; toasts dismiss tooltips.
+   - Single toast queue (no multi-toast stack).
 
 ---
 

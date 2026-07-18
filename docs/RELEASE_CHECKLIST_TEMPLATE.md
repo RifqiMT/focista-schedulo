@@ -37,6 +37,8 @@ Copy this template for each release (for example, `docs/releases/2026-07-18_docs
 - [ ] Large transfer path verified when targeting Prod (Blob upload / `blobPathname` / presigned export)
 - [ ] Boot progress / staged profile loading validated
 - [ ] Progress weekly chart + tooltips + badge PNG export validated
+- [ ] Achievement/milestone plain-English descriptions validated against `VARIABLES.md`
+- [ ] Exclusive tooltip + single-toast layering validated (tooltip dismisses on toast)
 
 Notes:
 

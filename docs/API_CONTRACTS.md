@@ -99,6 +99,10 @@ Other top-level fields (illustrative): `totalPoints`, `level`, `xpToNext`, `comp
 
 **Level formula:** `level = 1 + floor(totalPoints / 50)`; `xpToNext` as documented in `VARIABLES.md`.
 
+**Achievements:** each item includes `id`, `name`, `description` (plain English), `progress`, `goal`, `achieved`. Canonical descriptions are listed in `VARIABLES.md`.
+
+**Milestones:** blocks such as `streakDays`, `tasksCompleted`, `xpGained`, `levelsUp`, and badges-earned include `description` (plain English) plus progress fields. Example badges-earned: `"Rewards for collecting badges themselves (every 5 badges)."`.
+
 ---
 
 ## Admin / Data Operations

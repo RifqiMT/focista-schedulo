@@ -56,6 +56,7 @@ Formula authority for domain variables: `VARIABLES.md`.
 | EM-05 | Progress Chart Engagement | Sessions with weekly chart hover/open | Instrumentation proxy when enabled | Qualitative until instrumented |
 | EM-06 | Badge Export Adoption | Share of badge-modal sessions that export PNG | `png exports / badge modal opens` | `0.20` |
 | EM-07 | Monthly Grinding Attainment | Share of active months with `weeksCompleted >= 4` | From yearly/monthly grinding formulas | `2 / 7 months YTD` |
+| EM-08 | Achievement Clarity | Share of achievement/milestone cards showing non-empty plain-English `description` | `cards with description / total cards` | `1.00` |
 
 ---
 

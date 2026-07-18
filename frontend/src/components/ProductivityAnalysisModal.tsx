@@ -19,6 +19,7 @@ import {
   toastProductivityAnalysisFullscreenBusy
 } from "../productivityAnalysisFullscreen";
 import { apiFetch, apiUrl } from "../apiClient";
+import { claimExclusiveTooltip } from "../uiExclusiveOverlay";
 
 type Timeframe = "daily" | "weekly" | "monthly" | "quarterly" | "annually";
 
@@ -450,6 +451,54 @@ function formatTimeframeLabel(tf: Timeframe): string {
   }
 }
 
+/** Plural bucket noun for insight strip headers. */
+function timeframeBucketsLabel(tf: Timeframe): string {
+  switch (tf) {
+    case "daily":
+      return "Days";
+    case "weekly":
+      return "Weeks";
+    case "monthly":
+      return "Months";
+    case "quarterly":
+      return "Quarters";
+    case "annually":
+      return "Years";
+  }
+}
+
+/** Singular unit for “Best …” insight labels. */
+function timeframeBestUnit(tf: Timeframe): string {
+  switch (tf) {
+    case "daily":
+      return "day";
+    case "weekly":
+      return "week";
+    case "monthly":
+      return "month";
+    case "quarterly":
+      return "quarter";
+    case "annually":
+      return "year";
+  }
+}
+
+/** Avg suffix aligned to the active timeframe bucket. */
+function timeframeAvgSuffix(tf: Timeframe): string {
+  switch (tf) {
+    case "daily":
+      return "day";
+    case "weekly":
+      return "wk";
+    case "monthly":
+      return "mo";
+    case "quarterly":
+      return "qtr";
+    case "annually":
+      return "yr";
+  }
+}
+
 /** Short, readable x-axis text (avoids crowded raw keys). */
 function formatAxisLabel(timeframe: Timeframe, raw: string): string {
   if (timeframe === "annually") return raw;
@@ -493,6 +542,47 @@ function formatAxisLabel(timeframe: Timeframe, raw: string): string {
   }
 
   return raw;
+}
+
+/** Compact day label for dense UI (insight strip): "Jun 2" / "Jun 2 '25". */
+function formatCompactDay(raw: string): string {
+  const m = raw.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (!m) return raw;
+  const y = Number(m[1]);
+  const d0 = new Date(y, Number(m[2]) - 1, Number(m[3]));
+  if (Number.isNaN(d0.getTime())) return raw;
+  const month = d0.toLocaleDateString(undefined, { month: "short" });
+  const day = d0.getDate();
+  const nowY = new Date().getFullYear();
+  return y !== nowY ? `${month} ${day} ’${String(y).slice(2)}` : `${month} ${day}`;
+}
+
+/** Short range for insight strip — prefers month+year when the span is long. */
+function formatCompactRange(fromRaw: string, toRaw: string): string {
+  const fm = fromRaw.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  const tm = toRaw.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (!fm || !tm) return `${fromRaw} – ${toRaw}`;
+  const from = new Date(Number(fm[1]), Number(fm[2]) - 1, Number(fm[3]));
+  const to = new Date(Number(tm[1]), Number(tm[2]) - 1, Number(tm[3]));
+  if (Number.isNaN(from.getTime()) || Number.isNaN(to.getTime())) return `${fromRaw} – ${toRaw}`;
+
+  const spanDays = Math.round((to.getTime() - from.getTime()) / 86400000);
+  const longSpan = spanDays > 120 || from.getFullYear() !== to.getFullYear();
+  if (longSpan) {
+    const opts: Intl.DateTimeFormatOptions = { month: "short", year: "2-digit" };
+    return `${from.toLocaleDateString(undefined, opts)} – ${to.toLocaleDateString(undefined, opts)}`;
+  }
+  return `${formatCompactDay(fromRaw)} – ${formatCompactDay(toRaw)}`;
+}
+
+function formatInsightAvg(avg: number, timeframe: Timeframe): string {
+  const rounded =
+    Math.abs(avg) >= 100 ? Math.round(avg).toLocaleString() : String(Math.round(avg * 10) / 10);
+  return `${rounded}/${timeframeAvgSuffix(timeframe)}`;
+}
+
+function formatInsightPeakWhen(timeframe: Timeframe, rawLabel: string): string {
+  return timeframe === "daily" ? formatCompactDay(rawLabel) : formatAxisLabel(timeframe, rawLabel);
 }
 
 /** Tooltip-friendly period labels (always include year when derivable). */
@@ -550,10 +640,10 @@ function xTickIndices(count: number, maxTicks: number): number[] {
   return Array.from(idx).sort((a, b) => a - b);
 }
 
-const PAD_L = 0;
-const PAD_R = 0;
-const PAD_T = 2;
-const PAD_B = 2;
+const PAD_L = 1.5;
+const PAD_R = 2.8;
+const PAD_T = 3.2;
+const PAD_B = 2.4;
 const VB_W = 100;
 const VB_H = 48;
 const BASE_Y = VB_H - PAD_B;
@@ -566,41 +656,232 @@ function linearLinePath(coords: { x: number; y: number }[]): string {
     .join(" ");
 }
 
+/** Map a data value to SVG Y, then to % of the plot height (for HTML y-rail labels). */
+function yValueToTopPercent(value: number, yMin: number, yMax: number): number {
+  const span = yMax - yMin;
+  const ySvg =
+    BASE_Y - (span <= 0 ? 0 : ((value - yMin) / span) * (BASE_Y - PAD_T));
+  return (ySvg / VB_H) * 100;
+}
+
+/** Map a data index / svg X to % of plot width (for HTML x-axis labels). */
+function xSvgToLeftPercent(xSvg: number): number {
+  return (xSvg / VB_W) * 100;
+}
+
+/** Nice round step for axis scales (Wilkinson-style). */
+function niceNumber(range: number, round: boolean): number {
+  if (!(range > 0) || !Number.isFinite(range)) return 1;
+  const exponent = Math.floor(Math.log10(range));
+  const fraction = range / 10 ** exponent;
+  let niceFraction: number;
+  if (round) {
+    if (fraction < 1.5) niceFraction = 1;
+    else if (fraction < 3) niceFraction = 2;
+    else if (fraction < 7) niceFraction = 5;
+    else niceFraction = 10;
+  } else {
+    if (fraction <= 1) niceFraction = 1;
+    else if (fraction <= 2) niceFraction = 2;
+    else if (fraction <= 5) niceFraction = 5;
+    else niceFraction = 10;
+  }
+  return niceFraction * 10 ** exponent;
+}
+
+/**
+ * Snap a raw [yMin, yMax] domain to a clean axis scale shared by all PA charts.
+ * Prefer integer-friendly steps when values look like counts.
+ *
+ * `tight: true` only floor/ceils to integers and never expands past the padded
+ * extent (avoids 7 → 8.4 pad → 10 “nice” overshoot).
+ */
+function niceYDomain(
+  rawMin: number,
+  rawMax: number,
+  opts?: { preferInteger?: boolean; maxTicks?: number; tight?: boolean }
+): { yMin: number; yMax: number } {
+  const maxTicks = opts?.maxTicks ?? 4;
+  let lo = Number.isFinite(rawMin) ? rawMin : 0;
+  let hi = Number.isFinite(rawMax) ? rawMax : 1;
+  if (hi <= lo) hi = lo + 1;
+
+  const preferInteger =
+    opts?.preferInteger === true ||
+    (Math.abs(lo - Math.round(lo)) < 1e-6 &&
+      Math.abs(hi - Math.round(hi)) < 1e-6 &&
+      hi - lo <= 1000);
+
+  if (opts?.tight) {
+    if (preferInteger) {
+      lo = Math.floor(lo);
+      hi = Math.ceil(hi);
+      if (hi <= lo) hi = lo + 1;
+      return { yMin: lo, yMax: hi };
+    }
+    return { yMin: lo, yMax: hi };
+  }
+
+  if (preferInteger) {
+    lo = Math.floor(lo);
+    hi = Math.ceil(hi);
+    const span = Math.max(1, hi - lo);
+    let step = Math.max(1, Math.round(niceNumber(span / maxTicks, true)));
+    if (step < 1) step = 1;
+    lo = Math.floor(lo / step) * step;
+    if (lo > 0 && rawMin === 0) lo = 0;
+    hi = lo + step * Math.max(1, Math.ceil((hi - lo) / step));
+    // Ensure headroom above the data when we snapped tightly to max
+    if (hi < rawMax) hi += step;
+    return { yMin: lo, yMax: hi };
+  }
+
+  const span = niceNumber(hi - lo, false);
+  const step = niceNumber(span / maxTicks, true);
+  lo = Math.floor(lo / step) * step;
+  hi = Math.ceil(hi / step) * step;
+  if (hi <= lo) hi = lo + step;
+  return { yMin: lo, yMax: hi };
+}
+
+/** Evenly spaced tick values on a (preferably nice) domain. */
+function buildYTicks(yMin: number, yMax: number, preferredCount = 4): number[] {
+  const span = yMax - yMin;
+  if (!(span > 0) || !Number.isFinite(span)) return [yMin];
+  const step = niceNumber(span / preferredCount, true);
+  const start = Math.ceil((yMin - step * 1e-9) / step) * step;
+  const ticks: number[] = [];
+  const guard = preferredCount + 8;
+  for (let i = 0, v = start; v <= yMax + step * 1e-6 && i < guard; i++, v = start + i * step) {
+    const snapped = Math.abs(v) < 1e-9 ? 0 : Number(v.toPrecision(12));
+    if (snapped + step * 1e-6 >= yMin && snapped - step * 1e-6 <= yMax) {
+      ticks.push(snapped);
+    }
+  }
+  if (ticks.length === 0) return [yMin, yMax];
+  if (Math.abs(ticks[0]! - yMin) > step * 0.01) ticks.unshift(yMin);
+  if (Math.abs(ticks[ticks.length - 1]! - yMax) > step * 0.01) ticks.push(yMax);
+  return ticks;
+}
+
+/** Value-axis padding: min = dataMin − 20%·|dataMin|, max = dataMax + 20%·|dataMax|. */
+const Y_AXIS_PAD_RATIO = 0.2;
+
+/**
+ * Build a raw [min, max] extent with 20% headroom from each extreme value.
+ * Non-negative metrics clamp the floor at 0 so axes never go below zero.
+ */
+function paddedYExtent(
+  values: number[],
+  opts?: { clampMinZero?: boolean }
+): { rawMin: number; rawMax: number; looksInteger: boolean } {
+  const finite = values.filter((v) => Number.isFinite(v));
+  if (finite.length === 0) return { rawMin: 0, rawMax: 1, looksInteger: true };
+  const vMin = Math.min(...finite);
+  const vMax = Math.max(...finite);
+  const looksInteger = finite.every((v) => Math.abs(v - Math.round(v)) < 1e-6);
+  // Prefer 20% of each extreme (as requested). When an extreme is ~0, fall back
+  // to 20% of the data span so flat/near-zero series still get breathing room.
+  const span = Math.max(vMax - vMin, 0);
+  const spanPad = span > 1e-9 ? span * Y_AXIS_PAD_RATIO : 0;
+  const minPad = Math.max(Math.abs(vMin) * Y_AXIS_PAD_RATIO, spanPad);
+  const maxPad = Math.max(Math.abs(vMax) * Y_AXIS_PAD_RATIO, spanPad);
+  let rawMin = vMin - minPad;
+  let rawMax = vMax + maxPad;
+  if (opts?.clampMinZero !== false) rawMin = Math.max(0, rawMin);
+  if (rawMax <= rawMin) {
+    const fallback = Math.max(
+      Math.abs(vMax) * Y_AXIS_PAD_RATIO,
+      spanPad,
+      looksInteger ? 1 : 0.5
+    );
+    rawMax = rawMin + Math.max(fallback * 2, looksInteger ? 1 : 1);
+  }
+  return { rawMin, rawMax, looksInteger };
+}
+
 function chartYDomain(
   points: { value: number }[],
-  cumulative: boolean
+  cumulative: boolean,
+  extraPoints?: { value: number }[] | null
 ): { yMin: number; yMax: number } {
-  if (points.length === 0) return { yMin: 0, yMax: 1 };
-  const vals = points.map((p) => p.value);
-  const vMin = Math.min(...vals);
-  const vMax = Math.max(...vals, 1);
-  if (!cumulative) {
-    const padTop = Math.max(vMax * 0.14, 0.5);
-    return { yMin: 0, yMax: vMax + padTop };
-  }
-  const span = Math.max(vMax - vMin, 1e-9);
-  /* Widen cumulative domain so small day-to-day wiggles are not visually amplified. */
-  const pad = Math.max(span * 0.14, vMax * 0.03, 1);
-  const yLo = Math.max(0, vMin - pad * 0.95);
-  const yHi = vMax + pad * 0.55;
-  const minHeight = span * 1.35;
-  if (yHi - yLo < minHeight) {
-    const mid = (vMin + vMax) / 2;
-    const half = minHeight / 2;
-    const yMin2 = Math.max(0, mid - half);
-    const yMax2 = Math.max(mid + half, vMax + pad * 0.2);
-    return { yMin: yMin2, yMax: yMax2 };
-  }
-  return { yMin: yLo, yMax: yHi };
+  const vals = [
+    ...points.map((p) => p.value),
+    ...(extraPoints?.map((p) => p.value) ?? [])
+  ];
+  if (vals.length === 0) return { yMin: 0, yMax: 1 };
+  const { rawMin, rawMax, looksInteger } = paddedYExtent(vals, { clampMinZero: true });
+  const span = rawMax - rawMin;
+  return niceYDomain(rawMin, rawMax, {
+    preferInteger: looksInteger && (!cumulative || span < 50),
+    tight: true
+  });
 }
 
 function formatYTick(v: number): string {
   if (!Number.isFinite(v)) return "—";
-  const rounded = Math.round(v);
-  if (Math.abs(v - rounded) < 1e-6 || Math.abs(v) >= 100) {
+  const abs = Math.abs(v);
+  // Prefer clean integers on chart rails (avoids 1.1 / 2.3 noise).
+  if (Math.abs(v - Math.round(v)) < 1e-6) {
+    const rounded = Math.round(v);
+    if (Math.abs(rounded) >= 1_000_000) {
+      const n = rounded / 1_000_000;
+      return `${Number.isInteger(n) ? n : n.toFixed(1)}M`;
+    }
+    if (Math.abs(rounded) >= 10_000) {
+      return `${Math.round(rounded / 1000).toLocaleString()}k`;
+    }
+    if (Math.abs(rounded) >= 1000) {
+      const n = rounded / 1000;
+      return `${Math.abs(n - Math.round(n)) < 0.05 ? Math.round(n) : n.toFixed(1)}k`;
+    }
     return rounded.toLocaleString();
   }
-  return (+v.toFixed(2)).toLocaleString();
+  if (abs >= 1_000_000) {
+    const n = v / 1_000_000;
+    return `${n >= 10 || Number.isInteger(n) ? Math.round(n) : n.toFixed(1)}M`;
+  }
+  if (abs >= 10_000) {
+    return `${Math.round(v / 1000).toLocaleString()}k`;
+  }
+  if (abs >= 1000) {
+    const n = v / 1000;
+    return `${n >= 10 || Math.abs(n - Math.round(n)) < 0.05 ? Math.round(n) : n.toFixed(1)}k`;
+  }
+  if (abs >= 10) return Math.round(v).toLocaleString();
+  return (+v.toFixed(1)).toLocaleString();
+}
+
+/** Compact labels for the chart x-axis (tooltips keep the fuller format). */
+function formatChartTickLabel(timeframe: Timeframe, raw: string): string {
+  if (timeframe === "annually") return raw;
+  if (timeframe === "quarterly") {
+    const m = raw.match(/^(\d{4})-Q(\d)$/);
+    if (m) return `Q${m[2]}`;
+  }
+  if (timeframe === "monthly") {
+    const m = raw.match(/^(\d{4})-(\d{2})$/);
+    if (m) {
+      const d0 = new Date(Number(m[1]), Number(m[2]) - 1, 1);
+      if (!Number.isNaN(d0.getTime())) {
+        return d0.toLocaleDateString(undefined, { month: "short" });
+      }
+    }
+  }
+  if (timeframe === "weekly") {
+    const m = raw.match(/^(\d{4})-W(\d{2})$/);
+    if (m) return `W${Number(m[2])}`;
+  }
+  if (timeframe === "daily") {
+    const m = raw.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+    if (m) {
+      const d0 = new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3]));
+      if (!Number.isNaN(d0.getTime())) {
+        return d0.toLocaleDateString(undefined, { month: "short", day: "numeric" });
+      }
+    }
+  }
+  return formatAxisLabel(timeframe, raw);
 }
 
 type InsightChartMode = "inline" | "fullscreen";
@@ -705,7 +986,7 @@ const PA_EXPORT_X_AXIS_DEPTH = 15.2;
 const PA_EXPORT_X_LEGEND_GAP = 3.35;
 const PA_EXPORT_BOTTOM_PAD = 3.6;
 const PA_EXPORT_COLOR_PRIMARY = "rgb(206, 17, 38)";
-const PA_EXPORT_COLOR_OVERLAY = "rgb(180, 83, 9)";
+const PA_EXPORT_COLOR_OVERLAY = "rgb(37, 99, 235)";
 
 type PaChartSvgRegistry = Map<string, SVGSVGElement>;
 
@@ -1424,6 +1705,142 @@ function projectSeriesTotals(
 }
 
 /** Inline + fullscreen: explicit dual-series legend with show/hide toggles. */
+type PaTipGrowth = {
+  text: string;
+  kind: "up" | "down" | "flat" | "na";
+};
+
+function paTipGrowth(current: number, prev: number | null): PaTipGrowth | null {
+  if (prev == null) return null;
+  if (prev === 0) {
+    if (current === 0) return { text: "0%", kind: "flat" };
+    return { text: "—", kind: "na" };
+  }
+  const pct = ((current - prev) / Math.abs(prev)) * 100;
+  const rounded = Math.round(pct);
+  if (rounded === 0 && Math.abs(pct) >= 0.05) {
+    const fine = Math.round(pct * 10) / 10;
+    return {
+      text: `${fine >= 0 ? "+" : ""}${String(fine).replace(/\.0$/, "")}%`,
+      kind: fine > 0 ? "up" : fine < 0 ? "down" : "flat"
+    };
+  }
+  return {
+    text: `${rounded >= 0 ? "+" : ""}${rounded}%`,
+    kind: rounded > 0 ? "up" : rounded < 0 ? "down" : "flat"
+  };
+}
+
+type PaTipRow = {
+  id: string;
+  name: string;
+  value: number | null;
+  color?: string;
+  tone?: "raw" | "avg";
+  growth?: PaTipGrowth | null;
+};
+
+function formatTipPeriod(timeframe: Timeframe, raw: string): string {
+  if (timeframe === "daily") {
+    const m = raw.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+    if (m) {
+      const d0 = new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3]));
+      if (!Number.isNaN(d0.getTime())) {
+        const nowY = new Date().getFullYear();
+        const weekday = d0.toLocaleDateString(undefined, { weekday: "short" });
+        const day = d0.toLocaleDateString(
+          undefined,
+          d0.getFullYear() !== nowY
+            ? { month: "short", day: "numeric", year: "numeric" }
+            : { month: "short", day: "numeric" }
+        );
+        return `${weekday}, ${day}`;
+      }
+    }
+  }
+  return formatAxisLabelWithYear(timeframe, raw);
+}
+
+function placePaChartTip(
+  tip: HTMLElement,
+  svg: SVGSVGElement,
+  hover: { px: number; py: number }
+): void {
+  const r = svg.getBoundingClientRect();
+  const anchorX = r.left + (hover.px / VB_W) * r.width;
+  const anchorY = r.top + (hover.py / VB_H) * r.height;
+  const vw = window.innerWidth;
+  const vh = window.innerHeight;
+  const pad = 12;
+  const gap = 12;
+  const tipW = tip.offsetWidth || 168;
+  const tipH = tip.offsetHeight || 64;
+
+  let preferBelow = hover.py / VB_H < 0.38;
+  let top = preferBelow ? anchorY + gap : anchorY - tipH - gap;
+  if (!preferBelow && top < pad) {
+    preferBelow = true;
+    top = anchorY + gap;
+  }
+  if (preferBelow && top + tipH > vh - pad) {
+    preferBelow = false;
+    top = anchorY - tipH - gap;
+  }
+  top = Math.max(pad, Math.min(vh - tipH - pad, top));
+
+  let left = anchorX - tipW / 2;
+  left = Math.max(pad, Math.min(vw - tipW - pad, left));
+
+  tip.style.left = `${Math.round(left)}px`;
+  tip.style.top = `${Math.round(top)}px`;
+  tip.classList.toggle("pa-tip--below", preferBelow);
+  tip.classList.toggle("pa-tip--above", !preferBelow);
+}
+
+function PaChartTip({
+  tipRef,
+  periodLabel,
+  rows
+}: {
+  tipRef: React.RefObject<HTMLDivElement | null>;
+  periodLabel: string;
+  rows: PaTipRow[];
+}) {
+  const hasGrowth = rows.some((r) => Boolean(r.growth));
+
+  return (
+    <div ref={tipRef} className="pa-tip pa-tip--above" role="tooltip">
+      <div className="pa-tip-card">
+        <div className="pa-tip-period">{periodLabel}</div>
+        <ul className={`pa-tip-rows${hasGrowth ? " has-growth" : ""}`}>
+          {rows.map((row) => (
+            <li key={row.id} className={`pa-tip-row${row.value == null ? " is-meta" : ""}`}>
+              <span
+                className={`pa-tip-swatch${row.tone ? ` pa-tip-swatch--${row.tone}` : ""}${
+                  row.value == null ? " is-empty" : ""
+                }`}
+                style={row.color ? { background: row.color } : undefined}
+                aria-hidden="true"
+              />
+              <span className="pa-tip-name">{row.name}</span>
+              <span className="pa-tip-value">
+                {row.value == null ? "" : formatPillValue(row.value)}
+              </span>
+              {hasGrowth ? (
+                row.growth ? (
+                  <span className={`pa-tip-delta is-${row.growth.kind}`}>{row.growth.text}</span>
+                ) : (
+                  <span className="pa-tip-delta is-na" aria-hidden="true" />
+                )
+              ) : null}
+            </li>
+          ))}
+        </ul>
+      </div>
+    </div>
+  );
+}
+
 function PaDualSeriesLegend({
   fullscreen,
   showRaw,
@@ -1451,90 +1868,41 @@ function PaDualSeriesLegend({
 
   return (
     <div
-      className={`pa-legend pa-legend--toggles${fullscreen ? " pa-legend--fs" : ""}`}
+      className={`pa-series-seg${fullscreen ? " pa-series-seg--fs" : ""}`}
       aria-label="Chart legend (toggle series)"
     >
-      <div className="pa-legend-bar">
-        <div className="pa-legend-bar-left">
-          <span className="pa-legend-bar-title">Series</span>
-          <span className="pa-legend-bar-meta" aria-label="Visible series count">
-            {(showRaw ? 1 : 0) + (showAvg ? 1 : 0)}/2 visible
-          </span>
-        </div>
-        <div className="pa-legend-bar-actions" role="group" aria-label="Legend actions">
-          {noneOn ? (
-            <button
-              type="button"
-              className="ghost-button small"
-              onClick={() => setAll(true)}
-              title="Show all series"
-            >
-              Show all
-            </button>
-          ) : allOn ? (
-            <button
-              type="button"
-              className="ghost-button small"
-              onClick={() => setAll(false)}
-              title="Hide all series"
-            >
-              Hide all
-            </button>
-          ) : (
-            <>
-              <button
-                type="button"
-                className="ghost-button small"
-                onClick={() => setAll(false)}
-                title="Hide all series"
-              >
-                Hide all
-              </button>
-              <button
-                type="button"
-                className="ghost-button small"
-                onClick={() => setAll(true)}
-                title="Show all series"
-              >
-                Show all
-              </button>
-            </>
-          )}
-        </div>
-      </div>
-
-      <div className="pa-legend-row" role="group" aria-label="Toggle series visibility">
+      <div className="pa-series-seg-track" role="group" aria-label="Toggle series visibility">
         <button
           type="button"
-          className={`pa-legend-chip pa-legend-chip--raw ${showRaw ? "is-on" : "is-off"}`}
+          className={`pa-series-seg-btn pa-series-seg-btn--raw ${showRaw ? "is-on" : "is-off"}`}
           aria-pressed={showRaw}
           onClick={onToggleRaw}
-          title={showRaw ? "Hide raw series (dashed brand red)" : "Show raw series (dashed brand red)"}
+          title={showRaw ? "Hide raw series" : "Show raw series"}
         >
-          <div className="pa-legend-swatch-col" aria-hidden="true">
-            <span className="pa-legend-swatch raw" />
-          </div>
-          <div className="pa-legend-copy">
-            <span className="pa-legend-chip-title">Raw</span>
-            <span className="pa-legend-chip-sub">Per period (unsmoothed)</span>
-          </div>
+          <span className="pa-series-seg-dot pa-series-seg-dot--raw" aria-hidden="true" />
+          Raw
         </button>
         <button
           type="button"
-          className={`pa-legend-chip pa-legend-chip--avg ${showAvg ? "is-on" : "is-off"}`}
+          className={`pa-series-seg-btn pa-series-seg-btn--avg ${showAvg ? "is-on" : "is-off"}`}
           aria-pressed={showAvg}
           onClick={onToggleAvg}
-          title={showAvg ? "Hide rolling average (solid gold)" : "Show rolling average (solid gold)"}
+          title={showAvg ? "Hide rolling average" : "Show rolling average"}
         >
-          <div className="pa-legend-swatch-col" aria-hidden="true">
-            <span className="pa-legend-swatch avg" />
-          </div>
-          <div className="pa-legend-copy">
-            <span className="pa-legend-chip-title">Rolling average</span>
-            <span className="pa-legend-chip-sub">Smoothed trend</span>
-          </div>
+          <span className="pa-series-seg-dot pa-series-seg-dot--avg" aria-hidden="true" />
+          Average
         </button>
       </div>
+      {!fullscreen && (noneOn || !allOn) ? (
+        <button
+          type="button"
+          className="pa-series-seg-reset"
+          onClick={() => setAll(true)}
+          title="Show both series"
+        >
+          Show both
+        </button>
+      ) : null}
     </div>
   );
 }
@@ -1661,6 +2029,13 @@ function InsightChart({
     return () => ro.disconnect();
   }, [mode, chartId, points.length]);
 
+  const hoverActive = hover != null;
+  // App-wide: only one chart/task tooltip at a time (inline + fullscreen mounts included).
+  useEffect(() => {
+    if (!hoverActive) return;
+    return claimExclusiveTooltip(() => setHover(null));
+  }, [hoverActive, chartId, idSuffix]);
+
   const coords = useMemo(() => {
     const n = points.length;
     const plotW = VB_W - PAD_L - PAD_R;
@@ -1701,21 +2076,7 @@ function InsightChart({
     const tip = tooltipRef.current;
     const svg = svgRef.current;
     if (!tip || !svg) return;
-
-    const r = svg.getBoundingClientRect();
-    const desiredX = r.left + (hover.px / VB_W) * r.width;
-    const desiredY = r.top + (hover.py / VB_H) * r.height;
-
-    const vw = window.innerWidth;
-    const vh = window.innerHeight;
-    const pad = 10;
-    const tipRect = tip.getBoundingClientRect();
-    const halfW = Math.max(20, tipRect.width / 2);
-    const clampedX = Math.max(pad + halfW, Math.min(vw - pad - halfW, desiredX));
-    const clampedY = Math.max(pad, Math.min(vh - pad, desiredY));
-
-    tip.style.left = `${clampedX}px`;
-    tip.style.top = `${clampedY}px`;
+    placePaChartTip(tip, svg, hover);
   }, [hover]);
 
   useEffect(() => {
@@ -1724,22 +2085,7 @@ function InsightChart({
     const tick = () => {
       const tip = tooltipRef.current;
       const svg = svgRef.current;
-      if (tip && svg) {
-        const r = svg.getBoundingClientRect();
-        const desiredX = r.left + (hover.px / VB_W) * r.width;
-        const desiredY = r.top + (hover.py / VB_H) * r.height;
-
-        const vw = window.innerWidth;
-        const vh = window.innerHeight;
-        const pad = 10;
-        const tipRect = tip.getBoundingClientRect();
-        const halfW = Math.max(20, tipRect.width / 2);
-        const clampedX = Math.max(pad + halfW, Math.min(vw - pad - halfW, desiredX));
-        const clampedY = Math.max(pad, Math.min(vh - pad, desiredY));
-
-        tip.style.left = `${clampedX}px`;
-        tip.style.top = `${clampedY}px`;
-      }
+      if (tip && svg) placePaChartTip(tip, svg, hover);
       raf = requestAnimationFrame(tick);
     };
     raf = requestAnimationFrame(tick);
@@ -1761,17 +2107,15 @@ function InsightChart({
       ? `${linePathD} L ${coords[coords.length - 1].x} ${BASE_Y} L ${coords[0].x} ${BASE_Y} Z`
       : "";
 
-  const yTicks = 4;
+  const yTicks = buildYTicks(yMin, yMax, 4);
   const ySpan = yMax - yMin;
   const tickIndices = xTickIndices(
     points.length,
-    mode === "fullscreen" ? 14 : Math.min(11, Math.max(7, Math.ceil(points.length / 25)))
+    mode === "fullscreen" ? 10 : Math.min(6, Math.max(4, Math.ceil(points.length / 40)))
   );
   const overlayPresent = Boolean(overlayLineD);
   const overlayVisible = overlayPresent && showAvg;
-  const dualVisible = overlayVisible && showRaw;
-  /* Single scrubber only — same for cumulative and non-cumulative (no per-point dots). */
-  const strokeW = points.length > 450 ? 1.05 : points.length > 200 ? 1.35 : 1.75;
+  const strokeW = points.length > 450 ? 1.15 : points.length > 200 ? 1.45 : 1.85;
 
   const updateHoverFromClientX = (clientX: number) => {
     const el = svgRef.current;
@@ -1795,9 +2139,6 @@ function InsightChart({
     mode,
     chartContainerW > 0 ? chartContainerW : undefined
   );
-  const idealW = chartIdealMinWidthPx(points.length, mode);
-  const chartCompressedInline =
-    mode === "inline" && chartContainerW > 0 && idealW > minPx + 6;
   const trackSize = `max(100%, ${minPx}px)`;
 
   const tooltipPortalParent: HTMLElement | null =
@@ -1818,168 +2159,31 @@ function InsightChart({
             const prevPt = hi > 0 ? points[hi - 1]! : null;
             const ov = overlayVisible ? overlayPoints?.[hi] : null;
             const prevOv = overlayVisible && hi > 0 ? overlayPoints?.[hi - 1] ?? null : null;
-            const pyRatio = hover.py / VB_H;
-            const tooltipY = pyRatio < 0.34 ? "below" : "above";
-
-            const growthChip = (current: number, prev: number | null) => {
-              if (prev == null) return null;
-              if (prev === 0) {
-                if (current === 0) {
-                  return { text: "0%", kind: "flat" as const, aria: "0% vs previous period" };
-                }
-                return { text: "—", kind: "na" as const, aria: "No previous baseline (previous period is 0)" };
-              }
-              const pct = ((current - prev) / Math.abs(prev)) * 100;
-              const rounded = Math.round(pct * 10) / 10;
-              const text = `${rounded >= 0 ? "+" : ""}${String(rounded).replace(/\\.0$/, "")}%`;
-              return {
-                text,
-                kind: rounded > 0 ? ("up" as const) : rounded < 0 ? ("down" as const) : ("flat" as const),
-                aria: `${text} vs previous period`
-              };
-            };
-
-            const rawGrowth = showRaw ? growthChip(pt.value, prevPt ? prevPt.value : null) : null;
-            const avgGrowth = ov ? growthChip(ov.value, prevOv ? prevOv.value : null) : null;
-            const rawName = showArea ? "Cumulative" : "Raw";
-            const rawStyleChip = overlayPresent ? "Dashed red" : showArea ? "Solid red" : "Solid red";
+            const rows: PaTipRow[] = [];
+            if (showRaw) {
+              rows.push({
+                id: "raw",
+                name: showArea ? "Cumulative" : "Actual",
+                value: pt.value,
+                tone: "raw",
+                growth: paTipGrowth(pt.value, prevPt ? prevPt.value : null)
+              });
+            }
+            if (ov) {
+              rows.push({
+                id: "avg",
+                name: "Average",
+                value: ov.value,
+                tone: "avg",
+                growth: paTipGrowth(ov.value, prevOv ? prevOv.value : null)
+              });
+            }
             return (
-              <div
-                ref={tooltipRef}
-                className={`pa-chart-tooltip pa-chart-tooltip--portal pa-chart-tooltip--y-${tooltipY}${
-                  dualVisible ? " pa-chart-tooltip--dual" : ""
-                }`}
-                role="tooltip"
-              >
-                <div className="pa-chart-tooltip-card">
-                  <header className="pa-chart-tooltip-head">
-                    <span className="pa-chart-tooltip-head-k">{xAxisLabel}</span>
-                    <span className="pa-chart-tooltip-head-v">
-                      {formatAxisLabel(timeframe, pt.rawLabel)}
-                    </span>
-                  </header>
-                  <div
-                    className={`pa-chart-tooltip-metrics${dualVisible ? "" : " pa-chart-tooltip-metrics--solo"}`}
-                  >
-                    {dualVisible ? (
-                      <>
-                        <section
-                          className="pa-chart-tooltip-metric pa-chart-tooltip-metric--raw"
-                          aria-label={`${rawName}: ${formatPillValue(pt.value)}. ${rawStyleChip} line on chart.`}
-                        >
-                          <div className="pa-chart-tooltip-metric-top">
-                            <span className="pa-chart-tooltip-dot pa-chart-tooltip-dot--raw" aria-hidden />
-                            <div className="pa-chart-tooltip-metric-body">
-                              <div className="pa-chart-tooltip-metric-line">
-                                <span className="pa-chart-tooltip-metric-name">{rawName}</span>
-                                <span className="pa-chart-tooltip-metric-fig pa-chart-tooltip-metric-fig--inline">
-                                  {formatPillValue(pt.value)}
-                                </span>
-                                {rawGrowth ? (
-                                  <span
-                                    className={`pa-chart-tooltip-chip pa-chart-tooltip-chip--growth pa-chart-tooltip-chip--growth-${rawGrowth.kind}`}
-                                    aria-label={rawGrowth.aria}
-                                  >
-                                    {rawGrowth.text}
-                                  </span>
-                                ) : null}
-                                <span className="pa-chart-tooltip-chip pa-chart-tooltip-chip--raw">
-                                  {rawStyleChip}
-                                </span>
-                              </div>
-                            </div>
-                          </div>
-                        </section>
-                        {ov && (
-                          <section
-                            className="pa-chart-tooltip-metric pa-chart-tooltip-metric--avg"
-                            aria-label={`Rolling average: ${formatPillValue(ov.value)}. Solid gold line.`}
-                          >
-                            <div className="pa-chart-tooltip-metric-top">
-                              <span
-                                className="pa-chart-tooltip-dot pa-chart-tooltip-dot--avg"
-                                aria-hidden
-                              />
-                              <div className="pa-chart-tooltip-metric-body">
-                                <div className="pa-chart-tooltip-metric-line">
-                                  <span className="pa-chart-tooltip-metric-name">Rolling avg</span>
-                                  <span className="pa-chart-tooltip-metric-fig pa-chart-tooltip-metric-fig--inline">
-                                    {formatPillValue(ov.value)}
-                                  </span>
-                                  {avgGrowth ? (
-                                    <span
-                                      className={`pa-chart-tooltip-chip pa-chart-tooltip-chip--growth pa-chart-tooltip-chip--growth-${avgGrowth.kind}`}
-                                      aria-label={avgGrowth.aria}
-                                    >
-                                      {avgGrowth.text}
-                                    </span>
-                                  ) : null}
-                                  <span className="pa-chart-tooltip-chip pa-chart-tooltip-chip--avg">
-                                    Smoothed
-                                  </span>
-                                </div>
-                              </div>
-                            </div>
-                          </section>
-                        )}
-                      </>
-                    ) : showRaw ? (
-                      <section
-                        className="pa-chart-tooltip-metric pa-chart-tooltip-metric--raw pa-chart-tooltip-metric--solo"
-                        aria-label={`${rawName}: ${formatPillValue(pt.value)}.`}
-                      >
-                        <div className="pa-chart-tooltip-metric-top">
-                          <span className="pa-chart-tooltip-dot pa-chart-tooltip-dot--raw" aria-hidden />
-                          <div className="pa-chart-tooltip-metric-body">
-                            <div className="pa-chart-tooltip-metric-line">
-                              <span className="pa-chart-tooltip-metric-name">{rawName}</span>
-                              <span className="pa-chart-tooltip-metric-fig pa-chart-tooltip-metric-fig--inline">
-                                {formatPillValue(pt.value)}
-                              </span>
-                              {rawGrowth ? (
-                                <span
-                                  className={`pa-chart-tooltip-chip pa-chart-tooltip-chip--growth pa-chart-tooltip-chip--growth-${rawGrowth.kind}`}
-                                  aria-label={rawGrowth.aria}
-                                >
-                                  {rawGrowth.text}
-                                </span>
-                              ) : null}
-                              <span className="pa-chart-tooltip-chip pa-chart-tooltip-chip--raw">
-                                {rawStyleChip}
-                              </span>
-                            </div>
-                          </div>
-                        </div>
-                      </section>
-                    ) : ov ? (
-                      <section
-                        className="pa-chart-tooltip-metric pa-chart-tooltip-metric--avg pa-chart-tooltip-metric--solo"
-                        aria-label={`Rolling average: ${formatPillValue(ov.value)}.`}
-                      >
-                        <div className="pa-chart-tooltip-metric-top">
-                          <span className="pa-chart-tooltip-dot pa-chart-tooltip-dot--avg" aria-hidden />
-                          <div className="pa-chart-tooltip-metric-body">
-                            <div className="pa-chart-tooltip-metric-line pa-chart-tooltip-metric-line--solo">
-                              <span className="pa-chart-tooltip-metric-fig pa-chart-tooltip-metric-fig--solo">
-                                {formatPillValue(ov.value)}
-                              </span>
-                              {avgGrowth ? (
-                                <span
-                                  className={`pa-chart-tooltip-chip pa-chart-tooltip-chip--growth pa-chart-tooltip-chip--growth-${avgGrowth.kind}`}
-                                  aria-label={avgGrowth.aria}
-                                >
-                                  {avgGrowth.text}
-                                </span>
-                              ) : null}
-                            </div>
-                          </div>
-                        </div>
-                      </section>
-                    ) : null}
-                  </div>
-                </div>
-                <span className="pa-chart-tooltip-caret" aria-hidden />
-              </div>
+              <PaChartTip
+                tipRef={tooltipRef}
+                periodLabel={formatTipPeriod(timeframe, pt.rawLabel)}
+                rows={rows}
+              />
             );
           })(),
           tooltipPortalParent
@@ -1988,37 +2192,37 @@ function InsightChart({
 
   const shell = (
     <div
-      className={`pa-chart-shell ${mode === "fullscreen" ? "pa-chart-shell--fs" : ""}`}
+      className={`pa-chart-shell pa-chart-shell--aligned ${mode === "fullscreen" ? "pa-chart-shell--fs" : ""}`}
       style={{ minWidth: `${minPx}px` }}
     >
-      <div className="pa-chart-y-rail-wrap" aria-hidden="true">
-        <div className="pa-axis-legend pa-axis-legend-y">{yAxisLabel}</div>
-        <div className="pa-chart-y-rail">
-        {Array.from({ length: yTicks + 1 }, (_, i) => {
-          const t = i / yTicks;
-          const value = yMax - t * ySpan;
-          return (
-            <span key={i} className="pa-chart-y-tick">
-              {formatYTick(value)}
-            </span>
-          );
-        })}
-        </div>
+      <div className="pa-axis-legend pa-axis-legend-y" aria-hidden="true">
+        {yAxisLabel}
       </div>
-      <div className={`pa-chart-main ${mode === "fullscreen" ? "pa-chart-main--fs" : ""}`}>
-        <div
-          className="pa-chart-plot"
-          onMouseMove={(e) => updateHoverFromClientX(e.clientX)}
-          onMouseLeave={() => setHover(null)}
-          onTouchStart={(e) => {
-            const t = e.touches[0];
-            if (t) updateHoverFromClientX(t.clientX);
-          }}
-          onTouchMove={(e) => {
-            const t = e.touches[0];
-            if (t) updateHoverFromClientX(t.clientX);
-          }}
-        >
+      <div className="pa-chart-y-rail" aria-hidden="true">
+        {yTicks.map((value) => (
+          <span
+            key={`yt-${value}`}
+            className="pa-chart-y-tick"
+            style={{ top: `${yValueToTopPercent(value, yMin, yMax)}%` }}
+          >
+            {formatYTick(value)}
+          </span>
+        ))}
+      </div>
+      <div
+        className="pa-chart-plot"
+        onMouseMove={(e) => updateHoverFromClientX(e.clientX)}
+        onMouseLeave={() => setHover(null)}
+        onTouchStart={(e) => {
+          const t = e.touches[0];
+          if (t) updateHoverFromClientX(t.clientX);
+        }}
+        onTouchMove={(e) => {
+          const t = e.touches[0];
+          if (t) updateHoverFromClientX(t.clientX);
+        }}
+        style={{ touchAction: "none" }}
+      >
         <svg
           ref={svgRef}
           viewBox={`0 0 ${VB_W} ${VB_H}`}
@@ -2029,32 +2233,68 @@ function InsightChart({
         >
           <defs>
             <linearGradient id={gradId} x1="0" y1="0" x2="0" y2="1">
-              <stop offset="0%" stopColor="rgb(206, 17, 38)" stopOpacity="0.12" />
-              <stop offset="55%" stopColor="rgb(254, 226, 226)" stopOpacity="0.08" />
+              <stop offset="0%" stopColor="rgb(206, 17, 38)" stopOpacity="0.22" />
+              <stop offset="45%" stopColor="rgb(254, 226, 226)" stopOpacity="0.14" />
               <stop offset="100%" stopColor="rgb(255, 255, 255)" stopOpacity="0" />
             </linearGradient>
             <clipPath id={clipId}>
-              <rect x={PAD_L} y={PAD_T} width={VB_W - PAD_L - PAD_R} height={BASE_Y - PAD_T + 1} />
+              <rect
+                x={PAD_L}
+                y={PAD_T}
+                width={VB_W - PAD_L - PAD_R}
+                height={BASE_Y - PAD_T + 1}
+              />
             </clipPath>
           </defs>
 
-          {Array.from({ length: yTicks + 1 }).map((_, i) => {
-            const y = BASE_Y - ((BASE_Y - PAD_T) * i) / yTicks;
+          {yTicks.map((value) => {
+            const y =
+              BASE_Y - (ySpan <= 0 ? 0 : ((value - yMin) / ySpan) * (BASE_Y - PAD_T));
             return (
               <line
-                key={i}
+                key={`grid-${value}`}
                 x1={PAD_L}
                 x2={VB_W - PAD_R}
                 y1={y}
                 y2={y}
-                className="pa-chart-grid"
+                className={`pa-chart-grid${value === yMin ? " pa-chart-grid--base" : ""}`}
               />
             );
           })}
 
+          <line
+            x1={PAD_L}
+            x2={PAD_L}
+            y1={PAD_T}
+            y2={BASE_Y}
+            className="pa-chart-axis-y"
+          />
+          <line
+            x1={PAD_L}
+            x2={VB_W - PAD_R}
+            y1={BASE_Y}
+            y2={BASE_Y}
+            className="pa-chart-axis-x"
+          />
+
           <g clipPath={`url(#${clipId})`}>
             {showRaw && areaPathD && (
               <path d={areaPathD} className="pa-chart-area" fill={`url(#${gradId})`} />
+            )}
+            {showRaw && linePathD && (
+              <path
+                d={linePathD}
+                fill="none"
+                className={`pa-chart-line pa-chart-line-primary${
+                  overlayVisible ? " pa-chart-line-primary--muted" : ""
+                }`}
+                stroke="currentColor"
+                strokeWidth={overlayVisible ? Math.max(1.15, strokeW * 0.85) : strokeW}
+                strokeLinejoin="round"
+                strokeLinecap="round"
+                vectorEffect="non-scaling-stroke"
+                opacity={overlayVisible ? 0.55 : 1}
+              />
             )}
             {showAvg && overlayLineD && (
               <path
@@ -2062,71 +2302,57 @@ function InsightChart({
                 fill="none"
                 className="pa-chart-line pa-chart-line-overlay"
                 stroke="currentColor"
-                strokeWidth={Math.max(1.55, strokeW * 1.35)}
+                strokeWidth={Math.max(1.7, strokeW * 1.25)}
                 strokeLinejoin="round"
                 strokeLinecap="round"
                 vectorEffect="non-scaling-stroke"
                 opacity={0.98}
               />
             )}
-            {showRaw && linePathD && (
-              <path
-                d={linePathD}
-                fill="none"
-                className={`pa-chart-line pa-chart-line-primary ${overlayVisible ? "pa-chart-line-primary--muted" : ""}`}
-                stroke="currentColor"
-                strokeWidth={overlayVisible ? Math.max(1.2, strokeW * 0.9) : strokeW}
-                strokeLinejoin="round"
-                strokeLinecap="round"
-                vectorEffect="non-scaling-stroke"
-                strokeDasharray={overlayPresent ? "3 3.5" : undefined}
-                opacity={overlayVisible ? 0.92 : 1}
-              />
-            )}
-
           </g>
         </svg>
-          {hover !== null && coords[hover.idx] && (
-            <div className="pa-chart-hover-layer" aria-hidden="true">
-              <div
-                className="pa-chart-v-rule"
-                style={{ left: `${(hover.px / VB_W) * 100}%` }}
-              />
-              <div
-                className={`pa-chart-scrubber ${dualVisible ? "pa-chart-scrubber--dual" : "pa-chart-scrubber--single"}`}
-                style={{
-                  left: `${(hover.px / VB_W) * 100}%`,
-                  top: `${(hover.py / VB_H) * 100}%`
-                }}
-              />
-            </div>
-          )}
-        </div>
+        {hover !== null && coords[hover.idx] && (
+          <div className="pa-chart-hover-layer" aria-hidden="true">
+            <div
+              className="pa-chart-focus-band"
+              style={{ left: `${xSvgToLeftPercent(hover.px)}%` }}
+            />
+            <div
+              className="pa-chart-v-rule"
+              style={{ left: `${xSvgToLeftPercent(hover.px)}%` }}
+            />
+            <div
+              className="pa-chart-h-rule"
+              style={{ top: `${(hover.py / VB_H) * 100}%` }}
+            />
+          </div>
+        )}
+      </div>
 
-        <div
-          className={`pa-chart-xaxis pa-chart-xaxis--pos ${
-            mode === "fullscreen" ? "pa-chart-xaxis--fs" : ""
-          }`}
-        >
-          {tickIndices.map((i, tpos) => {
-            const leftPct = points.length <= 1 ? 50 : (i / (points.length - 1)) * 100;
-            const isSingleton = tickIndices.length === 1;
-            const isFirst = !isSingleton && tpos === 0;
-            const isLast = !isSingleton && tpos === tickIndices.length - 1;
-            return (
-              <span
-                key={`x-${points[i].rawLabel}-${i}`}
-                className={`pa-chart-xcell ${isSingleton ? "is-singleton" : ""} ${isFirst ? "is-first" : ""} ${isLast ? "is-last" : ""}`}
-                style={{ left: `${leftPct}%` }}
-              >
-                {formatAxisLabel(timeframe, points[i].rawLabel)}
-              </span>
-            );
-          })}
-        </div>
-        <div className="pa-axis-legend pa-axis-legend-x" aria-hidden="true">
-          {xAxisLabel}
-        </div>
+      <div
+        className={`pa-chart-xaxis pa-chart-xaxis--pos ${
+          mode === "fullscreen" ? "pa-chart-xaxis--fs" : ""
+        }`}
+      >
+        {tickIndices.map((i, tpos) => {
+          const leftPct =
+            points.length <= 1 ? 50 : xSvgToLeftPercent(coords[i]!.x);
+          const isSingleton = tickIndices.length === 1;
+          const isFirst = !isSingleton && tpos === 0;
+          const isLast = !isSingleton && tpos === tickIndices.length - 1;
+          return (
+            <span
+              key={`x-${points[i].rawLabel}-${i}`}
+              className={`pa-chart-xcell ${isSingleton ? "is-singleton" : ""} ${isFirst ? "is-first" : ""} ${isLast ? "is-last" : ""}`}
+              style={{ left: `${leftPct}%` }}
+            >
+              {formatChartTickLabel(timeframe, points[i].rawLabel)}
+            </span>
+          );
+        })}
+      </div>
+      <div className="pa-axis-legend pa-axis-legend-x" aria-hidden="true">
+        {xAxisLabel}
       </div>
     </div>
   );
@@ -2183,25 +2409,6 @@ function InsightChart({
           {shell}
         </div>
       </div>
-      {mode === "inline" && chartCompressedInline && points.length > 24 && (
-        <p className="pa-scroll-hint">
-          <span className="pa-scroll-hint-icon" aria-hidden="true">
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none">
-              <path
-                d="M4 12h16M9 7l-5 5 5 5M15 7l5 5-5 5"
-                stroke="currentColor"
-                strokeWidth="1.75"
-                strokeLinecap="round"
-                strokeLinejoin="round"
-              />
-            </svg>
-          </span>
-          <span>
-            Timeline is scaled to fit this card. Drag horizontally or use full screen for more
-            spacing. Hover or drag along the line for values.
-          </span>
-        </p>
-      )}
       {tooltipPortal}
     </>
   );
@@ -2268,26 +2475,19 @@ function MultiLineChart({
     return () => ro.disconnect();
   }, [mode, chartId, pointsLen]);
 
+  const hoverActive = hover != null;
+  // App-wide: only one chart/task tooltip at a time (inline + fullscreen mounts included).
+  useEffect(() => {
+    if (!hoverActive) return;
+    return claimExclusiveTooltip(() => setHover(null));
+  }, [hoverActive, chartId, idSuffix]);
+
   useLayoutEffect(() => {
     if (!hover) return;
     const tip = tooltipRef.current;
     const svg = svgRef.current;
     if (!tip || !svg) return;
-
-    const r = svg.getBoundingClientRect();
-    const desiredX = r.left + (hover.px / VB_W) * r.width;
-    const desiredY = r.top + (hover.py / VB_H) * r.height;
-
-    const vw = window.innerWidth;
-    const vh = window.innerHeight;
-    const pad = 10;
-    const tipRect = tip.getBoundingClientRect();
-    const halfW = Math.max(20, tipRect.width / 2);
-    const clampedX = Math.max(pad + halfW, Math.min(vw - pad - halfW, desiredX));
-    const clampedY = Math.max(pad, Math.min(vh - pad, desiredY));
-
-    tip.style.left = `${clampedX}px`;
-    tip.style.top = `${clampedY}px`;
+    placePaChartTip(tip, svg, hover);
   }, [hover]);
 
   useEffect(() => {
@@ -2296,22 +2496,7 @@ function MultiLineChart({
     const tick = () => {
       const tip = tooltipRef.current;
       const svg = svgRef.current;
-      if (tip && svg) {
-        const r = svg.getBoundingClientRect();
-        const desiredX = r.left + (hover.px / VB_W) * r.width;
-        const desiredY = r.top + (hover.py / VB_H) * r.height;
-
-        const vw = window.innerWidth;
-        const vh = window.innerHeight;
-        const pad = 10;
-        const tipRect = tip.getBoundingClientRect();
-        const halfW = Math.max(20, tipRect.width / 2);
-        const clampedX = Math.max(pad + halfW, Math.min(vw - pad - halfW, desiredX));
-        const clampedY = Math.max(pad, Math.min(vh - pad, desiredY));
-
-        tip.style.left = `${clampedX}px`;
-        tip.style.top = `${clampedY}px`;
-      }
+      if (tip && svg) placePaChartTip(tip, svg, hover);
       raf = requestAnimationFrame(tick);
     };
     raf = requestAnimationFrame(tick);
@@ -2366,13 +2551,13 @@ function MultiLineChart({
     setHover({ idx: clamped, px: anchor.x, py: anchor.y });
   };
 
-  const yTicks = 4;
+  const yTicks = buildYTicks(yMin, yMax, 4);
   const ySpan = yMax - yMin;
   const tickIndices = xTickIndices(
     pointsLen,
-    mode === "fullscreen" ? 14 : Math.min(11, Math.max(7, Math.ceil(pointsLen / 25)))
+    mode === "fullscreen" ? 10 : Math.min(6, Math.max(4, Math.ceil(pointsLen / 40)))
   );
-  const strokeW = pointsLen > 450 ? 1.05 : pointsLen > 200 ? 1.35 : 1.75;
+  const strokeW = pointsLen > 450 ? 1.15 : pointsLen > 200 ? 1.45 : 1.85;
 
   const updateHoverFromClientX = (clientX: number) => {
     const el = svgRef.current;
@@ -2392,8 +2577,6 @@ function MultiLineChart({
   };
 
   const minPx = chartTrackMinWidthPx(pointsLen, mode, chartContainerW > 0 ? chartContainerW : undefined);
-  const idealW = chartIdealMinWidthPx(pointsLen, mode);
-  const chartCompressedInline = mode === "inline" && chartContainerW > 0 && idealW > minPx + 6;
   const trackSize = `max(100%, ${minPx}px)`;
 
   const tooltipPortalParent: HTMLElement | null =
@@ -2409,80 +2592,38 @@ function MultiLineChart({
           (() => {
             const hi = hover.idx;
             const label = series[0]?.points[hi]?.rawLabel ?? "";
-            const tooltipY = hover.py / VB_H < 0.34 ? "below" : "above";
-            const growthChip = (current: number, prev: number | null) => {
-              if (prev == null) return null;
-              if (prev === 0) {
-                if (current === 0) {
-                  return { text: "0%", kind: "flat" as const, aria: "0% vs previous period" };
-                }
-                return { text: "—", kind: "na" as const, aria: "No previous baseline (previous period is 0)" };
-              }
-              const pct = ((current - prev) / Math.abs(prev)) * 100;
-              const rounded = Math.round(pct * 10) / 10;
-              const text = `${rounded >= 0 ? "+" : ""}${String(rounded).replace(/\\.0$/, "")}%`;
-              return {
-                text,
-                kind: rounded > 0 ? ("up" as const) : rounded < 0 ? ("down" as const) : ("flat" as const),
-                aria: `${text} vs previous period`
-              };
-            };
-            const dual = visibleSeries.length > 1;
+            const ranked = visibleSeries
+              .map((s) => {
+                const value = s.points[hi]?.value ?? 0;
+                const prev = hi > 0 ? s.points[hi - 1]?.value ?? null : null;
+                return {
+                  id: s.id,
+                  name: s.name,
+                  value,
+                  color: s.color,
+                  growth: paTipGrowth(value, prev)
+                } satisfies PaTipRow;
+              })
+              .sort((a, b) => (b.value ?? 0) - (a.value ?? 0));
+            const maxRows = 5;
+            const rows =
+              ranked.length > maxRows
+                ? [
+                    ...ranked.slice(0, maxRows),
+                    {
+                      id: "_more",
+                      name: `+${ranked.length - maxRows} more`,
+                      value: null,
+                      growth: null
+                    } satisfies PaTipRow
+                  ]
+                : ranked;
             return (
-              <div
-                ref={tooltipRef}
-                className={`pa-chart-tooltip pa-chart-tooltip--portal pa-chart-tooltip--y-${tooltipY}${
-                  dual ? " pa-chart-tooltip--dual" : ""
-                }`}
-                role="tooltip"
-              >
-                <div className="pa-chart-tooltip-card">
-                  <header className="pa-chart-tooltip-head">
-                    <span className="pa-chart-tooltip-head-k">{xAxisLabel}</span>
-                    <span className="pa-chart-tooltip-head-v">
-                      {formatAxisLabel(timeframe, label)}
-                    </span>
-                  </header>
-                  <div className="pa-chart-tooltip-metrics pa-chart-tooltip-metrics--solo">
-                    {visibleSeries.map((s) => {
-                      const v = s.points[hi]?.value ?? 0;
-                      const prev = hi > 0 ? s.points[hi - 1]?.value ?? null : null;
-                      const g = growthChip(v, prev);
-                      return (
-                        <section
-                          key={s.id}
-                          className="pa-chart-tooltip-metric pa-chart-tooltip-metric--solo"
-                          aria-label={`${s.name}: ${formatPillValue(v)}${g ? `. ${g.aria}.` : "."}`}
-                        >
-                          <div className="pa-chart-tooltip-metric-top">
-                            <span
-                              className="pa-chart-tooltip-dot"
-                              aria-hidden
-                              style={{ background: s.color }}
-                            />
-                            <div className="pa-chart-tooltip-metric-body">
-                              <div className="pa-chart-tooltip-metric-line">
-                                <span className="pa-chart-tooltip-metric-name">{s.name}</span>
-                                <span className="pa-chart-tooltip-metric-fig pa-chart-tooltip-metric-fig--inline">
-                                  {formatPillValue(v)}
-                                </span>
-                                {g ? (
-                                  <span
-                                    className={`pa-chart-tooltip-chip pa-chart-tooltip-chip--growth pa-chart-tooltip-chip--growth-${g.kind}`}
-                                    aria-label={g.aria}
-                                  >
-                                    {g.text}
-                                  </span>
-                                ) : null}
-                              </div>
-                            </div>
-                          </div>
-                        </section>
-                      );
-                    })}
-                  </div>
-                </div>
-              </div>
+              <PaChartTip
+                tipRef={tooltipRef}
+                periodLabel={formatTipPeriod(timeframe, label)}
+                rows={rows}
+              />
             );
           })(),
           tooltipPortalParent
@@ -2491,157 +2632,172 @@ function MultiLineChart({
 
   const shell = (
     <div
-      className={`pa-chart-shell ${mode === "fullscreen" ? "pa-chart-shell--fs" : ""}`}
+      className={`pa-chart-shell pa-chart-shell--aligned ${mode === "fullscreen" ? "pa-chart-shell--fs" : ""}`}
       style={{ minWidth: `${minPx}px` }}
     >
-      <div className="pa-chart-y-rail-wrap" aria-hidden="true">
-        <div className="pa-axis-legend pa-axis-legend-y">
-          {hasVisibleData ? yAxisLabel : "No projects selected"}
-        </div>
-        <div className="pa-chart-y-rail">
-          {Array.from({ length: yTicks + 1 }, (_, i) => {
-            const t = i / yTicks;
-            const value = yMax - t * ySpan;
-            return (
-              <span key={i} className="pa-chart-y-tick">
-                {formatYTick(value)}
-              </span>
-            );
-          })}
-        </div>
+      <div className="pa-axis-legend pa-axis-legend-y" aria-hidden="true">
+        {hasVisibleData ? yAxisLabel : "No projects selected"}
       </div>
-      <div className={`pa-chart-main ${mode === "fullscreen" ? "pa-chart-main--fs" : ""}`}>
-        <div
-          className="pa-chart-plot"
-          onMouseMove={(e) => {
-            if (!hasVisibleData) return;
-            updateHoverFromClientX(e.clientX);
-          }}
-          onMouseLeave={() => setHover(null)}
-          onTouchStart={(e) => {
-            if (!hasVisibleData) return;
-            const t = e.touches[0];
-            if (t) updateHoverFromClientX(t.clientX);
-          }}
-          onTouchMove={(e) => {
-            if (!hasVisibleData) return;
-            const t = e.touches[0];
-            if (t) updateHoverFromClientX(t.clientX);
-          }}
-          onTouchEnd={() => setHover(null)}
-        >
-          <svg
-            ref={svgRef}
-            className={`pa-chart-svg ${mode === "fullscreen" ? "pa-chart-svg--fs" : ""}`}
-            viewBox={`0 0 ${VB_W} ${VB_H}`}
-            preserveAspectRatio="none"
-            role="img"
-            aria-label={`${chartId} chart`}
+      <div className="pa-chart-y-rail" aria-hidden="true">
+        {yTicks.map((value) => (
+          <span
+            key={`yt-${value}`}
+            className="pa-chart-y-tick"
+            style={{ top: `${yValueToTopPercent(value, yMin, yMax)}%` }}
           >
-            <defs>
-              <clipPath id={clipId}>
-                <rect
-                  x={PAD_L}
-                  y={PAD_T}
-                  width={VB_W - PAD_L - PAD_R}
-                  height={BASE_Y - PAD_T + 1}
-                />
-              </clipPath>
-            </defs>
-
-            {Array.from({ length: yTicks + 1 }, (_, i) => {
-              const y = BASE_Y - ((BASE_Y - PAD_T) * i) / yTicks;
-              return (
-                <line
-                  key={i}
-                  x1={PAD_L}
-                  x2={VB_W - PAD_R}
-                  y1={y}
-                  y2={y}
-                  className="pa-chart-grid"
-                />
-              );
-            })}
-
-            <g clipPath={`url(#${clipId})`}>
-              {hasVisibleData
-                ? seriesPaths.map((p) => (
-                    <path
-                      key={p.id}
-                      d={p.d}
-                      fill="none"
-                      stroke={p.color}
-                      strokeWidth={strokeW}
-                      strokeLinejoin="round"
-                      strokeLinecap="round"
-                      vectorEffect="non-scaling-stroke"
-                      opacity={visibleSeries.length > 6 ? 0.92 : 1}
-                    />
-                  ))
-                : null}
-            </g>
-          </svg>
-
-          {!hasVisibleData ? (
-            <div
-              className="pa-no-data"
-              style={{
-                position: "absolute",
-                inset: 0,
-                display: "grid",
-                placeItems: "center",
-                pointerEvents: "none",
-                padding: "0.75rem",
-                textAlign: "center"
-              }}
-              aria-label="No series selected"
-            >
-              <div className="muted small">
-                No projects selected. Use <strong>Show all</strong> or toggle projects above.
-              </div>
-            </div>
-          ) : null}
-
-          {hover !== null && hasVisibleData && (
-            <div className="pa-chart-hover-layer" aria-hidden="true">
-              <div
-                className="pa-chart-v-rule"
-                style={{ left: `${(hover.px / VB_W) * 100}%` }}
-              />
-              <div
-                className="pa-chart-scrubber pa-chart-scrubber--single"
-                style={{
-                  left: `${(hover.px / VB_W) * 100}%`,
-                  top: `${(hover.py / VB_H) * 100}%`
-                }}
-              />
-            </div>
-          )}
-        </div>
-
-        <div
-          className={`pa-chart-xaxis pa-chart-xaxis--pos ${mode === "fullscreen" ? "pa-chart-xaxis--fs" : ""}`}
+            {formatYTick(value)}
+          </span>
+        ))}
+      </div>
+      <div
+        className="pa-chart-plot"
+        onMouseMove={(e) => {
+          if (!hasVisibleData) return;
+          updateHoverFromClientX(e.clientX);
+        }}
+        onMouseLeave={() => setHover(null)}
+        onTouchStart={(e) => {
+          if (!hasVisibleData) return;
+          const t = e.touches[0];
+          if (t) updateHoverFromClientX(t.clientX);
+        }}
+        onTouchMove={(e) => {
+          if (!hasVisibleData) return;
+          const t = e.touches[0];
+          if (t) updateHoverFromClientX(t.clientX);
+        }}
+        onTouchEnd={() => setHover(null)}
+        style={{ touchAction: "none" }}
+      >
+        <svg
+          ref={svgRef}
+          className={`pa-chart-svg ${mode === "fullscreen" ? "pa-chart-svg--fs" : ""}`}
+          viewBox={`0 0 ${VB_W} ${VB_H}`}
+          preserveAspectRatio="none"
+          role="img"
+          aria-label={`${chartId} chart`}
         >
-          {tickIndices.map((i, tpos) => {
-            const leftPct = pointsLen <= 1 ? 50 : (i / (pointsLen - 1)) * 100;
-            const isSingleton = tickIndices.length === 1;
-            const isFirst = !isSingleton && tpos === 0;
-            const isLast = !isSingleton && tpos === tickIndices.length - 1;
-            const raw = series[0]!.points[i]!.rawLabel;
+          <defs>
+            <clipPath id={clipId}>
+              <rect
+                x={PAD_L}
+                y={PAD_T}
+                width={VB_W - PAD_L - PAD_R}
+                height={BASE_Y - PAD_T + 1}
+              />
+            </clipPath>
+          </defs>
+
+          {yTicks.map((value) => {
+            const y =
+              BASE_Y - (ySpan <= 0 ? 0 : ((value - yMin) / ySpan) * (BASE_Y - PAD_T));
             return (
-              <span
-                key={`x-${raw}-${i}`}
-                className={`pa-chart-xcell ${isSingleton ? "is-singleton" : ""} ${isFirst ? "is-first" : ""} ${isLast ? "is-last" : ""}`}
-                style={{ left: `${leftPct}%` }}
-              >
-                {formatAxisLabel(timeframe, raw)}
-              </span>
+              <line
+                key={`grid-${value}`}
+                x1={PAD_L}
+                x2={VB_W - PAD_R}
+                y1={y}
+                y2={y}
+                className={`pa-chart-grid${value === yMin ? " pa-chart-grid--base" : ""}`}
+              />
             );
           })}
-        </div>
-        <div className="pa-axis-legend pa-axis-legend-x" aria-hidden="true">
-          {xAxisLabel}
-        </div>
+
+          <line
+            x1={PAD_L}
+            x2={PAD_L}
+            y1={PAD_T}
+            y2={BASE_Y}
+            className="pa-chart-axis-y"
+          />
+          <line
+            x1={PAD_L}
+            x2={VB_W - PAD_R}
+            y1={BASE_Y}
+            y2={BASE_Y}
+            className="pa-chart-axis-x"
+          />
+
+          <g clipPath={`url(#${clipId})`}>
+            {hasVisibleData
+              ? seriesPaths.map((p) => (
+                  <path
+                    key={p.id}
+                    d={p.d}
+                    fill="none"
+                    className="pa-chart-line pa-chart-line-multi"
+                    stroke={p.color}
+                    strokeWidth={strokeW}
+                    strokeLinejoin="round"
+                    strokeLinecap="round"
+                    vectorEffect="non-scaling-stroke"
+                    opacity={visibleSeries.length > 6 ? 0.9 : 1}
+                  />
+                ))
+              : null}
+          </g>
+        </svg>
+
+        {!hasVisibleData ? (
+          <div
+            className="pa-no-data"
+            style={{
+              position: "absolute",
+              inset: 0,
+              display: "grid",
+              placeItems: "center",
+              pointerEvents: "none",
+              padding: "0.75rem",
+              textAlign: "center"
+            }}
+            aria-label="No series selected"
+          >
+            <div className="muted small">
+              No projects selected. Use <strong>Show all</strong> or toggle projects above.
+            </div>
+          </div>
+        ) : null}
+
+        {hover !== null && hasVisibleData && (
+          <div className="pa-chart-hover-layer" aria-hidden="true">
+            <div
+              className="pa-chart-focus-band"
+              style={{ left: `${xSvgToLeftPercent(hover.px)}%` }}
+            />
+            <div
+              className="pa-chart-v-rule"
+              style={{ left: `${xSvgToLeftPercent(hover.px)}%` }}
+            />
+            <div
+              className="pa-chart-h-rule"
+              style={{ top: `${(hover.py / VB_H) * 100}%` }}
+            />
+          </div>
+        )}
+      </div>
+
+      <div
+        className={`pa-chart-xaxis pa-chart-xaxis--pos ${mode === "fullscreen" ? "pa-chart-xaxis--fs" : ""}`}
+      >
+        {tickIndices.map((i, tpos) => {
+          const leftPct = pointsLen <= 1 ? 50 : xSvgToLeftPercent(xAt(i));
+          const isSingleton = tickIndices.length === 1;
+          const isFirst = !isSingleton && tpos === 0;
+          const isLast = !isSingleton && tpos === tickIndices.length - 1;
+          const raw = series[0]!.points[i]!.rawLabel;
+          return (
+            <span
+              key={`x-${raw}-${i}`}
+              className={`pa-chart-xcell ${isSingleton ? "is-singleton" : ""} ${isFirst ? "is-first" : ""} ${isLast ? "is-last" : ""}`}
+              style={{ left: `${leftPct}%` }}
+            >
+              {formatChartTickLabel(timeframe, raw)}
+            </span>
+          );
+        })}
+      </div>
+      <div className="pa-axis-legend pa-axis-legend-x" aria-hidden="true">
+        {xAxisLabel}
       </div>
     </div>
   );
@@ -2649,21 +2805,21 @@ function MultiLineChart({
   return (
     <>
       <div
-        className={`pa-legend pa-legend--projects${mode === "fullscreen" ? " pa-legend--fs" : ""}`}
+        className={`pa-series-seg pa-series-seg--projects${mode === "fullscreen" ? " pa-series-seg--fs" : ""}`}
         aria-label="Project series legend"
       >
-        <div className="pa-legend-bar">
-          <div className="pa-legend-bar-left">
-            <span className="pa-legend-bar-title">Projects</span>
-            <span className="pa-legend-bar-meta" aria-label="Visible series count">
-              {visibleSeriesIds.size}/{series.length} visible
+        <div className="pa-series-seg-head">
+          <div className="pa-series-seg-head-left">
+            <span className="pa-series-seg-kicker">Projects</span>
+            <span className="pa-series-seg-meta" aria-label="Visible series count">
+              {visibleSeriesIds.size}/{series.length}
             </span>
           </div>
-          <div className="pa-legend-bar-actions" role="group" aria-label="Legend actions">
+          <div className="pa-series-seg-head-actions" role="group" aria-label="Legend actions">
             {noneVisible ? (
               <button
                 type="button"
-                className="ghost-button small"
+                className="pa-series-seg-reset"
                 onClick={() => {
                   for (const s of series) {
                     if (!visibleSeriesIds.has(s.id)) onToggleSeries(s.id);
@@ -2676,7 +2832,7 @@ function MultiLineChart({
             ) : allVisible ? (
               <button
                 type="button"
-                className="ghost-button small"
+                className="pa-series-seg-reset"
                 onClick={() => {
                   for (const s of series) {
                     if (visibleSeriesIds.has(s.id)) onToggleSeries(s.id);
@@ -2690,7 +2846,7 @@ function MultiLineChart({
               <>
                 <button
                   type="button"
-                  className="ghost-button small"
+                  className="pa-series-seg-reset"
                   onClick={() => {
                     for (const s of series) {
                       if (visibleSeriesIds.has(s.id)) onToggleSeries(s.id);
@@ -2702,7 +2858,7 @@ function MultiLineChart({
                 </button>
                 <button
                   type="button"
-                  className="ghost-button small"
+                  className="pa-series-seg-reset"
                   onClick={() => {
                     for (const s of series) {
                       if (!visibleSeriesIds.has(s.id)) onToggleSeries(s.id);
@@ -2717,7 +2873,7 @@ function MultiLineChart({
           </div>
         </div>
 
-        <div className="pa-legend-row" role="group" aria-label="Toggle project series visibility">
+        <div className="pa-series-seg-track pa-series-seg-track--wrap" role="group" aria-label="Toggle project series visibility">
           {series.map((s) => {
             const on = visibleSeriesIds.has(s.id);
             const isSolo = on && visibleSeriesIds.size === 1;
@@ -2725,7 +2881,7 @@ function MultiLineChart({
               <button
                 key={s.id}
                 type="button"
-                className={`pa-legend-chip pa-legend-chip--project ${on ? "is-on" : "is-off"}`}
+                className={`pa-series-seg-btn ${on ? "is-on" : "is-off"}`}
                 aria-pressed={on}
                 onClick={(e) => {
                   // Shift-click = Solo (zoom): show only this project, auto-rescales y-axis.
@@ -2754,12 +2910,12 @@ function MultiLineChart({
                     : `Show ${s.name}. Shift-click to Solo.`
                 }
               >
-                <span className="pa-legend-swatch-col" aria-hidden="true">
-                  <span className="pa-legend-swatch" style={{ background: s.color }} />
-                </span>
-                <span className="pa-legend-copy">
-                  <span className="pa-legend-chip-title">{s.name}</span>
-                </span>
+                <span
+                  className="pa-series-seg-dot"
+                  style={{ background: s.color }}
+                  aria-hidden="true"
+                />
+                {s.name}
               </button>
             );
           })}
@@ -2803,7 +2959,7 @@ function MultiLineChart({
         }}
         onPointerDown={(e) => {
           const target = e.target as HTMLElement;
-          if (target.closest(".pa-legend")) return;
+          if (target.closest(".pa-series-seg")) return;
           updateHoverFromClientX((e as any).clientX);
         }}
         onPointerMove={(e) => {
@@ -2819,25 +2975,6 @@ function MultiLineChart({
         </div>
       </div>
 
-      {mode === "inline" && chartCompressedInline && pointsLen > 24 && (
-        <p className="pa-scroll-hint">
-          <span className="pa-scroll-hint-icon" aria-hidden="true">
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none">
-              <path
-                d="M4 12h16M9 7l-5 5 5 5M15 7l5 5-5 5"
-                stroke="currentColor"
-                strokeWidth="1.75"
-                strokeLinecap="round"
-                strokeLinejoin="round"
-              />
-            </svg>
-          </span>
-          <span>
-            Timeline is scaled to fit this card. Drag horizontally or use full screen for more spacing.
-            Hover or drag along the line for values.
-          </span>
-        </p>
-      )}
       {tooltipPortal}
     </>
   );
@@ -2900,9 +3037,11 @@ function ProductivityViewToggle({
   return (
     <div
       className={`pa-view-toggle${compact ? " pa-view-toggle--compact" : ""}`}
+      data-mode={mode}
       role="group"
       aria-label="Switch between chart and table"
     >
+      <span className="pa-view-toggle-thumb" aria-hidden="true" />
       <button
         type="button"
         className={`pa-view-toggle-btn${mode === "chart" ? " is-active" : ""}`}
@@ -3022,6 +3161,43 @@ function ProductivityExportButtons({
   );
 }
 
+function PaMiniSparkline({
+  values,
+  tone = "accent"
+}: {
+  values: number[];
+  tone?: "accent" | "neutral";
+}) {
+  if (values.length < 2) return null;
+  let min = values[0]!;
+  let max = values[0]!;
+  for (const v of values) {
+    if (v < min) min = v;
+    if (v > max) max = v;
+  }
+  const span = max - min || 1;
+  const w = 72;
+  const h = 22;
+  const d = values
+    .map((v, i) => {
+      const x = (i / (values.length - 1)) * w;
+      const y = h - 1.5 - ((v - min) / span) * (h - 3);
+      return `${i === 0 ? "M" : "L"}${x.toFixed(1)} ${y.toFixed(1)}`;
+    })
+    .join(" ");
+  return (
+    <svg
+      className={`pa-table-spark pa-table-spark--${tone}`}
+      viewBox={`0 0 ${w} ${h}`}
+      width={w}
+      height={h}
+      aria-hidden="true"
+    >
+      <path d={d} className="pa-table-spark-line" fill="none" />
+    </svg>
+  );
+}
+
 function PaSingleMetricTable({
   timeframe,
   points,
@@ -3035,44 +3211,173 @@ function PaSingleMetricTable({
   showAvg: boolean;
   valueHeader: string;
 }) {
+  const [newestFirst, setNewestFirst] = useState(true);
+  const [compact, setCompact] = useState(true);
   const hasAvg =
     Boolean(overlay && overlay.length === points.length && showAvg && points.length > 0);
+  const values = points.map((p) => p.value);
+  const sum = values.reduce((a, b) => a + b, 0);
+  const avg = points.length ? sum / points.length : 0;
+  const min = points.length ? Math.min(...values) : 0;
+  const max = points.length ? Math.max(...values) : 0;
+  const rowIndexes = Array.from({ length: points.length }, (_, i) =>
+    newestFirst ? points.length - 1 - i : i
+  );
+
   return (
-    <div className="pa-table-scroll" role="region" aria-label="Values table for this chart">
-      <table className="pa-data-table">
-        <thead>
-          <tr>
-            <th scope="col" title="Time period for this row (matches the chart horizontal axis).">
-              Period
-            </th>
-            <th
-              scope="col"
-              title={`${valueHeader} — same values as the main series in the chart.`}
-            >
-              {valueHeader}
-            </th>
-            {hasAvg && (
-              <th
-                scope="col"
-                title="Rolling average for each period (shown when the rolling average series is visible in the chart)."
-              >
-                Rolling avg
+    <div className={`pa-table-shell${compact ? " is-compact" : ""}`}>
+      <div className="pa-table-toolbar">
+        <div className="pa-table-toolbar-lead">
+          <span className="pa-table-toolbar-title">Data</span>
+          <PaMiniSparkline values={values} />
+        </div>
+        <div className="pa-table-toolbar-actions">
+          <span className="pa-table-toolbar-meta">
+            {points.length} {points.length === 1 ? "row" : "rows"}
+          </span>
+          <button
+            type="button"
+            className="pa-table-sort-btn"
+            aria-pressed={compact}
+            aria-label={compact ? "Use comfortable row height" : "Use compact row height"}
+            title={compact ? "Compact rows — click for comfortable" : "Comfortable rows — click for compact"}
+            onClick={() => setCompact((v) => !v)}
+          >
+            {compact ? "Compact" : "Comfort"}
+          </button>
+          <button
+            type="button"
+            className="pa-table-sort-btn"
+            aria-pressed={newestFirst}
+            aria-label={newestFirst ? "Sort oldest first" : "Sort newest first"}
+            title={
+              newestFirst
+                ? "Showing newest first — click for oldest first"
+                : "Showing oldest first — click for newest first"
+            }
+            onClick={() => setNewestFirst((v) => !v)}
+          >
+            {newestFirst ? "Newest" : "Oldest"}
+          </button>
+        </div>
+      </div>
+
+      {points.length > 1 ? (
+        <div className="pa-table-summary" aria-label="Table summary">
+          <div className="pa-table-summary-item">
+            <span className="pa-table-summary-k">Avg</span>
+            <span className="pa-table-summary-v">{formatPillValue(avg)}</span>
+            <span className="pa-table-summary-unit">/{timeframeAvgSuffix(timeframe)}</span>
+          </div>
+          <div className="pa-table-summary-item">
+            <span className="pa-table-summary-k">Min</span>
+            <span className="pa-table-summary-v">{formatPillValue(min)}</span>
+            <span className="pa-table-summary-sep" aria-hidden="true">
+              –
+            </span>
+            <span className="pa-table-summary-k">Max</span>
+            <span className="pa-table-summary-v pa-table-summary-v--peak">
+              {formatPillValue(max)}
+            </span>
+          </div>
+          <div className="pa-table-summary-item">
+            <span className="pa-table-summary-k">Total</span>
+            <span className="pa-table-summary-v">{formatPillValue(sum)}</span>
+            <span className="pa-table-summary-unit">
+              · {points.length} {timeframeBucketsLabel(timeframe).toLowerCase()}
+            </span>
+          </div>
+        </div>
+      ) : null}
+
+      <div className="pa-table-scroll" role="region" aria-label="Values table for this chart">
+        <table className="pa-data-table pa-data-table--metric">
+          <thead>
+            <tr>
+              <th scope="col">Period</th>
+              <th scope="col" className="pa-data-table-num">
+                {valueHeader}
               </th>
-            )}
-          </tr>
-        </thead>
-        <tbody>
-          {points.map((p, i) => (
-            <tr key={`${p.rawLabel}-${i}`}>
-              <td>{formatAxisLabelWithYear(timeframe, p.rawLabel)}</td>
-              <td className="pa-data-table-num">{formatPillValue(p.value)}</td>
+              <th scope="col" className="pa-data-table-num" title="Change vs previous period">
+                Change
+              </th>
               {hasAvg && (
-                <td className="pa-data-table-num">{formatPillValue(overlay![i]!.value)}</td>
+                <th scope="col" className="pa-data-table-num pa-col-avg">
+                  Avg
+                </th>
               )}
             </tr>
-          ))}
-        </tbody>
-      </table>
+          </thead>
+          <tbody>
+            {rowIndexes.map((i) => {
+              const p = points[i]!;
+              const prev = i > 0 ? points[i - 1]!.value : null;
+              const delta =
+                prev != null && Number.isFinite(prev) ? p.value - prev : null;
+              const deltaPct =
+                prev != null && Number.isFinite(prev) && prev !== 0
+                  ? ((p.value - prev) / Math.abs(prev)) * 100
+                  : prev === 0 && p.value === 0
+                    ? 0
+                    : null;
+              const isLatest = i === points.length - 1;
+              const isPeak = p.value === max && points.length > 1;
+              const tone =
+                delta == null
+                  ? "na"
+                  : delta > 0
+                    ? "up"
+                    : delta < 0
+                      ? "down"
+                      : "flat";
+              return (
+                <tr
+                  key={`${p.rawLabel}-${i}`}
+                  className={[
+                    isLatest ? "is-latest" : "",
+                    isPeak ? "is-peak" : ""
+                  ]
+                    .filter(Boolean)
+                    .join(" ") || undefined}
+                >
+                  <td data-label="Period">
+                    <span className="pa-table-period">
+                      {formatAxisLabelWithYear(timeframe, p.rawLabel)}
+                    </span>
+                    {isLatest ? <span className="pa-table-badge">Latest</span> : null}
+                    {isPeak && !isLatest ? (
+                      <span className="pa-table-badge pa-table-badge--peak">Peak</span>
+                    ) : null}
+                  </td>
+                  <td className="pa-data-table-num pa-data-table-num--strong" data-label={valueHeader}>
+                    {formatPillValue(p.value)}
+                  </td>
+                  <td className="pa-data-table-num" data-label="Change">
+                    {delta == null ? (
+                      <span className="pa-table-delta is-na">—</span>
+                    ) : (
+                      <span className={`pa-table-change is-${tone}`}>
+                        <span className="pa-table-delta">
+                          {delta > 0 ? "+" : ""}
+                          {formatPillValue(delta)}
+                        </span>
+                        {deltaPct != null ? (
+                          <span className="pa-table-pct">{formatGrowthPercent(deltaPct)}</span>
+                        ) : null}
+                      </span>
+                    )}
+                  </td>
+                  {hasAvg && (
+                    <td className="pa-data-table-num pa-data-table-num--muted pa-col-avg" data-label="Avg">
+                      {formatPillValue(overlay![i]!.value)}
+                    </td>
+                  )}
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
     </div>
   );
 }
@@ -3086,39 +3391,121 @@ function PaProjectSeriesTable({
   seriesList: MultiSeries[];
   visibleIds: Set<string>;
 }) {
+  const [newestFirst, setNewestFirst] = useState(true);
+  const [compact, setCompact] = useState(true);
   const visible = seriesList.filter((s) => visibleIds.has(s.id));
   if (visible.length === 0) {
-    return <div className="muted small pa-no-data">No visible series — use the legend to show projects.</div>;
+    return (
+      <div className="pa-table-empty" role="status">
+        No visible series — turn projects on in the legend.
+      </div>
+    );
   }
   const n = visible[0]!.points.length;
+  const rowIndexes = Array.from({ length: n }, (_, i) => (newestFirst ? n - 1 - i : i));
+  const totals = visible.map((s) => s.points.reduce((acc, p) => acc + p.value, 0));
+
   return (
-    <div className="pa-table-scroll" role="region" aria-label="Project breakdown table">
-      <table className="pa-data-table">
-        <thead>
-          <tr>
-            <th scope="col" title="Time bucket for this row.">
-              Period
-            </th>
-            {visible.map((s) => (
-              <th key={s.id} scope="col" title={`${s.name} — amount for this project in this period.`}>
+    <div className={`pa-table-shell${compact ? " is-compact" : ""}`}>
+      <div className="pa-table-toolbar">
+        <div className="pa-table-toolbar-lead">
+          <span className="pa-table-toolbar-title">By project</span>
+        </div>
+        <div className="pa-table-toolbar-actions">
+          <span className="pa-table-toolbar-meta">
+            {visible.length} series · {n} {n === 1 ? "period" : "periods"}
+          </span>
+          <button
+            type="button"
+            className="pa-table-sort-btn"
+            aria-pressed={compact}
+            aria-label={compact ? "Use comfortable row height" : "Use compact row height"}
+            title={compact ? "Compact rows — click for comfortable" : "Comfortable rows — click for compact"}
+            onClick={() => setCompact((v) => !v)}
+          >
+            {compact ? "Compact" : "Comfort"}
+          </button>
+          <button
+            type="button"
+            className="pa-table-sort-btn"
+            aria-pressed={newestFirst}
+            aria-label={newestFirst ? "Sort oldest first" : "Sort newest first"}
+            title={
+              newestFirst
+                ? "Showing newest first — click for oldest first"
+                : "Showing oldest first — click for newest first"
+            }
+            onClick={() => setNewestFirst((v) => !v)}
+          >
+            {newestFirst ? "Newest" : "Oldest"}
+          </button>
+        </div>
+      </div>
+
+      {n > 1 ? (
+        <div className="pa-table-summary pa-table-summary--projects" aria-label="Project totals">
+          {visible.slice(0, 4).map((s, si) => (
+            <div key={s.id} className="pa-table-summary-item">
+              <span className="pa-table-summary-k">
+                <span className="pa-table-swatch" style={{ background: s.color }} aria-hidden="true" />
                 {s.name}
+              </span>
+              <span className="pa-table-summary-v">{formatPillValue(totals[si]!)}</span>
+            </div>
+          ))}
+          {visible.length > 4 ? (
+            <div className="pa-table-summary-item pa-table-summary-item--more">
+              <span className="pa-table-summary-k">+{visible.length - 4} more</span>
+              <span className="pa-table-summary-v">in table</span>
+            </div>
+          ) : null}
+        </div>
+      ) : null}
+
+      <div className="pa-table-scroll" role="region" aria-label="Project breakdown table">
+        <table className="pa-data-table pa-data-table--projects">
+          <thead>
+            <tr>
+              <th scope="col" className="pa-data-table-sticky">
+                Period
               </th>
-            ))}
-          </tr>
-        </thead>
-        <tbody>
-          {Array.from({ length: n }, (_, i) => (
-            <tr key={`${visible[0]!.points[i]!.rawLabel}-${i}`}>
-              <td>{formatAxisLabelWithYear(timeframe, visible[0]!.points[i]!.rawLabel)}</td>
               {visible.map((s) => (
-                <td key={s.id} className="pa-data-table-num">
-                  {formatPillValue(s.points[i]?.value ?? 0)}
-                </td>
+                <th key={s.id} scope="col" className="pa-data-table-num" title={s.name}>
+                  <span className="pa-table-colhead">
+                    <span
+                      className="pa-table-swatch"
+                      style={{ background: s.color }}
+                      aria-hidden="true"
+                    />
+                    <span className="pa-table-colname">{s.name}</span>
+                  </span>
+                </th>
               ))}
             </tr>
-          ))}
-        </tbody>
-      </table>
+          </thead>
+          <tbody>
+            {rowIndexes.map((i) => {
+              const label = visible[0]!.points[i]!.rawLabel;
+              const isLatest = i === n - 1;
+              return (
+                <tr key={`${label}-${i}`} className={isLatest ? "is-latest" : undefined}>
+                  <td className="pa-data-table-sticky" data-label="Period">
+                    <span className="pa-table-period">
+                      {formatAxisLabelWithYear(timeframe, label)}
+                    </span>
+                    {isLatest ? <span className="pa-table-badge">Latest</span> : null}
+                  </td>
+                  {visible.map((s) => (
+                    <td key={s.id} className="pa-data-table-num" data-label={s.name}>
+                      {formatPillValue(s.points[i]?.value ?? 0)}
+                    </td>
+                  ))}
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
     </div>
   );
 }
@@ -3673,22 +4060,8 @@ export function ProductivityAnalysisModal({
       for (const p of s.points) vals.push(p.value);
     }
     if (vals.length === 0) return { yMin: 0, yMax: 1 };
-    const vMax = Math.max(...vals, 1);
-    const vMin = Math.min(...vals);
-    const padTop = Math.max(vMax * 0.14, 0.5);
-
-    // When a single project is visible (Solo), zoom the y-axis to reveal real fluctuations
-    // instead of flattening them against a 0-baseline.
-    if (visible.length === 1) {
-      const span = Math.max(1e-6, vMax - vMin);
-      const pad = Math.max(span * 0.22, vMax * 0.04, 0.5);
-      const yMin = Math.max(0, vMin - pad);
-      const yMax = vMax + Math.max(pad * 0.75, padTop * 0.6);
-      return { yMin, yMax };
-    }
-
-    // Multi-series: keep a 0-baseline for honest comparisons between projects.
-    return { yMin: 0, yMax: vMax + padTop };
+    const { rawMin, rawMax, looksInteger } = paddedYExtent(vals, { clampMinZero: true });
+    return niceYDomain(rawMin, rawMax, { preferInteger: looksInteger, tight: true });
   }, [projectTasksSeries, visibleProjectTaskSeriesIds]);
 
   const projectXpYDomain = useMemo(() => {
@@ -3699,9 +4072,8 @@ export function ProductivityAnalysisModal({
       for (const p of s.points) vals.push(p.value);
     }
     if (vals.length === 0) return { yMin: 0, yMax: 1 };
-    const vMax = Math.max(...vals, 1);
-    const padTop = Math.max(vMax * 0.14, 0.5);
-    return { yMin: 0, yMax: vMax + padTop };
+    const { rawMin, rawMax, looksInteger } = paddedYExtent(vals, { clampMinZero: true });
+    return niceYDomain(rawMin, rawMax, { preferInteger: looksInteger, tight: true });
   }, [projectXpSeries, visibleProjectXpSeriesIds]);
 
   const toggleProjectSeries = (id: string) => {
@@ -3905,8 +4277,6 @@ export function ProductivityAnalysisModal({
   // `byChart` is already windowed (daily range), so don't slice again.
   const fsPoints = fsPointsAll;
   const fsRawPeak = fsPoints.length > 0 ? peakInSeries(fsPoints) : 0;
-  const fsYDomain =
-    fsChart && fsPoints.length > 0 ? chartYDomain(fsPoints, fsChart.cumulative) : { yMin: 0, yMax: 1 };
   const fsLatestVal =
     fsChart && fsPoints.length > 0
       ? fsChart.cumulative
@@ -3931,10 +4301,12 @@ export function ProductivityAnalysisModal({
           rollingAvgSpanBuckets(timeframe, fsPoints.length, visibleDaySpan)
         )
       : null;
+  const fsYDomain =
+    fsChart && fsPoints.length > 0
+      ? chartYDomain(fsPoints, fsChart.cumulative, fsOverlay)
+      : { yMin: 0, yMax: 1 };
   const fsOverlayLatest =
     fsOverlay && fsOverlay.length > 0 ? fsOverlay[fsOverlay.length - 1]!.value : null;
-  const fsOverlayPeak =
-    fsOverlay && fsOverlay.length > 0 ? peakInSeries(fsOverlay) : null;
   const fsCumulativeGrowthPct =
     fsChart?.cumulative && fsPoints.length > 0
       ? cumulativePopGrowthPercent(fsPoints, fsLatestVal)
@@ -3948,21 +4320,51 @@ export function ProductivityAnalysisModal({
   const windowDailyFrom = windowRows.length > 0 ? windowRows[0]!.date : null;
   const windowDailyTo = windowRows.length > 0 ? windowRows[windowRows.length - 1]!.date : null;
 
+  const rangeMetaEl = (
+    <div className="pa-range-meta" aria-label="Visible range">
+      <span className="pa-range-meta-label">Shown</span>
+      {windowDailyFrom && windowDailyTo ? (
+        <span className="pa-range-meta-dates">
+          <span className="pa-range-meta-strong">{formatAxisLabel("daily", windowDailyFrom)}</span>
+          <span className="pa-range-meta-sep" aria-hidden="true">
+            –
+          </span>
+          <span className="pa-range-meta-strong">{formatAxisLabel("daily", windowDailyTo)}</span>
+        </span>
+      ) : (
+        <span className="pa-range-meta-strong">—</span>
+      )}
+      <span className="pa-range-meta-buckets">
+        {windowRows.length} {windowRows.length === 1 ? "day" : "days"}
+        {daysWindow === PA_RANGE_ALL && windowMeta.count > 0 ? " · full" : ""}
+        {timeframe !== "daily" && chartRows.length > 0
+          ? ` · ${chartRows.length} ${formatTimeframeLabel(timeframe).toLowerCase()}`
+          : ""}
+      </span>
+    </div>
+  );
+
   const rangeControlsEl = (
-    <div className="pa-range-controls" role="group" aria-label="Chart range and timeframe">
+    <div
+      className="pa-range-controls pa-range-controls--toolbar"
+      role="group"
+      aria-label="Chart range and timeframe"
+    >
       <div className="pa-range-left">
         <button
           type="button"
-          className="ghost-button small"
+          className="pa-range-nav-btn"
           onClick={() => setWindowStart((s) => Math.max(0, s - windowStep))}
           disabled={windowMeta.start <= 0}
           title="Shift the visible window to older history."
+          aria-label="Older history"
         >
-          Older
+          <span aria-hidden="true">←</span>
+          <span className="pa-range-nav-btn-label">Older</span>
         </button>
         <button
           type="button"
-          className="ghost-button small"
+          className="pa-range-nav-btn"
           onClick={() =>
             setWindowStart((s) => {
               const count = data?.length ?? 0;
@@ -3973,8 +4375,10 @@ export function ProductivityAnalysisModal({
           }
           disabled={windowMeta.end >= windowMeta.count}
           title="Shift the visible window to newer history."
+          aria-label="Newer history"
         >
-          Newer
+          <span className="pa-range-nav-btn-label">Newer</span>
+          <span aria-hidden="true">→</span>
         </button>
       </div>
       <label className="pa-tf-label">
@@ -3998,7 +4402,7 @@ export function ProductivityAnalysisModal({
       <label className="pa-tf-label">
         <span className="pa-tf-label-text">Range</span>
         <select
-          className="pa-tf-select"
+          className="pa-tf-select pa-tf-select--range"
           value={daysWindow}
           onChange={(e) => {
             const v = Number(e.target.value);
@@ -4006,6 +4410,7 @@ export function ProductivityAnalysisModal({
               setDaysWindow(v as PaRangeDays);
             }
           }}
+          aria-label="Chart history range"
           title="Choose how many days of history to include."
         >
           {PA_RANGE_OPTIONS.map((o) => (
@@ -4015,33 +4420,6 @@ export function ProductivityAnalysisModal({
           ))}
         </select>
       </label>
-      <div className="pa-range-meta" aria-label="Visible range">
-        <span className="pa-range-meta-label">Shown</span>{" "}
-        {windowDailyFrom && windowDailyTo ? (
-          <>
-            <span className="pa-range-meta-strong">{formatAxisLabel("daily", windowDailyFrom)}</span>
-            <span className="pa-range-meta-sep" aria-hidden="true">
-              —
-            </span>
-            <span className="pa-range-meta-strong">{formatAxisLabel("daily", windowDailyTo)}</span>
-          </>
-        ) : (
-          <span className="pa-range-meta-strong">—</span>
-        )}
-        <span className="pa-range-meta-buckets">
-          {" "}
-          · {windowRows.length} {windowRows.length === 1 ? "day" : "days"}
-        </span>
-        {daysWindow === PA_RANGE_ALL && windowMeta.count > 0 && (
-          <span className="pa-range-meta-buckets"> (full timeline)</span>
-        )}
-        {timeframe !== "daily" && chartRows.length > 0 && (
-          <span className="pa-range-meta-buckets">
-            {" "}
-            · {chartRows.length} {formatTimeframeLabel(timeframe).toLowerCase()} buckets
-          </span>
-        )}
-      </div>
     </div>
   );
 
@@ -4063,24 +4441,29 @@ export function ProductivityAnalysisModal({
             <div className="pa-header-copy">
               <div className="badge-modal-title pa-title">Productivity analysis</div>
               <div className="badge-modal-sub pa-subtitle">
-                Explore trends with flexible timeframes. Rolling averages smooth day-to-day noise;
-                shift the window with Older / Newer.
+                <span className="pa-subtitle-k">Profile</span>
+                <span className="pa-subtitle-v">
+                  {activeProfileId ? (activeProfileName ?? "Selected profile") : "All profiles"}
+                </span>
+                {rangeHint ? (
+                  <>
+                    <span className="pa-subtitle-sep" aria-hidden="true">
+                      ·
+                    </span>
+                    <span className="pa-subtitle-k">Dataset</span>
+                    <span className="pa-subtitle-v" title="Data range in daily timeline">
+                      {rangeHint}
+                    </span>
+                  </>
+                ) : null}
               </div>
-              <div className="badge-modal-sub pa-subtitle">
-                Profile: {activeProfileId ? (activeProfileName ?? "Selected profile") : "All profiles"}
-              </div>
-              {rangeHint && (
-                <div className="pa-range-pill" title="Data range in daily timeline">
-                  <span className="pa-range-pill-label">Dataset</span>
-                  <span className="pa-range-pill-value">{rangeHint}</span>
-                </div>
-              )}
             </div>
             <button
               type="button"
               className="pa-close-round"
               onClick={onClose}
               aria-label="Close productivity analysis"
+              title="Close"
             >
               <span aria-hidden="true">×</span>
             </button>
@@ -4091,60 +4474,81 @@ export function ProductivityAnalysisModal({
         </header>
 
         <div className="productivity-modal-body pa-body">
-          {!loading && !error && data && data.length > 0 && (
-            <div className="pa-summary" aria-label="Shown range summary">
-              <div className="pa-summary-card">
-                <div className="pa-summary-label">Tasks (shown)</div>
-                <div className="pa-summary-value">{Math.round(windowSummary.totalTasks).toLocaleString()}</div>
-                <div className="pa-summary-sub">
-                  Avg/{timeframe === "daily" ? "day" : "period"}: {Math.round(windowSummary.avgTasks * 10) / 10}
+          <div className="pa-insight-strip" aria-label="Shown range snapshot">
+            {!loading && !error && data && data.length > 0 ? (
+              <div className="pa-summary pa-summary--insight" aria-label="Shown range summary">
+                <div
+                  className="pa-summary-card pa-summary-card--range"
+                  title={
+                    windowDailyFrom && windowDailyTo
+                      ? [
+                          `${formatAxisLabel("daily", windowDailyFrom)} – ${formatAxisLabel("daily", windowDailyTo)}`,
+                          timeframe === "daily"
+                            ? `${windowRows.length.toLocaleString()} days`
+                            : `${chartRows.length.toLocaleString()} ${timeframeBucketsLabel(timeframe).toLowerCase()} · ${windowRows.length.toLocaleString()} days`
+                        ].join(" · ")
+                      : undefined
+                  }
+                >
+                  <div className="pa-summary-label">{timeframeBucketsLabel(timeframe)}</div>
+                  <div className="pa-summary-value">
+                    {(timeframe === "daily" ? windowRows.length : chartRows.length).toLocaleString()}
+                  </div>
+                  <div className="pa-summary-sub">
+                    {windowDailyFrom && windowDailyTo
+                      ? formatCompactRange(windowDailyFrom, windowDailyTo)
+                      : "—"}
+                  </div>
+                </div>
+                <div className="pa-summary-card">
+                  <div className="pa-summary-label">Tasks</div>
+                  <div className="pa-summary-value">
+                    {Math.round(windowSummary.totalTasks).toLocaleString()}
+                  </div>
+                  <div className="pa-summary-sub">
+                    {formatInsightAvg(windowSummary.avgTasks, timeframe)}
+                  </div>
+                </div>
+                <div className="pa-summary-card">
+                  <div className="pa-summary-label">XP</div>
+                  <div className="pa-summary-value">
+                    {Math.round(windowSummary.totalXp).toLocaleString()}
+                  </div>
+                  <div className="pa-summary-sub">
+                    {formatInsightAvg(windowSummary.avgXp, timeframe)}
+                  </div>
+                </div>
+                <div className="pa-summary-card pa-summary-card--accent">
+                  <div className="pa-summary-label">Best {timeframeBestUnit(timeframe)}</div>
+                  <div className="pa-summary-value">
+                    {windowSummary.bestTasks
+                      ? Math.round(windowSummary.bestTasks.value).toLocaleString()
+                      : "—"}
+                  </div>
+                  <div className="pa-summary-sub">
+                    {windowSummary.bestTasks
+                      ? formatInsightPeakWhen(timeframe, windowSummary.bestTasks.rawLabel)
+                      : "—"}
+                  </div>
+                </div>
+                <div className="pa-summary-card">
+                  <div className="pa-summary-label">Best XP</div>
+                  <div className="pa-summary-value">
+                    {windowSummary.bestXp
+                      ? Math.round(windowSummary.bestXp.value).toLocaleString()
+                      : "—"}
+                  </div>
+                  <div className="pa-summary-sub">
+                    {windowSummary.bestXp
+                      ? formatInsightPeakWhen(timeframe, windowSummary.bestXp.rawLabel)
+                      : "—"}
+                  </div>
                 </div>
               </div>
-              <div className="pa-summary-card">
-                <div className="pa-summary-label">XP (shown)</div>
-                <div className="pa-summary-value">{Math.round(windowSummary.totalXp).toLocaleString()}</div>
-                <div className="pa-summary-sub">
-                  Avg/{timeframe === "daily" ? "day" : "period"}: {Math.round(windowSummary.avgXp * 10) / 10}
-                </div>
-              </div>
-              <div className="pa-summary-card">
-                <div className="pa-summary-label">Best tasks {timeframe === "daily" ? "day" : "period"}</div>
-                <div className="pa-summary-value">
-                  {windowSummary.bestTasks ? Math.round(windowSummary.bestTasks.value).toLocaleString() : "—"}
-                </div>
-                <div className="pa-summary-sub">
-                  {windowSummary.bestTasks ? formatAxisLabel(timeframe, windowSummary.bestTasks.rawLabel) : ""}
-                </div>
-              </div>
-              <div className="pa-summary-card">
-                <div className="pa-summary-label">Best XP {timeframe === "daily" ? "day" : "period"}</div>
-                <div className="pa-summary-value">
-                  {windowSummary.bestXp ? Math.round(windowSummary.bestXp.value).toLocaleString() : "—"}
-                </div>
-                <div className="pa-summary-sub">
-                  {windowSummary.bestXp ? formatAxisLabel(timeframe, windowSummary.bestXp.rawLabel) : ""}
-                </div>
-              </div>
-              <div className="pa-summary-card">
-                <div className="pa-summary-label">Worst tasks {timeframe === "daily" ? "day" : "period"}</div>
-                <div className="pa-summary-value">
-                  {windowSummary.worstTasks ? Math.round(windowSummary.worstTasks.value).toLocaleString() : "—"}
-                </div>
-                <div className="pa-summary-sub">
-                  {windowSummary.worstTasks ? formatAxisLabel(timeframe, windowSummary.worstTasks.rawLabel) : ""}
-                </div>
-              </div>
-              <div className="pa-summary-card">
-                <div className="pa-summary-label">Worst XP {timeframe === "daily" ? "day" : "period"}</div>
-                <div className="pa-summary-value">
-                  {windowSummary.worstXp ? Math.round(windowSummary.worstXp.value).toLocaleString() : "—"}
-                </div>
-                <div className="pa-summary-sub">
-                  {windowSummary.worstXp ? formatAxisLabel(timeframe, windowSummary.worstXp.rawLabel) : ""}
-                </div>
-              </div>
-            </div>
-          )}
+            ) : (
+              rangeMetaEl
+            )}
+          </div>
           {loading && (
             <div className="pa-loading" aria-busy="true">
               <span className="pa-loading-dot" />
@@ -4190,7 +4594,6 @@ export function ProductivityAnalysisModal({
                           )
                         : points[points.length - 1]!.value
                       : 0;
-                  const yDom = chartYDomain(points, chart.cumulative);
                   const overlay =
                     !chart.cumulative
                       ? rollingAverage(
@@ -4198,231 +4601,223 @@ export function ProductivityAnalysisModal({
                           rollingAvgSpanBuckets(timeframe, points.length, visibleDaySpan)
                         )
                       : null;
+                  const yDom = chartYDomain(points, chart.cumulative, overlay);
                   const avgLatest =
                     overlay && overlay.length > 0
                       ? overlay[overlay.length - 1]!.value
                       : null;
-                  const avgPeak =
-                    overlay && overlay.length > 0 ? peakInSeries(overlay) : null;
                   const cumulativeGrowthPct =
                     chart.cumulative && points.length > 0
                       ? cumulativePopGrowthPercent(points, rawLatestVal)
                       : null;
-                  const prevVal = points.length >= 2 ? points[points.length - 2]!.value : null;
+                  const prevPeriodVal =
+                    !chart.cumulative && points.length >= 2
+                      ? points[points.length - 2]!.value
+                      : null;
+                  const periodGrowthPct =
+                    !chart.cumulative &&
+                    prevPeriodVal != null &&
+                    Number.isFinite(prevPeriodVal) &&
+                    prevPeriodVal !== 0
+                      ? ((rawLatestVal - prevPeriodVal) / Math.abs(prevPeriodVal)) * 100
+                      : !chart.cumulative && prevPeriodVal === 0 && rawLatestVal !== 0
+                        ? null
+                        : !chart.cumulative && prevPeriodVal === 0 && rawLatestVal === 0
+                          ? 0
+                          : null;
                   const latestLabel = points.length ? points[points.length - 1]!.rawLabel : "";
-                  const prevLabel = points.length >= 2 ? points[points.length - 2]!.rawLabel : null;
                   const peak = peakPoint(points);
 
                   return (
-                    <article key={chart.id} className="pa-card">
-                      <div className="pa-card-top">
-                        <div className="pa-card-head pa-card-head-row">
-                          <div className="pa-card-head-text">
-                            <h3 className="pa-card-title">{chart.title}</h3>
-                            <p className="pa-card-desc">{chart.description}</p>
-                          </div>
+                    <article key={chart.id} className="pa-graph pa-graph--pro">
+                      <header className="pa-graph-head">
+                        <div className="pa-graph-head-copy">
+                          <h3 className="pa-graph-title" title={chart.description}>
+                            {chart.title}
+                          </h3>
+                          <p className="pa-graph-unit">{chart.yAxisLabel}</p>
                         </div>
-                        {points.length > 0 && (
-                          <div className="pa-stat-pills">
-                            <div
-                              className="pa-pill"
-                              title={
-                                chart.cumulative
-                                  ? prevLabel && latestLabel
-                                    ? `Vs prior period: net change in cumulative total from end of ${formatAxisLabelWithYear(timeframe, prevLabel)} to end of ${formatAxisLabelWithYear(timeframe, latestLabel)}.`
-                                    : latestLabel
-                                      ? `Vs prior period: net change in cumulative total for ${formatAxisLabelWithYear(timeframe, latestLabel)} (vs prior period or visible window baseline when only one bucket is shown).`
-                                      : "Vs prior period: net change in cumulative total for the latest shown period vs the prior period."
-                                  : latestLabel
-                                    ? `Latest: value in ${formatAxisLabelWithYear(timeframe, latestLabel)}.`
-                                    : "Latest: value in the most recent period on the chart."
-                              }
-                            >
-                              <span className="pa-pill-label">
-                                {chart.cumulative ? "Vs prior period" : "Latest"}
-                              </span>
-                              <span className="pa-pill-value">
-                                {formatPillValue(rawLatestVal)}
-                              </span>
-                            </div>
-                            {chart.cumulative && (
-                              <div
-                                className="pa-pill pa-pill-growth"
-                                title={
-                                  prevLabel
-                                    ? `Growth %: percent change from ${formatAxisLabelWithYear(timeframe, prevLabel)} to ${formatAxisLabelWithYear(timeframe, latestLabel)}.`
-                                    : "Growth %: percent change vs the prior period."
-                                }
+                          {points.length > 0 && (
+                            <div className="pa-graph-tools">
+                              <ProductivityViewToggle
+                                mode={paView(chart.id)}
+                                onChange={(m) => setPaView(chart.id, m)}
+                                compact
+                              />
+                              <ProductivityExportButtons
+                                viewMode={paView(chart.id)}
+                                busy={exportBusyKey === `png-inline-${chart.id}`}
+                                compact
+                                onCsv={() => {
+                                  const fn = `${productivityExportFilenameStem(chart.id, timeframe)}.csv`;
+                                  downloadCsvRows(
+                                    fn,
+                                    buildSingleMetricTableCsvRows(
+                                      timeframe,
+                                      points,
+                                      overlay,
+                                      getSeriesVis(chart.id, Boolean(overlay)).avg,
+                                      chart.yAxisLabel
+                                    )
+                                  );
+                                  showExportSuccess("CSV exported", fn);
+                                }}
+                                onPng={() => {
+                                  const busyKey = `png-inline-${chart.id}`;
+                                  void (async () => {
+                                    const started = performance.now();
+                                    setExportBusyKey(busyKey);
+                                    try {
+                                      const visPng = getSeriesVis(chart.id, Boolean(overlay));
+                                      const blob = await exportPaChartPngFromRegistry(
+                                        chartSvgRegistry.current,
+                                        chart.id,
+                                        {
+                                          points,
+                                          timeframe,
+                                          yMin: yDom.yMin,
+                                          yMax: yDom.yMax,
+                                          chartLayoutMode: "inline",
+                                          chartTitle: chart.title,
+                                          caption: buildPaExportCaption(timeframe, points),
+                                          xAxisLabel: timeframe === "daily" ? "Date" : "Period",
+                                          yAxisLabel: chart.yAxisLabel,
+                                          integerYAxis: paExportPreferIntegerYAxis(chart.id),
+                                          legend: {
+                                            kind: "single",
+                                            showRaw: visPng.raw,
+                                            showAvg: visPng.avg,
+                                            hasOverlay: Boolean(
+                                              overlay && overlay.length === points.length
+                                            ),
+                                            cumulative: chart.cumulative,
+                                            primaryLabel: chart.yAxisLabel
+                                          }
+                                        }
+                                      );
+                                      const pngFn = `${productivityExportFilenameStem(chart.id, timeframe)}.png`;
+                                      downloadBlobFile(pngFn, blob);
+                                      const elapsed = performance.now() - started;
+                                      showExportSuccess(
+                                        "PNG exported",
+                                        pngFn,
+                                        elapsed >= 400 ? elapsed : undefined
+                                      );
+                                    } catch (e) {
+                                      showExportError(
+                                        e instanceof Error ? e.message : "PNG export failed."
+                                      );
+                                    } finally {
+                                      setExportBusyKey((k) => (k === busyKey ? null : k));
+                                    }
+                                  })();
+                                }}
+                              />
+                              <button
+                                type="button"
+                                className="pa-expand-chart-btn pa-expand-chart-btn--icon"
+                                aria-label={`Open full screen for ${chart.title}. Same range and timeframe. Press Escape to close.`}
+                                title={`Fullscreen: ${chart.title}`}
+                                onClick={() => openFullscreenChart(chart.id)}
                               >
-                                <span className="pa-pill-label">Growth %</span>
-                                <span className="pa-pill-value pa-pill-value-growth">
-                                  {formatGrowthPercent(cumulativeGrowthPct)}
+                                <span className="pa-expand-icon" aria-hidden="true">
+                                  <svg
+                                    className="pa-expand-svg"
+                                    viewBox="0 0 24 24"
+                                    fill="none"
+                                    xmlns="http://www.w3.org/2000/svg"
+                                  >
+                                    <path
+                                      d="M3.75 3.75v4.5m0-4.5h4.5m-4.5 0L9 9M3.75 20.25v-4.5m0 4.5h4.5m-4.5 0L9 15M20.25 3.75h-4.5m4.5 0v4.5m0-4.5L15 9m5.25 11.25h-4.5m4.5 0v-4.5m0 4.5L15 15"
+                                      stroke="currentColor"
+                                      strokeWidth="1.85"
+                                      strokeLinecap="round"
+                                      strokeLinejoin="round"
+                                      vectorEffect="non-scaling-stroke"
+                                    />
+                                  </svg>
                                 </span>
+                              </button>
+                            </div>
+                          )}
+                        </header>
+                        {points.length > 0 && (
+                          <div className="pa-graph-kpis" aria-label="Key metrics">
+                            <div className="pa-graph-kpi">
+                              <span className="pa-graph-kpi-label">
+                                {chart.cumulative ? "Change" : "Latest"}
+                              </span>
+                              <div className="pa-graph-kpi-row">
+                                <span className="pa-graph-kpi-value">
+                                  {formatPillValue(rawLatestVal)}
+                                </span>
+                                {chart.cumulative && cumulativeGrowthPct != null ? (
+                                  <span
+                                    className={`pa-graph-kpi-delta ${
+                                      cumulativeGrowthPct > 0
+                                        ? "is-up"
+                                        : cumulativeGrowthPct < 0
+                                          ? "is-down"
+                                          : "is-flat"
+                                    }`}
+                                  >
+                                    {formatGrowthPercent(cumulativeGrowthPct)}
+                                  </span>
+                                ) : null}
+                                {!chart.cumulative && periodGrowthPct != null ? (
+                                  <span
+                                    className={`pa-graph-kpi-delta ${
+                                      periodGrowthPct > 0
+                                        ? "is-up"
+                                        : periodGrowthPct < 0
+                                          ? "is-down"
+                                          : "is-flat"
+                                    }`}
+                                  >
+                                    {formatGrowthPercent(periodGrowthPct)}
+                                  </span>
+                                ) : null}
                               </div>
-                            )}
-                            <div
-                              className="pa-pill pa-pill-muted"
-                              title={
-                                chart.cumulative
-                                  ? prevLabel
-                                    ? `Previous: cumulative level at end of ${formatAxisLabelWithYear(timeframe, prevLabel)}.`
-                                    : "Previous: cumulative level at end of the prior period."
-                                  : prevLabel
-                                    ? `Previous: value in ${formatAxisLabelWithYear(timeframe, prevLabel)}.`
-                                    : "Previous: value in the period immediately before Latest."
-                              }
-                            >
-                              <span className="pa-pill-label">Previous</span>
-                              <span className="pa-pill-value">
-                                {prevVal !== null ? formatPillValue(prevVal) : "—"}
+                              <span className="pa-graph-kpi-sub">
+                                {latestLabel
+                                  ? formatInsightPeakWhen(timeframe, latestLabel)
+                                  : `This ${timeframeBestUnit(timeframe)}`}
                               </span>
                             </div>
-                            <div
-                              className="pa-pill pa-pill-muted"
-                              title={
-                                peak?.rawLabel
-                                  ? `Peak: highest value in the shown range (at ${formatAxisLabelWithYear(timeframe, peak.rawLabel)}).`
-                                  : "Peak: highest value in the shown range."
-                              }
-                            >
-                              <span className="pa-pill-label">Peak</span>
-                              <span className="pa-pill-value">
+                            <div className="pa-graph-kpi">
+                              <span className="pa-graph-kpi-label">Peak</span>
+                              <span className="pa-graph-kpi-value">
                                 {formatPillValue(rawPeak)}
                               </span>
+                              <span className="pa-graph-kpi-sub">
+                                {peak?.rawLabel
+                                  ? formatInsightPeakWhen(timeframe, peak.rawLabel)
+                                  : "In range"}
+                              </span>
                             </div>
-                            {avgLatest !== null && avgPeak !== null && (
-                              <>
-                                <div
-                                  className="pa-pill pa-pill-avg"
-                                  title={
-                                    latestLabel
-                                      ? `Avg · latest: rolling average value at ${formatAxisLabelWithYear(timeframe, latestLabel)}.`
-                                      : "Avg · latest: rolling average at the latest period."
-                                  }
-                                >
-                                  <span className="pa-pill-label">Avg · latest</span>
-                                  <span className="pa-pill-value">
-                                    {formatPillValue(avgLatest)}
-                                  </span>
-                                </div>
-                                <div
-                                  className="pa-pill pa-pill-avg-muted"
-                                  title="Avg · peak: highest rolling average value in the shown range."
-                                >
-                                  <span className="pa-pill-label">Avg · peak</span>
-                                  <span className="pa-pill-value">
-                                    {formatPillValue(avgPeak)}
-                                  </span>
-                                </div>
-                              </>
+                            {avgLatest !== null ? (
+                              <div className="pa-graph-kpi">
+                                <span className="pa-graph-kpi-label">Avg</span>
+                                <span className="pa-graph-kpi-value">
+                                  {formatPillValue(avgLatest)}
+                                </span>
+                                <span className="pa-graph-kpi-sub">
+                                  Rolling · {timeframeBestUnit(timeframe)}
+                                </span>
+                              </div>
+                            ) : (
+                              <div className="pa-graph-kpi">
+                                <span className="pa-graph-kpi-label">
+                                  {timeframeBucketsLabel(timeframe)}
+                                </span>
+                                <span className="pa-graph-kpi-value">{points.length}</span>
+                                <span className="pa-graph-kpi-sub">In view</span>
+                              </div>
                             )}
                           </div>
                         )}
-                        {points.length > 0 && (
-                          <div className="pa-card-actions">
-                            <ProductivityViewToggle
-                              mode={paView(chart.id)}
-                              onChange={(m) => setPaView(chart.id, m)}
-                            />
-                            <ProductivityExportButtons
-                              viewMode={paView(chart.id)}
-                              busy={exportBusyKey === `png-inline-${chart.id}`}
-                              onCsv={() => {
-                                const fn = `${productivityExportFilenameStem(chart.id, timeframe)}.csv`;
-                                downloadCsvRows(
-                                  fn,
-                                  buildSingleMetricTableCsvRows(
-                                    timeframe,
-                                    points,
-                                    overlay,
-                                    getSeriesVis(chart.id, Boolean(overlay)).avg,
-                                    chart.yAxisLabel
-                                  )
-                                );
-                                showExportSuccess("CSV exported", fn);
-                              }}
-                              onPng={() => {
-                                const busyKey = `png-inline-${chart.id}`;
-                                void (async () => {
-                                  const started = performance.now();
-                                  setExportBusyKey(busyKey);
-                                  try {
-                                    const visPng = getSeriesVis(chart.id, Boolean(overlay));
-                                    const blob = await exportPaChartPngFromRegistry(
-                                      chartSvgRegistry.current,
-                                      chart.id,
-                                      {
-                                        points,
-                                        timeframe,
-                                        yMin: yDom.yMin,
-                                        yMax: yDom.yMax,
-                                        chartLayoutMode: "inline",
-                                        chartTitle: chart.title,
-                                        caption: buildPaExportCaption(timeframe, points),
-                                        xAxisLabel: timeframe === "daily" ? "Date" : "Period",
-                                        yAxisLabel: chart.yAxisLabel,
-                                        integerYAxis: paExportPreferIntegerYAxis(chart.id),
-                                        legend: {
-                                          kind: "single",
-                                          showRaw: visPng.raw,
-                                          showAvg: visPng.avg,
-                                          hasOverlay: Boolean(
-                                            overlay && overlay.length === points.length
-                                          ),
-                                          cumulative: chart.cumulative,
-                                          primaryLabel: chart.yAxisLabel
-                                        }
-                                      }
-                                    );
-                                    const pngFn = `${productivityExportFilenameStem(chart.id, timeframe)}.png`;
-                                    downloadBlobFile(pngFn, blob);
-                                    const elapsed = performance.now() - started;
-                                    showExportSuccess(
-                                      "PNG exported",
-                                      pngFn,
-                                      elapsed >= 400 ? elapsed : undefined
-                                    );
-                                  } catch (e) {
-                                    showExportError(
-                                      e instanceof Error ? e.message : "PNG export failed."
-                                    );
-                                  } finally {
-                                    setExportBusyKey((k) => (k === busyKey ? null : k));
-                                  }
-                                })();
-                              }}
-                            />
-                            <button
-                              type="button"
-                              className="pa-expand-chart-btn"
-                              aria-label={`Open full screen for ${chart.title}. Same range and timeframe. Press Escape to close.`}
-                              title={`Open full screen: ${chart.title}. Keeps your current range and timeframe. Press Esc or Exit to return.`}
-                              onClick={() => openFullscreenChart(chart.id)}
-                            >
-                              <span className="pa-expand-icon" aria-hidden="true">
-                                <svg
-                                  className="pa-expand-svg"
-                                  viewBox="0 0 24 24"
-                                  fill="none"
-                                  xmlns="http://www.w3.org/2000/svg"
-                                >
-                                  <path
-                                    d="M3.75 3.75v4.5m0-4.5h4.5m-4.5 0L9 9M3.75 20.25v-4.5m0 4.5h4.5m-4.5 0L9 15M20.25 3.75h-4.5m4.5 0v4.5m0-4.5L15 9m5.25 11.25h-4.5m4.5 0v-4.5m0 4.5L15 15"
-                                    stroke="currentColor"
-                                    strokeWidth="1.85"
-                                    strokeLinecap="round"
-                                    strokeLinejoin="round"
-                                    vectorEffect="non-scaling-stroke"
-                                  />
-                                </svg>
-                              </span>
-                              <span className="pa-expand-text">Fullscreen</span>
-                            </button>
-                          </div>
-                        )}
-                      </div>
 
-                      <div className="pa-chart-panel">
+                      <div className="pa-graph-canvas">
                         {points.length === 0 ? (
                           <div className="muted small pa-no-data">No data for this timeframe.</div>
                         ) : (
@@ -4430,22 +4825,6 @@ export function ProductivityAnalysisModal({
                             const vis = getSeriesVis(chart.id, Boolean(overlay));
                             return (
                           <>
-                            <div className="pa-chart-window-caption" aria-label="Visible period">
-                              <span className="pa-chart-window-caption-label">Shown</span>
-                              <span className="pa-chart-window-caption-range">
-                                {formatAxisLabel(timeframe, points[0]!.rawLabel)}
-                                <span className="pa-chart-window-caption-sep" aria-hidden="true">
-                                  —
-                                </span>
-                                {formatAxisLabel(
-                                  timeframe,
-                                  points[points.length - 1]!.rawLabel
-                                )}
-                              </span>
-                              <span className="pa-chart-window-caption-meta">
-                                {points.length} {points.length === 1 ? "point" : "points"}
-                              </span>
-                            </div>
                             {paView(chart.id) === "table" ? (
                               <PaSingleMetricTable
                                 timeframe={timeframe}
@@ -4512,74 +4891,28 @@ export function ProductivityAnalysisModal({
                 })}
 
                 {projectTasksSeries.length > 0 && (
-                  <article key="tasksCompletedByProject" className="pa-card">
-                    <div className="pa-card-top">
-                      <div className="pa-card-head pa-card-head-row">
-                        <div className="pa-card-head-text">
-                          <h3 className="pa-card-title">Tasks by project</h3>
-                          <p className="pa-card-desc">
-                            Completed tasks each period, split by project.
-                          </p>
+                  <article key="tasksCompletedByProject" className="pa-graph pa-graph--pro">
+                    <div className="pa-graph-body-top">
+                      <div className="pa-graph-head">
+                        <div className="pa-graph-head-copy">
+                          <h3
+                            className="pa-graph-title"
+                            title="Completed tasks each period, split by project."
+                          >
+                            Tasks by project
+                          </h3>
+                          <p className="pa-graph-unit">Tasks · per period</p>
                         </div>
-                      </div>
-                      <div className="pa-stat-pills" aria-label="Project chart quick stats">
-                        <div
-                          className="pa-pill"
-                          title={
-                            inlineProjectTotals.latestLabel
-                              ? `Latest: total tasks completed across visible projects in ${formatAxisLabelWithYear(projectTimeframe, inlineProjectTotals.latestLabel)}.`
-                              : "Latest: total tasks completed across visible projects in the most recent shown period."
-                          }
-                        >
-                          <span className="pa-pill-label">Latest</span>
-                          <span className="pa-pill-value">
-                            {inlineProjectTotals.hasVisible ? formatPillValue(inlineProjectTotals.latest) : "—"}
-                          </span>
-                        </div>
-                        <div
-                          className="pa-pill pa-pill-muted"
-                          title={
-                            inlineProjectTotals.previousLabel
-                              ? `Previous: total tasks completed across visible projects in ${formatAxisLabelWithYear(projectTimeframe, inlineProjectTotals.previousLabel)}.`
-                              : "Previous: total tasks completed across visible projects in the period immediately before Latest."
-                          }
-                        >
-                          <span className="pa-pill-label">Previous</span>
-                          <span className="pa-pill-value">
-                            {inlineProjectTotals.hasVisible && inlineProjectTotals.previous !== null
-                              ? formatPillValue(inlineProjectTotals.previous)
-                              : "—"}
-                          </span>
-                        </div>
-                        <div
-                          className="pa-pill pa-pill-muted"
-                          title={
-                            inlineProjectTotals.peakLabel
-                              ? `Peak: highest total tasks completed across visible projects (at ${formatAxisLabelWithYear(projectTimeframe, inlineProjectTotals.peakLabel)}).`
-                              : "Peak: highest total tasks completed across visible projects in any shown period."
-                          }
-                        >
-                          <span className="pa-pill-label">Peak</span>
-                          <span className="pa-pill-value">
-                            {inlineProjectTotals.hasVisible ? formatPillValue(inlineProjectTotals.peak) : "—"}
-                          </span>
-                        </div>
-                        <div
-                          className="pa-pill pa-pill-avg-muted"
-                          title="Series: number of visible project lines (projects) currently plotted."
-                        >
-                          <span className="pa-pill-label">Series</span>
-                          <span className="pa-pill-value">{visibleProjectTaskSeriesIds.size}</span>
-                        </div>
-                      </div>
-                      <div className="pa-card-actions">
+                          <div className="pa-graph-tools">
                         <ProductivityViewToggle
                           mode={paView("tasksCompletedByProject")}
                           onChange={(m) => setPaView("tasksCompletedByProject", m)}
+                          compact
                         />
                         <ProductivityExportButtons
                           viewMode={paView("tasksCompletedByProject")}
                           busy={exportBusyKey === "png-inline-tasksCompletedByProject"}
+                          compact
                           onCsv={() => {
                             const fn = `${productivityExportFilenameStem("tasks-by-project-tasks", projectTimeframe)}.csv`;
                             downloadCsvRows(
@@ -4641,7 +4974,7 @@ export function ProductivityAnalysisModal({
                         />
                         <button
                           type="button"
-                          className="pa-expand-chart-btn"
+                          className="pa-expand-chart-btn pa-expand-chart-btn--icon"
                           aria-label="Open full screen for Tasks by project. Same range and timeframe. Press Escape to close."
                           title="Open full screen: Tasks by project. Keeps your current range and timeframe. Press Esc or Exit to return."
                           onClick={() => openFullscreenChart("tasksCompletedByProject")}
@@ -4666,26 +4999,53 @@ export function ProductivityAnalysisModal({
                           <span className="pa-expand-text">Fullscreen</span>
                         </button>
                       </div>
+                      </div>
+                      <div className="pa-graph-kpis" aria-label="Project chart quick stats">
+                        <div className="pa-graph-kpi">
+                          <span className="pa-graph-kpi-label">Latest</span>
+                          <span className="pa-graph-kpi-value">
+                            {inlineProjectTotals.hasVisible
+                              ? formatPillValue(inlineProjectTotals.latest)
+                              : "—"}
+                          </span>
+                          <span className="pa-graph-kpi-sub">
+                            {inlineProjectTotals.latestLabel
+                              ? formatInsightPeakWhen(
+                                  projectTimeframe,
+                                  inlineProjectTotals.latestLabel
+                                )
+                              : "Visible projects"}
+                          </span>
+                        </div>
+                        <div className="pa-graph-kpi">
+                          <span className="pa-graph-kpi-label">Peak</span>
+                          <span className="pa-graph-kpi-value">
+                            {inlineProjectTotals.hasVisible
+                              ? formatPillValue(inlineProjectTotals.peak)
+                              : "—"}
+                          </span>
+                          <span className="pa-graph-kpi-sub">
+                            {inlineProjectTotals.peakLabel
+                              ? formatInsightPeakWhen(
+                                  projectTimeframe,
+                                  inlineProjectTotals.peakLabel
+                                )
+                              : "In range"}
+                          </span>
+                        </div>
+                        <div className="pa-graph-kpi">
+                          <span className="pa-graph-kpi-label">Series</span>
+                          <span className="pa-graph-kpi-value">
+                            {visibleProjectTaskSeriesIds.size}
+                          </span>
+                          <span className="pa-graph-kpi-sub">
+                            {timeframeBucketsLabel(projectTimeframe)}
+                          </span>
+                        </div>
+                      </div>
                     </div>
 
-                    <div className="pa-chart-panel">
-                      <div className="pa-chart-window-caption" aria-label="Visible period">
-                        <span className="pa-chart-window-caption-label">Shown</span>
-                        <span className="pa-chart-window-caption-range">
-                          {formatAxisLabel(projectTimeframe, projectTasksSeries[0]!.points[0]!.rawLabel)}
-                          <span className="pa-chart-window-caption-sep" aria-hidden="true">
-                            —
-                          </span>
-                          {formatAxisLabel(
-                            projectTimeframe,
-                            projectTasksSeries[0]!.points[projectTasksSeries[0]!.points.length - 1]!.rawLabel
-                          )}
-                        </span>
-                        <span className="pa-chart-window-caption-meta">
-                          {projectTasksSeries[0]!.points.length}{" "}
-                          {projectTasksSeries[0]!.points.length === 1 ? "point" : "points"}
-                        </span>
-                      </div>
+                    <div className="pa-graph-canvas">
                       {paView("tasksCompletedByProject") === "table" ? (
                         <PaProjectSeriesTable
                           timeframe={projectTimeframe}
@@ -4700,7 +5060,7 @@ export function ProductivityAnalysisModal({
                           yMax={projectTasksYDomain.yMax}
                           timeframe={projectTimeframe}
                           xAxisLabel={projectTimeframe === "daily" ? "Date" : "Period"}
-                          yAxisLabel="Tasks · per period"
+                          yAxisLabel="Tasks"
                           mode="inline"
                           visibleSeriesIds={visibleProjectTaskSeriesIds}
                           onToggleSeries={toggleProjectSeries}
@@ -4717,7 +5077,7 @@ export function ProductivityAnalysisModal({
                             yMax={projectTasksYDomain.yMax}
                             timeframe={projectTimeframe}
                             xAxisLabel={projectTimeframe === "daily" ? "Date" : "Period"}
-                            yAxisLabel="Tasks · per period"
+                            yAxisLabel="Tasks"
                             mode="inline"
                             visibleSeriesIds={visibleProjectTaskSeriesIds}
                             onToggleSeries={toggleProjectSeries}
@@ -4731,74 +5091,28 @@ export function ProductivityAnalysisModal({
                 )}
 
                 {projectXpSeries.length > 0 && (
-                  <article key="xpGainedByProject" className="pa-card">
-                    <div className="pa-card-top">
-                      <div className="pa-card-head pa-card-head-row">
-                        <div className="pa-card-head-text">
-                          <h3 className="pa-card-title">XP by project</h3>
-                          <p className="pa-card-desc">
-                            XP earned each period, split by project.
-                          </p>
+                  <article key="xpGainedByProject" className="pa-graph pa-graph--pro">
+                    <div className="pa-graph-body-top">
+                      <div className="pa-graph-head">
+                        <div className="pa-graph-head-copy">
+                          <h3
+                            className="pa-graph-title"
+                            title="XP earned each period, split by project."
+                          >
+                            XP by project
+                          </h3>
+                          <p className="pa-graph-unit">XP · per period</p>
                         </div>
-                      </div>
-                      <div className="pa-stat-pills" aria-label="Project XP chart quick stats">
-                        <div
-                          className="pa-pill"
-                          title={
-                            inlineProjectXpTotals.latestLabel
-                              ? `Latest: total XP gained across visible projects in ${formatAxisLabelWithYear(projectTimeframe, inlineProjectXpTotals.latestLabel)}.`
-                              : "Latest: total XP gained across visible projects in the most recent shown period."
-                          }
-                        >
-                          <span className="pa-pill-label">Latest</span>
-                          <span className="pa-pill-value">
-                            {inlineProjectXpTotals.hasVisible ? formatPillValue(inlineProjectXpTotals.latest) : "—"}
-                          </span>
-                        </div>
-                        <div
-                          className="pa-pill pa-pill-muted"
-                          title={
-                            inlineProjectXpTotals.previousLabel
-                              ? `Previous: total XP gained across visible projects in ${formatAxisLabelWithYear(projectTimeframe, inlineProjectXpTotals.previousLabel)}.`
-                              : "Previous: total XP gained across visible projects in the period immediately before Latest."
-                          }
-                        >
-                          <span className="pa-pill-label">Previous</span>
-                          <span className="pa-pill-value">
-                            {inlineProjectXpTotals.hasVisible && inlineProjectXpTotals.previous !== null
-                              ? formatPillValue(inlineProjectXpTotals.previous)
-                              : "—"}
-                          </span>
-                        </div>
-                        <div
-                          className="pa-pill pa-pill-muted"
-                          title={
-                            inlineProjectXpTotals.peakLabel
-                              ? `Peak: highest total XP gained across visible projects (at ${formatAxisLabelWithYear(projectTimeframe, inlineProjectXpTotals.peakLabel)}).`
-                              : "Peak: highest total XP gained across visible projects in any shown period."
-                          }
-                        >
-                          <span className="pa-pill-label">Peak</span>
-                          <span className="pa-pill-value">
-                            {inlineProjectXpTotals.hasVisible ? formatPillValue(inlineProjectXpTotals.peak) : "—"}
-                          </span>
-                        </div>
-                        <div
-                          className="pa-pill pa-pill-avg-muted"
-                          title="Series: number of visible project lines (projects) currently plotted in this chart."
-                        >
-                          <span className="pa-pill-label">Series</span>
-                          <span className="pa-pill-value">{visibleProjectXpSeriesIds.size}</span>
-                        </div>
-                      </div>
-                      <div className="pa-card-actions">
+                          <div className="pa-graph-tools">
                         <ProductivityViewToggle
                           mode={paView("xpGainedByProject")}
                           onChange={(m) => setPaView("xpGainedByProject", m)}
+                          compact
                         />
                         <ProductivityExportButtons
                           viewMode={paView("xpGainedByProject")}
                           busy={exportBusyKey === "png-inline-xpGainedByProject"}
+                          compact
                           onCsv={() => {
                             const fn = `${productivityExportFilenameStem("tasks-by-project-xp", projectTimeframe)}.csv`;
                             downloadCsvRows(
@@ -4860,7 +5174,7 @@ export function ProductivityAnalysisModal({
                         />
                         <button
                           type="button"
-                          className="pa-expand-chart-btn"
+                          className="pa-expand-chart-btn pa-expand-chart-btn--icon"
                           aria-label="Open full screen for XP by project. Same range and timeframe. Press Escape to close."
                           title="Open full screen: XP by project. Keeps your current range and timeframe. Press Esc or Exit to return."
                           onClick={() => openFullscreenChart("xpGainedByProject")}
@@ -4885,26 +5199,53 @@ export function ProductivityAnalysisModal({
                           <span className="pa-expand-text">Fullscreen</span>
                         </button>
                       </div>
+                      </div>
+                      <div className="pa-graph-kpis" aria-label="Project XP chart quick stats">
+                        <div className="pa-graph-kpi">
+                          <span className="pa-graph-kpi-label">Latest</span>
+                          <span className="pa-graph-kpi-value">
+                            {inlineProjectXpTotals.hasVisible
+                              ? formatPillValue(inlineProjectXpTotals.latest)
+                              : "—"}
+                          </span>
+                          <span className="pa-graph-kpi-sub">
+                            {inlineProjectXpTotals.latestLabel
+                              ? formatInsightPeakWhen(
+                                  projectTimeframe,
+                                  inlineProjectXpTotals.latestLabel
+                                )
+                              : "Visible projects"}
+                          </span>
+                        </div>
+                        <div className="pa-graph-kpi">
+                          <span className="pa-graph-kpi-label">Peak</span>
+                          <span className="pa-graph-kpi-value">
+                            {inlineProjectXpTotals.hasVisible
+                              ? formatPillValue(inlineProjectXpTotals.peak)
+                              : "—"}
+                          </span>
+                          <span className="pa-graph-kpi-sub">
+                            {inlineProjectXpTotals.peakLabel
+                              ? formatInsightPeakWhen(
+                                  projectTimeframe,
+                                  inlineProjectXpTotals.peakLabel
+                                )
+                              : "In range"}
+                          </span>
+                        </div>
+                        <div className="pa-graph-kpi">
+                          <span className="pa-graph-kpi-label">Series</span>
+                          <span className="pa-graph-kpi-value">
+                            {visibleProjectXpSeriesIds.size}
+                          </span>
+                          <span className="pa-graph-kpi-sub">
+                            {timeframeBucketsLabel(projectTimeframe)}
+                          </span>
+                        </div>
+                      </div>
                     </div>
 
-                    <div className="pa-chart-panel">
-                      <div className="pa-chart-window-caption" aria-label="Visible period">
-                        <span className="pa-chart-window-caption-label">Shown</span>
-                        <span className="pa-chart-window-caption-range">
-                          {formatAxisLabel(projectTimeframe, projectXpSeries[0]!.points[0]!.rawLabel)}
-                          <span className="pa-chart-window-caption-sep" aria-hidden="true">
-                            —
-                          </span>
-                          {formatAxisLabel(
-                            projectTimeframe,
-                            projectXpSeries[0]!.points[projectXpSeries[0]!.points.length - 1]!.rawLabel
-                          )}
-                        </span>
-                        <span className="pa-chart-window-caption-meta">
-                          {projectXpSeries[0]!.points.length}{" "}
-                          {projectXpSeries[0]!.points.length === 1 ? "point" : "points"}
-                        </span>
-                      </div>
+                    <div className="pa-graph-canvas">
                       {paView("xpGainedByProject") === "table" ? (
                         <PaProjectSeriesTable
                           timeframe={projectTimeframe}
@@ -4919,7 +5260,7 @@ export function ProductivityAnalysisModal({
                           yMax={projectXpYDomain.yMax}
                           timeframe={projectTimeframe}
                           xAxisLabel={projectTimeframe === "daily" ? "Date" : "Period"}
-                          yAxisLabel="XP · per period"
+                          yAxisLabel="XP"
                           mode="inline"
                           visibleSeriesIds={visibleProjectXpSeriesIds}
                           onToggleSeries={toggleProjectSeries}
@@ -4936,7 +5277,7 @@ export function ProductivityAnalysisModal({
                             yMax={projectXpYDomain.yMax}
                             timeframe={projectTimeframe}
                             xAxisLabel={projectTimeframe === "daily" ? "Date" : "Period"}
-                            yAxisLabel="XP · per period"
+                            yAxisLabel="XP"
                             mode="inline"
                             visibleSeriesIds={visibleProjectXpSeriesIds}
                             onToggleSeries={toggleProjectSeries}
@@ -4997,46 +5338,55 @@ export function ProductivityAnalysisModal({
       >
         <div
           ref={fsChromeRef}
-          className="pa-fs-chrome"
+          className="pa-fs-chrome pa-fs-chrome--pro"
           onClick={(e) => e.stopPropagation()}
         >
           <header className="pa-fs-header">
             <div className="pa-fs-header-main">
-              <h2 id="pa-fs-title" className="pa-fs-title">
-                {fsAnyChart.title}
-              </h2>
-              <p id="pa-fs-desc" className="pa-fs-desc">
-                {fsAnyChart.description}
-              </p>
+              <div className="pa-fs-header-line">
+                <p className="pa-fs-eyebrow">
+                  Analysis
+                  {fsChartIndex >= 0 ? (
+                    <span className="pa-fs-eyebrow-idx">
+                      {" "}
+                      · {fsChartIndex + 1}/{FS_ALL.length}
+                    </span>
+                  ) : null}
+                </p>
+                <h2 id="pa-fs-title" className="pa-fs-title">
+                  {fsAnyChart.title}
+                </h2>
+                <p id="pa-fs-desc" className="pa-fs-desc">
+                  {fsAnyChart.description}
+                </p>
+              </div>
             </div>
             <div className="pa-fs-actions">
               {!isBrowserFullscreen && (
                 <button
                   type="button"
-                  className="ghost-button small"
+                  className="pa-fs-action-btn"
                   onClick={() => void requestPaChartBrowserFullscreen()}
                   title="Enter true browser full screen mode"
                 >
-                  Enter fullscreen
+                  Expand
                 </button>
               )}
               <button
                 ref={fsCloseBtnRef}
                 type="button"
-                className="ghost-button small"
+                className="pa-fs-close"
                 onClick={closeFullscreenChart}
-                title="Close this chart full screen view"
+                title="Close fullscreen (Esc)"
+                aria-label="Close fullscreen"
               >
-                Close
+                <span aria-hidden="true">×</span>
               </button>
             </div>
           </header>
 
           <div className="pa-fs-range-bar">
             {rangeControlsEl}
-            <p className="pa-fs-scroll-hint muted small">
-              Scroll this chart horizontally if the timeline is wider than the screen.
-            </p>
           </div>
           <div className="pa-fs-chart-host">
             <PaErrorBoundary
@@ -5049,73 +5399,56 @@ export function ProductivityAnalysisModal({
                 if (id) openFullscreenChart(id);
               }}
             >
+              <div className="pa-fs-stage" key={fullscreenChartId ?? "none"}>
               {fsIsProject ? (fullscreenChartId === "xpGainedByProject" ? projectXpSeries : projectTasksSeries).length === 0 ? (
                 <div className="muted pa-no-data pa-no-data-fs" role="alert">
                   No project breakdown data is available for this range.
                 </div>
               ) : (
                 <>
-                  <div className="pa-fs-pills">
-                    <div className="pa-fs-pills-inner">
-                      <div
-                        className="pa-pill"
-                        title={
-                          fullscreenChartId === "xpGainedByProject"
-                            ? fsProjectTotals.latestLabel
-                              ? `Latest: total XP gained across visible projects in ${formatAxisLabelWithYear(projectTimeframe, fsProjectTotals.latestLabel)}.`
-                              : "Latest: total XP gained across visible projects in the most recent shown period."
-                            : fsProjectTotals.latestLabel
-                              ? `Latest: total tasks completed across visible projects in ${formatAxisLabelWithYear(projectTimeframe, fsProjectTotals.latestLabel)}.`
-                              : "Latest: total tasks completed across visible projects in the most recent shown period."
-                        }
-                      >
-                        <span className="pa-pill-label">Latest</span>
-                        <span className="pa-pill-value">{formatPillValue(fsProjectTotals.latest)}</span>
-                      </div>
-                      <div
-                        className="pa-pill pa-pill-muted"
-                        title={
-                          fullscreenChartId === "xpGainedByProject"
-                            ? fsProjectTotals.previousLabel
-                              ? `Previous: total XP gained across visible projects in ${formatAxisLabelWithYear(projectTimeframe, fsProjectTotals.previousLabel)}.`
-                              : "Previous: total XP gained across visible projects in the period immediately before Latest."
-                            : fsProjectTotals.previousLabel
-                              ? `Previous: total tasks completed across visible projects in ${formatAxisLabelWithYear(projectTimeframe, fsProjectTotals.previousLabel)}.`
-                              : "Previous: total tasks completed across visible projects in the period immediately before Latest."
-                        }
-                      >
-                        <span className="pa-pill-label">Previous</span>
-                        <span className="pa-pill-value">
-                          {fsProjectTotals.previous !== null ? formatPillValue(fsProjectTotals.previous) : "—"}
+                  <div className="pa-fs-toolbar">
+                    <div className="pa-fs-kpis" role="group" aria-label="Chart summary">
+                      <div className="pa-fs-kpi">
+                        <span className="pa-fs-kpi-label">Latest</span>
+                        <span className="pa-fs-kpi-value">
+                          {formatPillValue(fsProjectTotals.latest)}
+                        </span>
+                        <span className="pa-fs-kpi-sub">
+                          {fsProjectTotals.latestLabel
+                            ? formatInsightPeakWhen(
+                                projectTimeframe,
+                                fsProjectTotals.latestLabel
+                              )
+                            : "Visible projects"}
                         </span>
                       </div>
-                      <div
-                        className="pa-pill pa-pill-muted"
-                        title={
-                          fullscreenChartId === "xpGainedByProject"
-                            ? fsProjectTotals.peakLabel
-                              ? `Peak: highest total XP gained across visible projects (at ${formatAxisLabelWithYear(projectTimeframe, fsProjectTotals.peakLabel)}).`
-                              : "Peak: highest total XP gained across visible projects in any shown period."
-                            : fsProjectTotals.peakLabel
-                              ? `Peak: highest total tasks completed across visible projects (at ${formatAxisLabelWithYear(projectTimeframe, fsProjectTotals.peakLabel)}).`
-                              : "Peak: highest total tasks completed across visible projects in any shown period."
-                        }
-                      >
-                        <span className="pa-pill-label">Peak</span>
-                        <span className="pa-pill-value">{formatPillValue(fsProjectTotals.peak)}</span>
+                      <div className="pa-fs-kpi">
+                        <span className="pa-fs-kpi-label">Peak</span>
+                        <span className="pa-fs-kpi-value pa-fs-kpi-value--peak">
+                          {formatPillValue(fsProjectTotals.peak)}
+                        </span>
+                        <span className="pa-fs-kpi-sub">
+                          {fsProjectTotals.peakLabel
+                            ? formatInsightPeakWhen(
+                                projectTimeframe,
+                                fsProjectTotals.peakLabel
+                              )
+                            : "In range"}
+                        </span>
                       </div>
-                      <div
-                        className="pa-pill pa-pill-avg-muted"
-                        title="Series: number of visible project lines (projects) currently plotted."
-                      >
-                        <span className="pa-pill-label">Series</span>
-                        <span className="pa-pill-value">
+                      <div className="pa-fs-kpi">
+                        <span className="pa-fs-kpi-label">Series</span>
+                        <span className="pa-fs-kpi-value">
                           {fullscreenChartId === "xpGainedByProject"
                             ? visibleProjectXpSeriesIds.size
                             : visibleProjectTaskSeriesIds.size}
                         </span>
+                        <span className="pa-fs-kpi-sub">
+                          {timeframeBucketsLabel(projectTimeframe)}
+                        </span>
                       </div>
                     </div>
+                    <div className="pa-fs-toolbar-actions">
                     {fullscreenChartId ? (
                       <>
                         <ProductivityViewToggle
@@ -5203,8 +5536,9 @@ export function ProductivityAnalysisModal({
                         />
                       </>
                     ) : null}
+                    </div>
                   </div>
-                  <>
+                  <div className="pa-fs-canvas">
                     {fullscreenChartId && paView(fullscreenChartId) === "table" ? (
                       <div className="pa-fs-table-host">
                         <PaProjectSeriesTable
@@ -5236,9 +5570,7 @@ export function ProductivityAnalysisModal({
                         timeframe={projectTimeframe}
                         xAxisLabel={projectTimeframe === "daily" ? "Date" : "Period"}
                         yAxisLabel={
-                          fullscreenChartId === "xpGainedByProject"
-                            ? "XP · per period"
-                            : "Tasks · per period"
+                          fullscreenChartId === "xpGainedByProject" ? "XP" : "Tasks"
                         }
                         mode="fullscreen"
                         idSuffix="-fs"
@@ -5278,9 +5610,7 @@ export function ProductivityAnalysisModal({
                           timeframe={projectTimeframe}
                           xAxisLabel={projectTimeframe === "daily" ? "Date" : "Period"}
                           yAxisLabel={
-                            fullscreenChartId === "xpGainedByProject"
-                              ? "XP · per period"
-                              : "Tasks · per period"
+                            fullscreenChartId === "xpGainedByProject" ? "XP" : "Tasks"
                           }
                           mode="fullscreen"
                           idSuffix="-fs"
@@ -5296,7 +5626,7 @@ export function ProductivityAnalysisModal({
                         />
                       </div>
                     )}
-                  </>
+                  </div>
                 </>
               ) : !fsChart ? (
                 <div className="muted pa-no-data pa-no-data-fs" role="alert">
@@ -5306,93 +5636,72 @@ export function ProductivityAnalysisModal({
                 <div className="muted pa-no-data pa-no-data-fs">No data for this timeframe.</div>
               ) : (
                 <>
-                  <div className="pa-fs-pills">
-                    <div className="pa-fs-pills-inner">
-                      <div
-                      className="pa-pill"
-                      title={
-                        fsChart.cumulative
-                          ? fsPrevLabel && fsLatestLabel
-                            ? `Vs prior period: net change in cumulative total from end of ${formatAxisLabelWithYear(timeframe, fsPrevLabel)} to end of ${formatAxisLabelWithYear(timeframe, fsLatestLabel)}.`
-                            : fsLatestLabel
-                              ? `Vs prior period: net change in cumulative total for ${formatAxisLabelWithYear(timeframe, fsLatestLabel)} (vs prior period or visible window baseline when only one bucket is shown).`
-                              : "Vs prior period: net change in cumulative total for the latest shown period vs the prior period."
-                          : fsLatestLabel
-                            ? `Latest: value in ${formatAxisLabelWithYear(timeframe, fsLatestLabel)}.`
-                            : "Latest: value in the most recent period on the chart."
-                      }
-                    >
-                      <span className="pa-pill-label">
-                        {fsChart.cumulative ? "Vs prior period" : "Latest"}
-                      </span>
-                      <span className="pa-pill-value">{formatPillValue(fsLatestVal)}</span>
-                      </div>
-                      {fsChart.cumulative && (
-                      <div
-                        className="pa-pill pa-pill-growth"
-                        title={
-                          fsPrevLabel
-                            ? `Growth %: percent change from ${formatAxisLabelWithYear(timeframe, fsPrevLabel)} to ${formatAxisLabelWithYear(timeframe, fsLatestLabel)}.`
-                            : "Growth %: percent change vs the prior period."
-                        }
-                      >
-                        <span className="pa-pill-label">Growth %</span>
-                        <span className="pa-pill-value pa-pill-value-growth">
-                          {formatGrowthPercent(fsCumulativeGrowthPct)}
+                  <div className="pa-fs-toolbar">
+                    <div className="pa-fs-kpis" role="group" aria-label="Chart summary">
+                      <div className="pa-fs-kpi">
+                        <span className="pa-fs-kpi-label">
+                          {fsChart.cumulative ? "Change" : "Latest"}
+                        </span>
+                        <div className="pa-fs-kpi-row">
+                          <span className="pa-fs-kpi-value">
+                            {formatPillValue(fsLatestVal)}
+                          </span>
+                          {fsChart.cumulative && fsCumulativeGrowthPct != null ? (
+                            <span
+                              className={`pa-fs-kpi-delta ${
+                                fsCumulativeGrowthPct > 0
+                                  ? "is-up"
+                                  : fsCumulativeGrowthPct < 0
+                                    ? "is-down"
+                                    : "is-flat"
+                              }`}
+                            >
+                              {formatGrowthPercent(fsCumulativeGrowthPct)}
+                            </span>
+                          ) : null}
+                        </div>
+                        <span className="pa-fs-kpi-sub">
+                          {fsLatestLabel
+                            ? formatInsightPeakWhen(timeframe, fsLatestLabel)
+                            : `This ${timeframeBestUnit(timeframe)}`}
                         </span>
                       </div>
-                      )}
-                      <div
-                      className="pa-pill pa-pill-muted"
-                      title={
-                        fsChart.cumulative
-                          ? fsPrevLabel
-                            ? `Previous: cumulative level at end of ${formatAxisLabelWithYear(timeframe, fsPrevLabel)}.`
-                            : "Previous: cumulative level at end of the prior period."
-                          : fsPrevLabel
-                            ? `Previous: value in ${formatAxisLabelWithYear(timeframe, fsPrevLabel)}.`
-                            : "Previous: value in the period immediately before Latest."
-                      }
-                      >
-                      <span className="pa-pill-label">Previous</span>
-                      <span className="pa-pill-value">
-                        {fsPrevVal !== null ? formatPillValue(fsPrevVal) : "—"}
-                      </span>
+                      <div className="pa-fs-kpi">
+                        <span className="pa-fs-kpi-label">Peak</span>
+                        <span className="pa-fs-kpi-value pa-fs-kpi-value--peak">
+                          {formatPillValue(fsRawPeak)}
+                        </span>
+                        <span className="pa-fs-kpi-sub">
+                          {fsPeak?.rawLabel
+                            ? formatInsightPeakWhen(timeframe, fsPeak.rawLabel)
+                            : "In range"}
+                        </span>
                       </div>
-                      <div
-                      className="pa-pill pa-pill-muted"
-                      title={
-                        fsPeak?.rawLabel
-                          ? `Peak: highest value in the shown range (at ${formatAxisLabelWithYear(timeframe, fsPeak.rawLabel)}).`
-                          : "Peak: highest value in the shown range."
-                      }
-                      >
-                      <span className="pa-pill-label">Peak</span>
-                      <span className="pa-pill-value">{formatPillValue(fsRawPeak)}</span>
-                      </div>
-                      {fsOverlayLatest !== null && fsOverlayPeak !== null && (
-                      <>
-                        <div
-                          className="pa-pill pa-pill-avg"
-                          title={
-                            fsLatestLabel
-                              ? `Avg · latest: rolling average value at ${formatAxisLabelWithYear(timeframe, fsLatestLabel)}.`
-                              : "Avg · latest: rolling average at the latest period."
-                          }
-                        >
-                          <span className="pa-pill-label">Avg · latest</span>
-                          <span className="pa-pill-value">{formatPillValue(fsOverlayLatest)}</span>
+                      {fsOverlayLatest !== null ? (
+                        <div className="pa-fs-kpi">
+                          <span className="pa-fs-kpi-label">Avg</span>
+                          <span className="pa-fs-kpi-value">
+                            {formatPillValue(fsOverlayLatest)}
+                          </span>
+                          <span className="pa-fs-kpi-sub">
+                            Rolling · {timeframeBestUnit(timeframe)}
+                          </span>
                         </div>
-                        <div
-                          className="pa-pill pa-pill-avg-muted"
-                          title="Avg · peak: highest rolling average value in the shown range."
-                        >
-                          <span className="pa-pill-label">Avg · peak</span>
-                          <span className="pa-pill-value">{formatPillValue(fsOverlayPeak)}</span>
+                      ) : (
+                        <div className="pa-fs-kpi">
+                          <span className="pa-fs-kpi-label">Prev</span>
+                          <span className="pa-fs-kpi-value">
+                            {fsPrevVal !== null ? formatPillValue(fsPrevVal) : "—"}
+                          </span>
+                          <span className="pa-fs-kpi-sub">
+                            {fsPrevLabel
+                              ? formatInsightPeakWhen(timeframe, fsPrevLabel)
+                              : "Prior period"}
+                          </span>
                         </div>
-                      </>
                       )}
                     </div>
+                    <div className="pa-fs-toolbar-actions">
                     {fullscreenChartId ? (
                       <>
                         <ProductivityViewToggle
@@ -5471,6 +5780,7 @@ export function ProductivityAnalysisModal({
                         />
                       </>
                     ) : null}
+                    </div>
                   </div>
                   {(() => {
                     const vis = getSeriesVis(fsChart.id, Boolean(fsOverlay));
@@ -5478,7 +5788,7 @@ export function ProductivityAnalysisModal({
                       fullscreenChartId && paView(fullscreenChartId) === "table"
                     );
                     return (
-                      <>
+                      <div className="pa-fs-canvas">
                         {isFsTable ? (
                           <div className="pa-fs-table-host">
                             <PaSingleMetricTable
@@ -5545,86 +5855,85 @@ export function ProductivityAnalysisModal({
                             />
                           </div>
                         )}
-                      </>
+                      </div>
                     );
                   })()}
                 </>
               )}
+              </div>
             </PaErrorBoundary>
             <nav
               className="pa-fs-chart-nav pa-fs-chart-nav--below-axis"
               aria-label="Switch productivity chart without leaving full screen"
             >
-              <div className="pa-fs-chart-nav-side pa-fs-chart-nav-side--prev">
-                <div id="pa-fs-prev-explainer" className="pa-fs-chart-nav-explainer">
-                  {fsPrevChart ? (
-                    <>
-                      <span className="pa-fs-chart-nav-kicker">Go to previous chart</span>
-                      <span className="pa-fs-chart-nav-title">{fsPrevChart.title}</span>
-                      <span className="pa-fs-chart-nav-desc">{fsPrevChart.description}</span>
-                    </>
-                  ) : (
-                    <span className="pa-fs-chart-nav-edge muted">First chart in this view.</span>
-                  )}
-                </div>
-                <button
-                  type="button"
-                  className="pa-fs-chart-nav-btn pa-fs-chart-nav-btn--prev"
-                  onClick={() => fsPrevChart && setFullscreenChartId(fsPrevChart.id)}
-                  disabled={!fsPrevChart}
-                  aria-describedby="pa-fs-prev-explainer"
-                  aria-label={
-                    fsPrevChart
-                      ? `Previous chart: ${fsPrevChart.title}`
-                      : "No previous chart"
-                  }
-                >
-                  <span className="pa-fs-chart-nav-btn-arrow" aria-hidden="true">
-                    ←
+              <button
+                type="button"
+                className="pa-fs-chart-nav-btn pa-fs-chart-nav-btn--prev"
+                onClick={() => fsPrevChart && setFullscreenChartId(fsPrevChart.id)}
+                disabled={!fsPrevChart}
+                title={fsPrevChart ? fsPrevChart.title : "First chart"}
+                aria-label={
+                  fsPrevChart
+                    ? `Previous chart: ${fsPrevChart.title}`
+                    : "No previous chart"
+                }
+              >
+                <span className="pa-fs-chart-nav-btn-arrow" aria-hidden="true">
+                  ←
+                </span>
+                <span className="pa-fs-chart-nav-btn-copy">
+                  <span className="pa-fs-chart-nav-btn-text">Previous</span>
+                  <span className="pa-fs-chart-nav-btn-sub">
+                    {fsPrevChart ? fsPrevChart.title : "Start"}
                   </span>
-                  <span className="pa-fs-chart-nav-btn-text">Previous chart</span>
-                </button>
-              </div>
+                </span>
+              </button>
 
               <div className="pa-fs-chart-nav-center">
+                <div className="pa-fs-dots" aria-label="Jump to chart">
+                  {FS_ALL.map((c, i) => (
+                    <button
+                      key={c.id}
+                      type="button"
+                      className={`pa-fs-dot${i === fsChartIndex ? " is-active" : ""}`}
+                      title={c.title}
+                      aria-label={`${c.title} (${i + 1} of ${FS_ALL.length})`}
+                      aria-current={i === fsChartIndex ? "true" : undefined}
+                      onClick={() => setFullscreenChartId(c.id)}
+                    />
+                  ))}
+                </div>
                 <span className="pa-fs-chart-nav-counter">
-                  Chart {fsChartIndex + 1} of {FS_ALL.length}
+                  {fsChartIndex + 1} / {FS_ALL.length}
                 </span>
                 <span className="pa-fs-chart-nav-keys-hint muted small">
-                  Keys <kbd className="pa-kbd">←</kbd> <kbd className="pa-kbd">→</kbd>
+                  <kbd className="pa-kbd">←</kbd>
+                  <kbd className="pa-kbd">→</kbd>
                 </span>
               </div>
 
-              <div className="pa-fs-chart-nav-side pa-fs-chart-nav-side--next">
-                <div id="pa-fs-next-explainer" className="pa-fs-chart-nav-explainer">
-                  {fsNextChart ? (
-                    <>
-                      <span className="pa-fs-chart-nav-kicker">Go to next chart</span>
-                      <span className="pa-fs-chart-nav-title">{fsNextChart.title}</span>
-                      <span className="pa-fs-chart-nav-desc">{fsNextChart.description}</span>
-                    </>
-                  ) : (
-                    <span className="pa-fs-chart-nav-edge muted">Last chart in this view.</span>
-                  )}
-                </div>
-                <button
-                  type="button"
-                  className="pa-fs-chart-nav-btn pa-fs-chart-nav-btn--next"
-                  onClick={() => fsNextChart && setFullscreenChartId(fsNextChart.id)}
-                  disabled={!fsNextChart}
-                  aria-describedby="pa-fs-next-explainer"
-                  aria-label={
-                    fsNextChart
-                      ? `Next chart: ${fsNextChart.title}`
-                      : "No next chart"
-                  }
-                >
-                  <span className="pa-fs-chart-nav-btn-text">Next chart</span>
-                  <span className="pa-fs-chart-nav-btn-arrow" aria-hidden="true">
-                    →
+              <button
+                type="button"
+                className="pa-fs-chart-nav-btn pa-fs-chart-nav-btn--next"
+                onClick={() => fsNextChart && setFullscreenChartId(fsNextChart.id)}
+                disabled={!fsNextChart}
+                title={fsNextChart ? fsNextChart.title : "Last chart"}
+                aria-label={
+                  fsNextChart
+                    ? `Next chart: ${fsNextChart.title}`
+                    : "No next chart"
+                }
+              >
+                <span className="pa-fs-chart-nav-btn-copy">
+                  <span className="pa-fs-chart-nav-btn-text">Next</span>
+                  <span className="pa-fs-chart-nav-btn-sub">
+                    {fsNextChart ? fsNextChart.title : "End"}
                   </span>
-                </button>
-              </div>
+                </span>
+                <span className="pa-fs-chart-nav-btn-arrow" aria-hidden="true">
+                  →
+                </span>
+              </button>
             </nav>
           </div>
         </div>

@@ -10,6 +10,7 @@ import {
   isAppTrueFullscreenActive,
   PST_TRUE_FULLSCREEN_CONTEXT_EVENT
 } from "./fullscreenApi";
+import { dismissExclusiveTooltip } from "./uiExclusiveOverlay";
 import { getFriendlyErrorMessage } from "./utils/friendlyError";
 import { apiFetch, apiUrl } from "./apiClient";
 import { shouldStageImportViaBlob, uploadImportFileToBlob } from "./blobImport";
@@ -45,18 +46,22 @@ export function App() {
   const TOAST_DEDUPE_MS = 2500;
 
   const enqueueToast = (next: Omit<Toast, "id" | "createdAt">) => {
+    // One toast at a time — never stack; also clear any open tooltip/hovercard.
+    dismissExclusiveTooltip();
     const now = Date.now();
     const id = `${now}-${Math.random().toString(16).slice(2, 8)}`;
     setToasts((prev) => {
-      const dup = prev.find(
-        (t) =>
-          t.kind === next.kind &&
-          t.title === next.title &&
-          (t.message ?? "") === (next.message ?? "") &&
-          now - t.createdAt < TOAST_DEDUPE_MS
-      );
-      if (dup) return prev;
-      return [{ ...next, id, createdAt: now }, ...prev].slice(0, 4);
+      const current = prev[0];
+      if (
+        current &&
+        current.kind === next.kind &&
+        current.title === next.title &&
+        (current.message ?? "") === (next.message ?? "") &&
+        now - current.createdAt < TOAST_DEDUPE_MS
+      ) {
+        return prev;
+      }
+      return [{ ...next, id, createdAt: now }];
     });
   };
 
@@ -420,11 +425,14 @@ export function App() {
 
         <div className="header-right" aria-label="Data actions">
           <div className="header-group" role="group" aria-label="Data actions">
-            <label className="ghost-button" style={{ display: "inline-flex", alignItems: "center" }}>
+            <label
+              className="ghost-button header-action-btn"
+              title="Import tasks and projects from JSON or CSV"
+            >
               <input
                 type="file"
                 accept=".json,.csv,application/json,text/csv"
-                style={{ display: "none" }}
+                className="header-action-file"
                 onChange={(e) => {
                   const f = e.target.files?.[0];
                   if (!f) return;
@@ -432,16 +440,28 @@ export function App() {
                   e.currentTarget.value = "";
                 }}
               />
-              <span title="Import tasks and projects from an exported JSON/CSV file (merges duplicates and normalizes data). Sync/save run automatically afterward.">
+              <span className="btn-glyph" aria-hidden="true">
+                <svg viewBox="0 0 24 24" focusable="false">
+                  <path d="M12 4v10M8 8l4-4 4 4M5 16v3h14v-3" />
+                </svg>
+              </span>
+              <span className="header-action-label">
                 {importingData ? "Importing…" : "Import"}
               </span>
             </label>
             <button
-              className="ghost-button"
+              type="button"
+              className="ghost-button header-action-btn"
               onClick={openExport}
-              title="Export all tasks and projects as JSON or CSV."
+              title="Export all tasks and projects as JSON or CSV"
+              aria-label="Export data"
             >
-              Export
+              <span className="btn-glyph" aria-hidden="true">
+                <svg viewBox="0 0 24 24" focusable="false">
+                  <path d="M12 14V4M8 8l4 4 4-4M5 16v3h14v-3" />
+                </svg>
+              </span>
+              <span className="header-action-label">Export</span>
             </button>
           </div>
           {importError && (

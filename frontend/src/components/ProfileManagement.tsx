@@ -454,7 +454,7 @@ export function ProfileManagement({ activeProfileId, onChooseProfile, onToast }:
         </div>
         <div className="profile-header-actions" role="group" aria-label="Profile actions">
           <button
-            className="ghost-button small profile-icon-btn"
+            className="profile-icon-btn"
             type="button"
             onClick={() => {
               setPendingDeleteProfile(null);
@@ -484,7 +484,7 @@ export function ProfileManagement({ activeProfileId, onChooseProfile, onToast }:
             </span>
           </button>
           <button
-            className="ghost-button small profile-icon-btn"
+            className="profile-icon-btn"
             type="button"
             onClick={() => {
               const current = profiles.find((p) => p.id === activeProfileId);
@@ -501,7 +501,7 @@ export function ProfileManagement({ activeProfileId, onChooseProfile, onToast }:
             </span>
           </button>
           <button
-            className="ghost-button small profile-icon-btn profile-icon-btn-danger"
+            className="profile-icon-btn profile-icon-btn-danger"
             type="button"
             onClick={() => {
               const current = profiles.find((p) => p.id === activeProfileId);

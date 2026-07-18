@@ -111,6 +111,8 @@ Domain modules: `monthlyGrinding.ts`, `yearlyGrinding.ts`, `badgesEarnedMileston
 - Calendar and historical task UX
 - Progress and productivity analysis presentation
 - Friendly error translation for toaster UX
+- **Single-toast** queue; toast enqueue dismisses exclusive tooltips
+- Exclusive tooltip/hovercard slot (`uiExclusiveOverlay.ts`) shared across TaskBoard, Progress, and Analysis
 - Automated sync/save after import (`autoSyncAndSave`); quiet reload on tab return
 - Large import client upload (`blobImport.ts`)
 - Staged boot progress feedback
@@ -120,6 +122,7 @@ Primary implementation:
 - `frontend/src/App.tsx`
 - `frontend/src/apiClient.ts`
 - `frontend/src/blobImport.ts`
+- `frontend/src/uiExclusiveOverlay.ts`
 - `frontend/src/utils/friendlyError.ts`
 - `frontend/src/components/TaskBoard.tsx`
 - `frontend/src/components/ProfileManagement.tsx`
@@ -129,6 +132,7 @@ Primary implementation:
 - `frontend/src/components/ProjectSidebar.tsx`
 - `frontend/src/components/BadgesModalDialogBody.tsx`
 - `frontend/src/components/badgePngExport.ts`
+- `frontend/src/components/Toaster.tsx`
 
 ---
 

@@ -3001,7 +3001,7 @@ app.get("/api/stats", (req, res) => {
     const earlyStarter = {
       id: "early_starter",
       name: "Productive Day",
-      description: "Complete 3 tasks scheduled before 21:00.",
+      description: "Finish 3 tasks scheduled before 9 PM today.",
       progress: Math.min(3, earlyCount),
       goal: 3,
       achieved: earlyCount >= 3
@@ -3044,7 +3044,7 @@ app.get("/api/stats", (req, res) => {
       id: "consistency_builder",
       name: "Consistency Builder",
       description:
-        "In the last 7 days, count how many days achieved both “Productive Day” and “Daily Grinding”.",
+        "Hit both Productive Day and Daily Grinding every day for 7 days.",
       progress: weeklyProgress,
       goal: 7,
       achieved: weeklyProgress >= 7
@@ -3067,7 +3067,7 @@ app.get("/api/stats", (req, res) => {
         id: "monthly_grinding",
         name: "Monthly Grinding",
         description:
-          "In a single month, complete 4 full weeks where every day achieves both “Productive Day” and “Daily Grinding”.",
+          "Complete 4 full weeks in one month where every day hits both daily goals.",
         progress,
         goal: 4,
         achieved: result.weeksCompleted >= 4,
@@ -3091,8 +3091,7 @@ app.get("/api/stats", (req, res) => {
       return {
         id: "yearly_grinding",
         name: "Yearly Grinding",
-        description:
-          "In a single year (January to December), hit “Monthly Grinding” in every month.",
+        description: "Hit Monthly Grinding in all 12 months of the year.",
         progress,
         goal: 12,
         achieved: result.monthsCompleted >= 12,
@@ -3108,7 +3107,7 @@ app.get("/api/stats", (req, res) => {
     const dailyXp = {
       id: "daily_grinding",
       name: "Daily Grinding",
-      description: "Grind at least 5 experience points today.",
+      description: "Earn at least 5 XP today.",
       progress: Math.min(dailyXpTarget, pointsToday),
       goal: dailyXpTarget,
       achieved: pointsToday >= dailyXpTarget
@@ -3381,6 +3380,7 @@ app.get("/api/stats", (req, res) => {
       streakDays: {
         id: "streak_days",
         name: "Day streaks",
+        description: "Rewards for keeping a consecutive-day streak.",
         unit: "days",
         current: streakDays,
         next: streak.next,
@@ -3394,6 +3394,7 @@ app.get("/api/stats", (req, res) => {
       tasksCompleted: {
         id: "tasks_completed",
         name: "Tasks completed",
+        description: "Rewards as your total finished tasks climb.",
         unit: "tasks",
         current: completedCount,
         next: tasksCompleted.next,
@@ -3407,6 +3408,7 @@ app.get("/api/stats", (req, res) => {
       xpGained: {
         id: "xp_gained",
         name: "Experience gained",
+        description: "Rewards as your lifetime XP grows.",
         unit: "XP",
         current: xpGained,
         next: xp.next,
@@ -3420,6 +3422,7 @@ app.get("/api/stats", (req, res) => {
       levelsUp: {
         id: "levels_up",
         name: "Levels up",
+        description: "Rewards as you reach higher levels.",
         unit: "levels",
         current: levelValue,
         next: levelsUp.next,

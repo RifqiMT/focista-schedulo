@@ -152,6 +152,28 @@ As a security-conscious user, I want a clear **lock** affordance on password-pro
 
 ---
 
+### US-407 Read plain-English achievement and milestone goals
+
+As a progress-motivated user, I want short plain-English descriptions on achievement and milestone cards so that I understand goals without reading technical formula language.
+
+**Acceptance criteria**
+
+- Achievement cards render `description` from `/api/stats`.
+- Milestone cards render optional `description` under the card title (including badges-earned).
+- Copy matches the canonical strings documented in `VARIABLES.md`.
+
+### US-408 Non-competing feedback overlays
+
+As a user, I want tooltips and toasts not to stack confusingly so that I can read one feedback surface at a time.
+
+**Acceptance criteria**
+
+- At most one custom tooltip/hovercard is visible app-wide (`uiExclusiveOverlay`).
+- Enqueueing a toast dismisses any active exclusive tooltip.
+- The toast queue retains a single toast (replace, do not stack).
+
+---
+
 ## Epic 5: Data Portability and Safety
 
 ### US-501 Import data safely
@@ -247,6 +269,8 @@ As a privacy-conscious user, I want password confirmation before deleting a prot
 | US-404 | 4 | Understand a day in historical weekday context |
 | US-405 | 4 | Export and share badges |
 | US-406 | 4 | See locked profiles in the selector |
+| US-407 | 4 | Read plain-English achievement and milestone goals |
+| US-408 | 4 | Non-competing feedback overlays |
 | US-501 | 5 | Import data safely |
 | US-502 | 5 | Export data safely |
 | US-503 | 5 | Save and sync without monolith runtime coupling |

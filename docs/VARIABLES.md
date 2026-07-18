@@ -40,7 +40,10 @@ flowchart TB
   subgraph APIs and UI
     Stats[GET /api/stats]
     Insights[GET /api/productivity-insights]
+    Desc[Achievement and milestone descriptions]
     UI[Gamification and analysis UI]
+    Overlay[uiExclusiveOverlay]
+    Toast[Single toast queue]
   end
 
   subgraph Persistence and transfer
@@ -70,9 +73,13 @@ flowchart TB
   YG --> Stats
   BEM --> Stats
   Cap --> Stats
+  Stats --> Desc
+  Desc --> UI
   Stats --> UI
   Task --> Insights
   Insights --> UI
+  Overlay --> UI
+  Toast --> Overlay
   Profile --> Runtime
   Project --> Runtime
   Task --> Runtime
@@ -192,7 +199,7 @@ The JSON key `last7Days` is a **legacy name**. Shipped behavior: an ordered arra
 | `stats.last7Days[].weekdayTaskMax` | Weekday Historical Maximum | Max completions on this weekday over the same span. | `max(count per weekday)` | Rich tooltip | `5` |
 | `stats.last7Days[].weekdayTaskAvg` | Weekday Historical Average | Mean completions for this weekday (one decimal). | `round(mean * 10) / 10` | Rich tooltip | `2.4` |
 
-**Implementation note:** Achievements that loop over `last7Days` (for example Consistency Builder progress) use the **same seven calendar-week dates** as the weekly chart. Product copy that says “last seven days” should be reconciled with this behavior.
+**Implementation note:** Achievements that loop over `last7Days` (for example Consistency Builder progress) use the **same seven calendar-week dates** as the weekly chart. Card copy describes this as “every day for 7 days.”
 
 ---
 
@@ -207,9 +214,22 @@ The JSON key `last7Days` is a **legacy name**. Shipped behavior: an ordered arra
 | `yearlyGrinding.year` | Yearly Grinding Year | Calendar year under evaluation. | Integer year | `yearlyGrinding.ts` | `2026` |
 | `yearlyGrinding.monthsCompleted` | Yearly Grinding Months | Months that hit Monthly Grinding threshold. | Count months where `weeksCompleted >= 4` | `yearlyGrinding.ts`; `/api/stats` | `2` |
 | `badgesEarned.milestones` | Badges Earned Tiers | Milestone thresholds for badges earned. | Every `5` from `5` to `750` (150 tiers) | `badgesEarnedMilestone.ts` | `[5,10,...,750]` |
+| `badgesEarned.description` | Badges Earned Description | Plain-English explanation shown under the milestone card title. | Constant string | `badgesEarnedMilestone.ts`; `GamificationPanel.tsx` | `Rewards for collecting badges themselves (every 5 badges).` |
 | `badgesEarned.progressToNext` | Progress to Next Badge Tier | Fraction toward the next badges-earned milestone. | `(current - prev) / (next - prev)` clamped to `[0,1]`; `1` if no next | `buildBadgesEarnedMilestoneBlock` | `0.4` |
 | `badgesEarned.recentUnlocked` | Recent Badge Tiers | Last up to six achieved badge tiers. | `achieved.slice(-6)` | Stats UI | `[20,25,30,35,40,45]` |
+| `milestones.*.description` | Milestone Card Description | Short plain-English line under each milestone card title (streak, tasks, XP, levels, badges earned). | Constant per milestone block in `/api/stats` | `backend/src/index.ts`; `GamificationPanel.tsx` | `Rewards for keeping a consecutive-day streak.` |
+| `achievements.*.description` | Achievement Card Description | Short plain-English goal text on achievement cards. | Constant per achievement in `/api/stats` | `backend/src/index.ts`; `GamificationPanel.tsx` | `Earn at least 5 XP today.` |
 | `capMilestoneBadges(values, max)` | Capped Milestone List | Caps long milestone lists for UI while preserving dense early tiers and the final milestone. | Keep ~66% head; sample tail; always include last | `capMilestoneBadges.ts` | Length `maxBadges` |
+
+### Canonical achievement copy (shipped)
+
+| Achievement ID | Friendly Name | Shipped Description |
+|---|---|---|
+| `early_starter` | Productive Day | Finish 3 tasks scheduled before 9 PM today. |
+| `daily_grinding` | Daily Grinding | Earn at least 5 XP today. |
+| `consistency_builder` | Consistency Builder | Hit both Productive Day and Daily Grinding every day for 7 days. |
+| `monthly_grinding` | Monthly Grinding | Complete 4 full weeks in one month where every day hits both daily goals. |
+| `yearly_grinding` | Yearly Grinding | Hit Monthly Grinding in all 12 months of the year. |
 
 ---
 
@@ -219,7 +239,7 @@ The JSON key `last7Days` is a **legacy name**. Shipped behavior: an ordered arra
 |---|---|---|---|---|---|
 | `STORAGE_BACKEND` | Storage Backend Selector | Forces persistence adapter. | `fs` \| `vercel-blob` \| unset (auto) | `createStorage.ts`; `.env` | `vercel-blob` |
 | `BLOB_READ_WRITE_TOKEN` | Blob Credential | Read/write token for Vercel Blob. | Env secret | Storage + `blobTransfer.ts` | `vercel_blob_rw_...` |
-| `BLOB_RUNTIME_PREFIX` | Runtime Blob Prefix | Pathname prefix for runtime JSON objects. | Default `focista-schedulo/runtime/` | `vercelBlobStorage.ts` | `focista-schedulo/runtime/` |
+| `BLOB_RUNTIME_PREFIX` | Runtime Blob Prefix | Pathname prefix for runtime JSON objects. | Default `focista-schedulo/runtime/` | `backend/src/storage/createStorage.ts` | `focista-schedulo/runtime/` |
 | `BLOB_ACCESS` | Blob Access Mode | Public vs private Blob access mode. | Default `private` | Blob clients | `private` |
 | `FRONTEND_ORIGIN` | Allowed Frontend Origin | CORS lock for production API. | Required when `NODE_ENV`/`FOCISTA_ENV` is production | `backend/src/index.ts` | `https://app.vercel.app` |
 | `VITE_API_BASE_URL` | Frontend API Base URL | API origin for split hosting. | Required on Vercel Production when split | `apiClient.ts`; frontend env | `https://api.example.com` |
@@ -227,6 +247,9 @@ The JSON key `last7Days` is a **legacy name**. Shipped behavior: an ordered arra
 | `export.downloadUrl` | Export Presigned URL | Short-lived Blob URL for large export download. | Issued when inline body would exceed limits | `POST /api/admin/export-data`; `blobTransfer.ts` | `https://...blob.vercel-storage.com/...` |
 | `autoSyncAndSave` | Automated Sync and Save | Client orchestration that syncs then saves after import (quiet optional). | Sequential admin calls | `frontend/src/App.tsx` | Quiet post-import run |
 | `X-Server-Time-Ms` | Server Timing Header | Backend processing time for the request. | Middleware measured ms | Express middleware | `42` |
+| `claimExclusiveTooltip` | Exclusive Tooltip Claim | Registers the single active tooltip/hovercard closer; dismisses any previous owner. | Module singleton closer slot | `frontend/src/uiExclusiveOverlay.ts`; TaskBoard, GamificationPanel, ProductivityAnalysisModal | Release fn from claim |
+| `dismissExclusiveTooltip` | Exclusive Tooltip Dismiss | Closes the active exclusive tooltip (e.g. before showing a toast). | Invoke registered closer | `uiExclusiveOverlay.ts`; `App.tsx` `enqueueToast` | n/a |
+| `toast.singleSlot` | Single Toast Queue | Only one toast is retained in the queue (replace, do not stack). | `setToasts` keeps latest non-duplicate toast | `App.tsx` `enqueueToast` | One toast object |
 
 ---
 

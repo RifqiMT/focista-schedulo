@@ -49,7 +49,9 @@ Focista Schedulo helps users:
 
 - The **Progress** panel includes a **current calendar week** completion chart (local **Monday–Sunday**), scoped to the active profile (or all profiles when unscoped).
 - Hovering a day shows a **rich tooltip**: tasks completed and XP for that day, **per-task XP (priority) min/max/average**, and **weekday-historical** completion min/max/average.
-- **Badges** export as high-resolution PNG; cards show the **profile name**; modal headers use **`Profile: Name - Title`**.
+- Badges export as high-resolution PNG; cards show the **profile name**; modal headers use **`Profile: Name - Title`**.
+- Achievement and milestone cards show short **plain-English descriptions** from `/api/stats`.
+- Progress uses an **exclusive tooltip** slot; toasts are **one at a time** and dismiss open tooltips.
 
 ### Profile selector and boot UX
 
@@ -103,6 +105,7 @@ focista-schedulo/
 │   │   ├── App.tsx                  # Shell, import/export, auto sync/save
 │   │   ├── apiClient.ts             # API base URL resolution
 │   │   ├── blobImport.ts            # Client upload for large imports
+│   │   ├── uiExclusiveOverlay.ts    # Single tooltip/hovercard slot
 │   │   ├── components/              # UI modules
 │   │   ├── utils/friendlyError.ts   # User-facing error formatter
 │   │   └── styles.css               # Design tokens and themes

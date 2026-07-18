@@ -1,6 +1,7 @@
 export type BadgesEarnedMilestoneBlock = {
   id: string;
   name: string;
+  description: string;
   unit: string;
   current: number;
   next: number | null;
@@ -30,6 +31,7 @@ export function buildBadgesEarnedMilestoneBlock(currentBadgesEarned: number): Ba
   return {
     id: "badges_earned",
     name: "Badges earned",
+    description: "Rewards for collecting badges themselves (every 5 badges).",
     unit: "badges",
     current: currentBadgesEarned,
     next,

@@ -13,13 +13,14 @@ Define the technical and business limitations that bound safe product developmen
 
 ## Business Guardrails
 
-- **User-facing copy accuracy:** Achievement or chart labels must match shipped formulas (e.g. any text implying a rolling seven-day window must match code, or be revised). Prefer a single source of truth documented in `VARIABLES.md`.
+- **User-facing copy accuracy:** Achievement or chart labels must match shipped formulas. Prefer a single source of truth documented in `VARIABLES.md` (including the canonical achievement description table).
 - Keep profile data boundaries strict; no cross-profile leakage.
 - Preserve user data ownership with reliable import/export capability (including large Blob-staged transfers in production).
 - Prioritize execution reliability over feature volume.
 - Avoid introducing behavior changes without documentation and changelog updates.
 - Preserve showcase integrity: profile `Test` acts as read-only during demonstrations.
 - Do not position the product as multi-user collaborative or as an enterprise RBAC system while those remain non-goals.
+- Feedback layers must not compete: **one exclusive tooltip** and **one toast** at a time.
 
 ---
 

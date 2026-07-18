@@ -1,5 +1,5 @@
-import { Task } from "./TaskBoard";
-import { useEffect, useState } from "react";
+import { Task, stripDoubleColonSuffix } from "./TaskBoard";
+import { useEffect, useRef, useState } from "react";
 
 interface TaskEditorDrawerProps {
   task: Task | Task[] | null;
@@ -33,6 +33,26 @@ export function TaskEditorDrawer({
 }: TaskEditorDrawerProps) {
   const [draft, setDraft] = useState<Task | null>(Array.isArray(task) ? task[0] ?? null : task);
   const [createMode, setCreateMode] = useState<"single" | "multiple">("single");
+  const [copiedIdKey, setCopiedIdKey] = useState<string | null>(null);
+  const copiedIdTimerRef = useRef<number | null>(null);
+
+  const copyIdValue = (key: string, value: string) => {
+    void (async () => {
+      try {
+        await navigator.clipboard.writeText(value);
+        if (copiedIdTimerRef.current != null) {
+          window.clearTimeout(copiedIdTimerRef.current);
+        }
+        setCopiedIdKey(key);
+        copiedIdTimerRef.current = window.setTimeout(() => {
+          setCopiedIdKey((prev) => (prev === key ? null : prev));
+          copiedIdTimerRef.current = null;
+        }, 1100);
+      } catch (err) {
+        console.error("Failed to copy task id", { key, err });
+      }
+    })();
+  };
   type BatchItem = {
     key: string;
     source?: Task;
@@ -65,12 +85,27 @@ export function TaskEditorDrawer({
   const [durationAmount, setDurationAmount] = useState<string>("");
   const [batchDurationUnit, setBatchDurationUnit] = useState<"minute" | "hour" | "day">("minute");
   const [batchDurationAmount, setBatchDurationAmount] = useState<string>("");
-  const [labelsInput, setLabelsInput] = useState("");
-  const [locationInput, setLocationInput] = useState("");
-  const [linksInput, setLinksInput] = useState("");
-  const [batchLabelsInputByIdx, setBatchLabelsInputByIdx] = useState<Record<number, string>>({});
-  const [batchLocationInputByIdx, setBatchLocationInputByIdx] = useState<Record<number, string>>({});
-  const [batchLinksInputByIdx, setBatchLinksInputByIdx] = useState<Record<number, string>>({});
+  type PairRow = { key: string; text: string; url: string };
+  type TextRow = { key: string; text: string };
+  const makePairRow = (text = "", url = ""): PairRow => ({
+    key: `p-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+    text,
+    url
+  });
+  const makeTextRow = (text = ""): TextRow => ({
+    key: `t-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+    text
+  });
+  const [labelRows, setLabelRows] = useState<TextRow[]>(() => [makeTextRow()]);
+  const [linkRows, setLinkRows] = useState<PairRow[]>(() => [makePairRow()]);
+  const [locationRows, setLocationRows] = useState<PairRow[]>(() => [makePairRow()]);
+  const [batchLabelRows, setBatchLabelRows] = useState<TextRow[]>(() => [makeTextRow()]);
+  const [batchLinkRows, setBatchLinkRows] = useState<PairRow[]>(() => [makePairRow()]);
+  const [batchLocationRows, setBatchLocationRows] = useState<PairRow[]>(() => [makePairRow()]);
+  const [voicePanelOpen, setVoicePanelOpen] = useState(true);
+  const [bodyScrolled, setBodyScrolled] = useState(false);
+  const [basicsTitleTouched, setBasicsTitleTouched] = useState(false);
+  const drawerBodyRef = useRef<HTMLDivElement | null>(null);
 
   const emptyBatchItem = (): BatchItem => ({
     key: `m-${Date.now()}`,
@@ -95,39 +130,28 @@ export function TaskEditorDrawer({
 
   // (Intentionally no per-task number stepper UI; navigation is via Prev/Next only.)
 
-  const parseLabelsInput = (raw: string): string[] => {
-    const cleaned = raw.trim();
-    if (!cleaned) return [];
+  const normalizeSingleLabel = (raw: string): string => raw.trim().replace(/\s+/g, " ");
 
-    // Separators: comma, semicolon, newline. Also allow "and/dan" between words.
-    // (Do NOT treat "&" as a separator; users often want it inside a label.)
-    const normalized = cleaned
-      .replaceAll(";", ",")
-      .replace(/\r?\n+/g, ",")
-      .replace(/\s+(?:and|dan)\s+/gi, ",");
-
-    const parts = normalized
-      .split(",")
-      .map((p) => p.trim())
-      .filter(Boolean)
-      .slice(0, 12);
-
-    const deduped: string[] = [];
-    const seen = new Set<string>();
-    for (const p of parts) {
-      const normalized = p.replace(/\s+/g, " ");
-      const key = normalized.toLowerCase();
-      if (seen.has(key)) continue;
-      seen.add(key);
-      deduped.push(normalized);
-    }
-    return deduped;
+  const labelTokensToRows = (tokens: string[] | undefined | null): TextRow[] => {
+    const list = (tokens ?? []).map((t) => normalizeSingleLabel(t)).filter(Boolean);
+    if (list.length === 0) return [makeTextRow()];
+    return list.map((t) => makeTextRow(t));
   };
 
-  const formatLabelsForInput = (tokens: string[] | undefined | null): string =>
-    (tokens ?? []).join("\n");
-
-  const normalizeSingleLabel = (raw: string): string => raw.trim().replace(/\s+/g, " ");
+  const rowsToLabelTokens = (rows: TextRow[]): string[] => {
+    const out: string[] = [];
+    const seen = new Set<string>();
+    for (const row of rows) {
+      const token = normalizeSingleLabel(row.text);
+      if (!token) continue;
+      const key = token.toLowerCase();
+      if (seen.has(key)) continue;
+      seen.add(key);
+      out.push(token);
+      if (out.length >= 12) break;
+    }
+    return out;
+  };
 
   const mergeLabelTokens = (existing: string[], incoming: string[]): string[] => {
     const out = [...(existing ?? [])];
@@ -166,13 +190,687 @@ export function TaskEditorDrawer({
 
   const shortLinkText = (href: string): string => href.replace(/^https?:\/\//i, "");
 
-  const formatLinksForInput = (tokens: string[] | undefined | null): string => {
-    const parts = (tokens ?? []).map((tok) => {
-      const { href, label } = splitLinkStoredToken(tok);
-      const displayHref = shortLinkText(href);
-      return label ? `${label} | ${displayHref}` : displayHref;
+  const looksLikeUrlValue = (raw: string): boolean => {
+    const t = raw.trim();
+    if (!t || /\s/.test(t)) return false;
+    if (/^https?:\/\//i.test(t) || /^www\./i.test(t)) return true;
+    return /^[a-z0-9-]+(\.[a-z0-9-]+)+([/?#].*)?$/i.test(t);
+  };
+
+  const linkTokensToPairRows = (tokens: string[] | undefined | null): PairRow[] => {
+    const list = (tokens ?? []).map((tok) => tok.trim()).filter(Boolean);
+    if (list.length === 0) return [makePairRow()];
+    return list.map((tok) => {
+      if (tok.includes("=>")) {
+        const { href, label } = splitLinkStoredToken(tok);
+        return makePairRow(label ?? "", shortLinkText(href));
+      }
+      if (looksLikeUrlValue(tok)) {
+        return makePairRow("", shortLinkText(tok));
+      }
+      return makePairRow(tok, "");
     });
-    return parts.join("\n");
+  };
+
+  const pairRowsToLinkTokens = (rows: PairRow[]): string[] => {
+    const out: string[] = [];
+    for (const row of rows) {
+      const text = row.text.trim().replace(/\s+/g, " ");
+      const urlRaw = row.url.trim();
+      if (!text && !urlRaw) continue;
+      if (urlRaw) {
+        const href = normalizeLinkHref(urlRaw) ?? urlRaw;
+        const token = text ? `${text}=>${href}` : href;
+        const norm = normalizeLinkToken(token);
+        if (norm) out.push(norm);
+      } else {
+        const norm = normalizeLinkToken(text);
+        if (norm) out.push(norm);
+      }
+    }
+    return sortLinksAsc(out);
+  };
+
+  const locationTokensToPairRows = (raw: string | undefined | null): PairRow[] => {
+    const tokens = deserializeLocationTokens(raw);
+    if (tokens.length === 0) return [makePairRow()];
+    return tokens.map((tok) => {
+      const { label, query } = splitLocationStoredToken(tok);
+      if (looksLikeUrlValue(query)) {
+        return makePairRow(label ?? "", shortLinkText(query));
+      }
+      if (label) {
+        return makePairRow(label, query);
+      }
+      return makePairRow(query, "");
+    });
+  };
+
+  const pairRowsToLocationValue = (rows: PairRow[]): string | undefined => {
+    const tokens: string[] = [];
+    for (const row of rows) {
+      const text = row.text.trim().replace(/\s+/g, " ");
+      const urlRaw = row.url.trim();
+      if (!text && !urlRaw) continue;
+      if (urlRaw) {
+        const href = normalizeLinkHref(urlRaw) ?? normalizeMaybeUrl(urlRaw) ?? urlRaw;
+        tokens.push(text ? `${text}=>${href}` : href);
+      } else {
+        tokens.push(text);
+      }
+    }
+    return serializeLocationTokens(tokens);
+  };
+
+  const commitLinkRows = (rows: PairRow[]) => {
+    setLinkRows(rows.length ? rows : [makePairRow()]);
+    const tokens = pairRowsToLinkTokens(rows);
+    setDraft((prev) => (prev ? { ...prev, link: tokens.length ? tokens : undefined } : prev));
+  };
+
+  const commitLocationRows = (rows: PairRow[]) => {
+    setLocationRows(rows.length ? rows : [makePairRow()]);
+    const value = pairRowsToLocationValue(rows);
+    setDraft((prev) => (prev ? { ...prev, location: value } : prev));
+  };
+
+  const commitBatchLinkRows = (rows: PairRow[]) => {
+    setBatchLinkRows(rows.length ? rows : [makePairRow()]);
+    const tokens = pairRowsToLinkTokens(rows);
+    setBatchItems((prev) =>
+      prev.map((p, i) =>
+        i === batchActiveIdx ? { ...p, link: tokens.length ? tokens : undefined } : p
+      )
+    );
+  };
+
+  const commitBatchLocationRows = (rows: PairRow[]) => {
+    setBatchLocationRows(rows.length ? rows : [makePairRow()]);
+    const value = pairRowsToLocationValue(rows);
+    setBatchItems((prev) =>
+      prev.map((p, i) => (i === batchActiveIdx ? { ...p, location: value } : p))
+    );
+  };
+
+  const commitLabelRows = (rows: TextRow[]) => {
+    setLabelRows(rows.length ? rows : [makeTextRow()]);
+    const tokens = rowsToLabelTokens(rows);
+    setDraft((prev) => (prev ? { ...prev, labels: tokens } : prev));
+  };
+
+  const commitBatchLabelRows = (rows: TextRow[]) => {
+    setBatchLabelRows(rows.length ? rows : [makeTextRow()]);
+    const tokens = rowsToLabelTokens(rows);
+    setBatchItems((prev) =>
+      prev.map((p, i) => (i === batchActiveIdx ? { ...p, labels: tokens } : p))
+    );
+  };
+
+  const renderTextRowsEditor = (opts: {
+    label: string;
+    hint: string;
+    rows: TextRow[];
+    onChange: (rows: TextRow[]) => void;
+    textPlaceholder: string;
+    preview: Array<{ key: string; text: string }>;
+  }) => {
+    const { label, hint, rows, onChange, textPlaceholder, preview } = opts;
+    const canRemoveRow = (row: TextRow) => rows.length > 1 || !!row.text.trim();
+    const filledCount = rowsToLabelTokens(rows).length;
+
+    const updateRow = (idx: number, patch: Partial<TextRow>) => {
+      onChange(rows.map((r, i) => (i === idx ? { ...r, ...patch } : r)));
+    };
+
+    const addRow = () => {
+      if (filledCount >= 12) return;
+      onChange([...rows, makeTextRow()]);
+    };
+
+    return (
+      <div className="drawer-organize-block drawer-pair-field drawer-text-field">
+        <div className="drawer-organize-block-head">
+          <span className="drawer-organize-block-title">{label}</span>
+          <button
+            type="button"
+            className="drawer-pair-add"
+            onClick={addRow}
+            disabled={filledCount >= 12}
+            title={hint}
+          >
+            <span aria-hidden="true">+</span>
+            Add
+          </button>
+        </div>
+        <div className="drawer-pair-list" role="list" aria-label={label}>
+          {rows.map((row, idx) => {
+            const filled = !!row.text.trim();
+            return (
+              <div
+                key={row.key}
+                className={`drawer-pair-row drawer-text-row${filled ? " is-filled" : ""}`}
+                role="listitem"
+              >
+                <div className="drawer-pair-split drawer-text-split">
+                  <div className="drawer-pair-side drawer-pair-side--text">
+                    <span className="drawer-pair-side-label" aria-hidden="true">
+                      Text
+                    </span>
+                    <input
+                      className="drawer-pair-text"
+                      type="text"
+                      value={row.text}
+                      placeholder={textPlaceholder}
+                      aria-label={`${label} text`}
+                      onChange={(e) => updateRow(idx, { text: e.target.value })}
+                      onKeyDown={(e) => {
+                        if (e.key !== "Enter") return;
+                        e.preventDefault();
+                        if (idx === rows.length - 1) {
+                          if (filledCount >= 12) return;
+                          addRow();
+                          window.setTimeout(() => {
+                            const nodes = document.querySelectorAll(
+                              `.drawer-text-field [aria-label="${label} text"]`
+                            );
+                            const last = nodes[nodes.length - 1] as HTMLInputElement | undefined;
+                            last?.focus();
+                          }, 0);
+                        } else {
+                          const nodes = document.querySelectorAll(
+                            `.drawer-text-field [aria-label="${label} text"]`
+                          );
+                          const next = nodes[idx + 1] as HTMLInputElement | undefined;
+                          next?.focus();
+                        }
+                      }}
+                    />
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  className="drawer-pair-remove"
+                  disabled={!canRemoveRow(row)}
+                  onClick={() => {
+                    const next = rows.filter((_, i) => i !== idx);
+                    onChange(next.length ? next : [makeTextRow()]);
+                  }}
+                  title="Remove this entry"
+                  aria-label="Remove entry"
+                >
+                  <svg viewBox="0 0 24 24" focusable="false" aria-hidden="true">
+                    <path d="M6 6l12 12M18 6L6 18" />
+                  </svg>
+                </button>
+              </div>
+            );
+          })}
+        </div>
+        {preview.length > 0 ? (
+          <div className="drawer-pair-preview">{renderTokenPreview(preview)}</div>
+        ) : null}
+      </div>
+    );
+  };
+
+  const renderPairRowsEditor = (opts: {
+    label: string;
+    hint: string;
+    rows: PairRow[];
+    onChange: (rows: PairRow[]) => void;
+    textPlaceholder: string;
+    urlPlaceholder: string;
+    preview: Array<{ key: string; text: string; href?: string }>;
+  }) => {
+    const { label, hint, rows, onChange, textPlaceholder, urlPlaceholder, preview } = opts;
+    const canRemoveRow = (row: PairRow) =>
+      rows.length > 1 || !!row.text.trim() || !!row.url.trim();
+
+    const updateRow = (idx: number, patch: Partial<PairRow>) => {
+      onChange(rows.map((r, i) => (i === idx ? { ...r, ...patch } : r)));
+    };
+
+    const addRow = () => onChange([...rows, makePairRow()]);
+
+    return (
+      <div className="drawer-organize-block drawer-pair-field">
+        <div className="drawer-organize-block-head">
+          <span className="drawer-organize-block-title">{label}</span>
+          <button
+            type="button"
+            className="drawer-pair-add"
+            onClick={addRow}
+            title={hint}
+          >
+            <span aria-hidden="true">+</span>
+            Add
+          </button>
+        </div>
+        <div className="drawer-pair-list" role="list" aria-label={label}>
+          {rows.map((row, idx) => {
+            const filled = !!row.text.trim() || !!row.url.trim();
+            const urlOk = looksLikeUrlValue(row.url);
+            return (
+              <div
+                key={row.key}
+                className={`drawer-pair-row${filled ? " is-filled" : ""}${
+                  row.url.trim() ? " has-url" : ""
+                }${urlOk ? " has-valid-url" : ""}`}
+                role="listitem"
+              >
+                <div className="drawer-pair-split">
+                  <div className="drawer-pair-side drawer-pair-side--text">
+                    <span className="drawer-pair-side-label" aria-hidden="true">
+                      Text
+                    </span>
+                    <input
+                      className="drawer-pair-text"
+                      type="text"
+                      value={row.text}
+                      placeholder={textPlaceholder}
+                      aria-label={`${label} text`}
+                      onChange={(e) => updateRow(idx, { text: e.target.value })}
+                      onKeyDown={(e) => {
+                        if (e.key !== "Enter") return;
+                        e.preventDefault();
+                        const urlInput = (e.currentTarget
+                          .closest(".drawer-pair-row")
+                          ?.querySelector(".drawer-pair-url") ?? null) as HTMLInputElement | null;
+                        urlInput?.focus();
+                      }}
+                    />
+                  </div>
+                  <span className="drawer-pair-divider" aria-hidden="true" />
+                  <div className="drawer-pair-side drawer-pair-side--url">
+                    <span className="drawer-pair-side-label" aria-hidden="true">
+                      URL
+                    </span>
+                    <input
+                      className="drawer-pair-url"
+                      type="text"
+                      inputMode="url"
+                      autoComplete="url"
+                      value={row.url}
+                      placeholder={urlPlaceholder}
+                      aria-label={`${label} URL`}
+                      onChange={(e) => updateRow(idx, { url: e.target.value })}
+                      onKeyDown={(e) => {
+                        if (e.key !== "Enter") return;
+                        e.preventDefault();
+                        if (idx === rows.length - 1) {
+                          addRow();
+                          window.setTimeout(() => {
+                            const nodes = document.querySelectorAll(
+                              `.drawer-pair-field [aria-label="${label} text"]`
+                            );
+                            const last = nodes[nodes.length - 1] as HTMLInputElement | undefined;
+                            last?.focus();
+                          }, 0);
+                        } else {
+                          const nodes = document.querySelectorAll(
+                            `.drawer-pair-field [aria-label="${label} text"]`
+                          );
+                          const next = nodes[idx + 1] as HTMLInputElement | undefined;
+                          next?.focus();
+                        }
+                      }}
+                    />
+                    {urlOk ? (
+                      <span className="drawer-pair-url-ok" title="Looks like a valid URL" aria-hidden="true">
+                        ✓
+                      </span>
+                    ) : null}
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  className="drawer-pair-remove"
+                  disabled={!canRemoveRow(row)}
+                  onClick={() => {
+                    const next = rows.filter((_, i) => i !== idx);
+                    onChange(next.length ? next : [makePairRow()]);
+                  }}
+                  title="Remove this entry"
+                  aria-label="Remove entry"
+                >
+                  <svg viewBox="0 0 24 24" focusable="false" aria-hidden="true">
+                    <path d="M6 6l12 12M18 6L6 18" />
+                  </svg>
+                </button>
+              </div>
+            );
+          })}
+        </div>
+        {preview.length > 0 ? (
+          <div className="drawer-pair-preview">{renderTokenPreview(preview)}</div>
+        ) : null}
+      </div>
+    );
+  };
+
+
+
+
+  const PRIORITY_OPTIONS: Array<{ value: Task["priority"]; label: string }> = [
+    { value: "low", label: "Low" },
+    { value: "medium", label: "Medium" },
+    { value: "high", label: "High" },
+    { value: "urgent", label: "Urgent" }
+  ];
+
+  const REPEAT_OPTIONS: Array<{ value: NonNullable<Task["repeat"]>; label: string }> = [
+    { value: "none", label: "Does not repeat" },
+    { value: "daily", label: "Daily" },
+    { value: "weekly", label: "Weekly" },
+    { value: "weekdays", label: "Weekdays (Mon–Fri)" },
+    { value: "weekends", label: "Weekends (Sat–Sun)" },
+    { value: "monthly", label: "Monthly" },
+    { value: "quarterly", label: "Quarterly" },
+    { value: "yearly", label: "Annually" },
+    { value: "custom", label: "Custom…" }
+  ];
+
+  const syncAutogrowTextarea = (el: HTMLTextAreaElement | null) => {
+    if (!el) return;
+    el.style.height = "0px";
+    el.style.height = `${Math.min(Math.max(el.scrollHeight, 68), 240)}px`;
+  };
+
+  const renderBasicsEditor = (opts: {
+    title: string;
+    description: string;
+    priority: Task["priority"];
+    repeat: NonNullable<Task["repeat"]>;
+    repeatEvery?: number;
+    repeatUnit?: Task["repeatUnit"];
+    titleInputId?: string;
+    onChange: (patch: {
+      title?: string;
+      description?: string;
+      priority?: Task["priority"];
+      repeat?: Task["repeat"];
+      repeatEvery?: number;
+      repeatUnit?: Task["repeatUnit"];
+    }) => void;
+  }) => {
+    const {
+      title,
+      description,
+      priority,
+      repeat,
+      repeatEvery,
+      repeatUnit,
+      titleInputId,
+      onChange
+    } = opts;
+    const showTitleCue = basicsTitleTouched && !title.trim();
+
+    return (
+      <div className="drawer-basics">
+        <div className={`drawer-basics-compose${showTitleCue ? " is-title-empty" : ""}`}>
+          <label className="drawer-basics-compose-title">
+            <span className="drawer-basics-label">Title</span>
+            <input
+              id={titleInputId}
+              className="drawer-basics-title-input"
+              value={title}
+              onChange={(e) => onChange({ title: e.target.value })}
+              onBlur={() => setBasicsTitleTouched(true)}
+              placeholder="What do you want to accomplish?"
+              title="Task title (required)."
+              aria-required="true"
+              aria-invalid={showTitleCue}
+            />
+          </label>
+          <label className="drawer-basics-compose-desc">
+            <span className="drawer-basics-label">Description</span>
+            <textarea
+              className="drawer-basics-desc"
+              value={description}
+              rows={2}
+              placeholder="Optional notes or context"
+              title="Optional description for additional context."
+              ref={(el) => syncAutogrowTextarea(el)}
+              onChange={(e) => {
+                onChange({ description: e.target.value });
+                syncAutogrowTextarea(e.currentTarget);
+              }}
+            />
+          </label>
+          {showTitleCue ? <span className="drawer-basics-hint">Title is required.</span> : null}
+        </div>
+
+        <div className="drawer-basics-row">
+          <div className="drawer-basics-field drawer-basics-field--priority">
+            <span className="drawer-basics-label" id="drawer-basics-priority-label">
+              Priority
+            </span>
+            <div
+              className="drawer-basics-priority"
+              role="radiogroup"
+              aria-labelledby="drawer-basics-priority-label"
+              title="Priority sets urgency and completion points."
+            >
+              {PRIORITY_OPTIONS.map((opt) => {
+                const active = priority === opt.value;
+                return (
+                  <button
+                    key={opt.value}
+                    type="button"
+                    role="radio"
+                    aria-checked={active}
+                    className={`drawer-basics-priority-chip priority-${opt.value}${
+                      active ? " is-active" : ""
+                    }`}
+                    onClick={() => onChange({ priority: opt.value })}
+                  >
+                    {opt.label}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+
+          <label className="drawer-basics-field drawer-basics-field--repeat">
+            <span className="drawer-basics-label">Repeat</span>
+            <select
+              className="drawer-basics-select"
+              value={repeat}
+              onChange={(e) => onChange({ repeat: e.target.value as Task["repeat"] })}
+              title="Repeat pattern for recurring tasks."
+            >
+              {REPEAT_OPTIONS.map((opt) => (
+                <option key={opt.value} value={opt.value}>
+                  {opt.label}
+                </option>
+              ))}
+            </select>
+          </label>
+        </div>
+
+        {repeat === "custom" ? (
+          <div className="drawer-basics-custom" aria-label="Custom repeat interval">
+            <label className="drawer-basics-field">
+              <span className="drawer-basics-label">Every</span>
+              <input
+                className="drawer-basics-number"
+                type="number"
+                min={1}
+                value={repeatEvery ?? 1}
+                onChange={(e) => onChange({ repeatEvery: Number(e.target.value) || 1 })}
+                title="Repeat interval count."
+              />
+            </label>
+            <label className="drawer-basics-field">
+              <span className="drawer-basics-label">Unit</span>
+              <select
+                className="drawer-basics-select"
+                value={repeatUnit ?? "week"}
+                onChange={(e) =>
+                  onChange({ repeatUnit: e.target.value as Task["repeatUnit"] })
+                }
+                title="Repeat interval unit."
+              >
+                <option value="day">Day(s)</option>
+                <option value="week">Week(s)</option>
+                <option value="month">Month(s)</option>
+                <option value="quarter">Quarter(s)</option>
+                <option value="year">Year(s)</option>
+              </select>
+            </label>
+          </div>
+        ) : null}
+      </div>
+    );
+  };
+
+
+
+  type DurationUnit = "minute" | "hour" | "day";
+
+  const DURATION_UNIT_OPTIONS: Array<{ value: DurationUnit; label: string }> = [
+    { value: "minute", label: "Min" },
+    { value: "hour", label: "Hr" },
+    { value: "day", label: "Day" }
+  ];
+
+  const durationMinutesFromUi = (amountRaw: string, unit: DurationUnit): number | undefined => {
+    const amount = Number(amountRaw);
+    const mult = unit === "day" ? 1440 : unit === "hour" ? 60 : 1;
+    if (amountRaw.trim().length === 0 || !Number.isFinite(amount) || amount <= 0) return undefined;
+    return Math.round(amount * mult);
+  };
+
+  const renderScheduleEditor = (opts: {
+    dueDate?: string;
+    dueTime?: string;
+    durationAmount: string;
+    durationUnit: DurationUnit;
+    onDueDate: (value?: string) => void;
+    onDueTime: (value?: string) => void;
+    onDurationAmount: (value: string) => void;
+    onDurationUnit: (unit: DurationUnit) => void;
+  }) => {
+    const {
+      dueDate,
+      dueTime,
+      durationAmount,
+      durationUnit,
+      onDueDate,
+      onDueTime,
+      onDurationAmount,
+      onDurationUnit
+    } = opts;
+    const hasDate = !!dueDate;
+    const hasTime = !!dueTime;
+    const hasDuration = durationAmount.trim().length > 0;
+
+    return (
+      <div className="drawer-schedule">
+        <div className="drawer-schedule-compose">
+          <div className="drawer-schedule-when">
+            <label className="drawer-schedule-field">
+              <span className="drawer-schedule-label-row">
+                <span className="drawer-schedule-label">Date</span>
+                {hasDate ? (
+                  <button
+                    type="button"
+                    className="drawer-schedule-clear"
+                    onClick={() => onDueDate(undefined)}
+                    title="Clear date"
+                    aria-label="Clear date"
+                  >
+                    Clear
+                  </button>
+                ) : null}
+              </span>
+              <input
+                className="drawer-schedule-input"
+                type="date"
+                value={dueDate ?? ""}
+                onChange={(e) => onDueDate(e.target.value || undefined)}
+                title="Due date (optional)."
+              />
+            </label>
+            <label className="drawer-schedule-field">
+              <span className="drawer-schedule-label-row">
+                <span className="drawer-schedule-label">Time</span>
+                {hasTime ? (
+                  <button
+                    type="button"
+                    className="drawer-schedule-clear"
+                    onClick={() => onDueTime(undefined)}
+                    title="Clear time"
+                    aria-label="Clear time"
+                  >
+                    Clear
+                  </button>
+                ) : null}
+              </span>
+              <input
+                className="drawer-schedule-input"
+                type="time"
+                value={dueTime ?? ""}
+                onChange={(e) => onDueTime(e.target.value || undefined)}
+                title="Due time (optional)."
+              />
+            </label>
+          </div>
+
+          <div className="drawer-schedule-duration">
+            <span className="drawer-schedule-label-row">
+              <span className="drawer-schedule-label" id="drawer-schedule-duration-label">
+                Duration
+              </span>
+              {hasDuration ? (
+                <button
+                  type="button"
+                  className="drawer-schedule-clear"
+                  onClick={() => onDurationAmount("")}
+                  title="Clear duration"
+                  aria-label="Clear duration"
+                >
+                  Clear
+                </button>
+              ) : null}
+            </span>
+            <div className="drawer-schedule-duration-row">
+              <input
+                className="drawer-schedule-input drawer-schedule-amount"
+                type="number"
+                min={1}
+                inputMode="numeric"
+                value={durationAmount}
+                onChange={(e) => onDurationAmount(e.target.value)}
+                placeholder="Optional"
+                title="Estimated duration amount (optional)."
+                aria-labelledby="drawer-schedule-duration-label"
+              />
+              <div className="drawer-schedule-units" role="radiogroup" aria-label="Duration unit">
+                {DURATION_UNIT_OPTIONS.map((opt) => {
+                  const active = durationUnit === opt.value;
+                  return (
+                    <button
+                      key={opt.value}
+                      type="button"
+                      role="radio"
+                      aria-checked={active}
+                      className={`drawer-schedule-unit-chip${active ? " is-active" : ""}`}
+                      onClick={() => onDurationUnit(opt.value)}
+                      title={
+                        opt.value === "minute" ? "Minutes" : opt.value === "hour" ? "Hours" : "Days"
+                      }
+                    >
+                      {opt.label}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    );
   };
 
   const parseLinkAliasToken = (raw: string): { href: string; label?: string } | null => {
@@ -231,79 +929,6 @@ export function TaskEditorDrawer({
     return links
       .slice()
       .sort((a, b) => linkTokenKey(a).localeCompare(linkTokenKey(b)) || a.localeCompare(b));
-  };
-
-  const parseLinksInput = (raw: string): string[] => {
-    const cleaned = raw.trim();
-    if (!cleaned) return [];
-
-    // Split links by separators WITHOUT breaking aliases.
-    // - Separators: comma, semicolon, newline
-    // - Allow escaping separators inside aliases with backslash: `\,` or `\;`
-    // - IMPORTANT: do NOT treat `&` as a separator; users often want it in aliases.
-    const parts: string[] = [];
-    let cur = "";
-    let escaping = false;
-    for (let i = 0; i < cleaned.length; i++) {
-      const ch = cleaned[i]!;
-      if (escaping) {
-        cur += ch;
-        escaping = false;
-        continue;
-      }
-      if (ch === "\\") {
-        escaping = true;
-        continue;
-      }
-      if (ch === "," || ch === ";" || ch === "\n" || ch === "\r") {
-        const t = cur.trim();
-        if (t) parts.push(t);
-        cur = "";
-        continue;
-      }
-      cur += ch;
-    }
-    const tail = cur.trim();
-    if (tail) parts.push(tail);
-
-    // If a user accidentally pressed Enter inside an alias label (e.g. "Cover\nLetter=>url"),
-    // join the split pieces back together when the combined token becomes a valid alias token.
-    const mergedParts: string[] = [];
-    for (let i = 0; i < parts.length; i++) {
-      const a = parts[i] ?? "";
-      const b = parts[i + 1] ?? "";
-      if (b) {
-        const aLooksStandalone =
-          !parseLinkAliasToken(a) && normalizeLinkHref(a) === null && !/[|]/.test(a);
-        const combined = `${a.trim()} ${b.trim()}`.trim();
-        if (aLooksStandalone && parseLinkAliasToken(combined)) {
-          mergedParts.push(combined);
-          i++; // consume b
-          continue;
-        }
-      }
-      mergedParts.push(a);
-    }
-
-    const out: string[] = [];
-    const seen = new Map<string, string>(); // tokenKey -> stored token
-    for (const p of mergedParts.slice(0, 12)) {
-      const norm = normalizeLinkToken(p);
-      if (!norm) continue;
-      const key = linkTokenKey(norm);
-      // If the user provided a labeled link, prefer it over plain URL for same href.
-      const hasLabel = norm.includes("=>");
-      if (hasLabel) {
-        // For labeled links, dedupe by href rather than full token.
-        const parsed = parseLinkAliasToken(norm);
-        const hrefKey = parsed ? `href:${parsed.href.toLowerCase()}` : key;
-        seen.set(hrefKey, norm);
-      } else if (!seen.has(key)) {
-        seen.set(key, norm);
-      }
-    }
-    for (const token of seen.values()) out.push(token);
-    return sortLinksAsc(out);
   };
 
   const normalizeSingleLocation = (raw: string): string =>
@@ -430,16 +1055,6 @@ export function TaskEditorDrawer({
     return { query: t };
   };
 
-  const formatLocationsForInput = (raw: string | undefined | null): string => {
-    const tokens = deserializeLocationTokens(raw);
-    return tokens
-      .map((tok) => {
-        const { label, query } = splitLocationStoredToken(tok);
-        return label ? `${label} | ${query}` : query;
-      })
-      .join("\n");
-  };
-
   const normalizeMaybeUrl = (raw: string): string | null => {
     const t = raw.trim();
     if (!t) return null;
@@ -473,7 +1088,7 @@ export function TaskEditorDrawer({
   ) => {
     if (tokens.length === 0) return null;
     return (
-      <div className="task-hovercard-labels" style={{ marginTop: "0.45rem" }} aria-label="Preview">
+      <div className="task-hovercard-labels drawer-token-preview" aria-label="Preview">
         {tokens.map((t) =>
           t.href ? (
             <a
@@ -613,6 +1228,41 @@ export function TaskEditorDrawer({
   }, []);
 
   useEffect(() => {
+    if (!task) return;
+    const isNew = !Array.isArray(task) && task.id === "new";
+    setVoicePanelOpen(isNew);
+  }, [task]);
+
+  useEffect(() => {
+    if (!draft) return;
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key !== "Escape") return;
+      e.preventDefault();
+      onClose();
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [draft, onClose]);
+
+  useEffect(() => {
+    if (!draft) return;
+    const timer = window.setTimeout(() => {
+      const titleInput = document.getElementById("task-editor-title") as HTMLInputElement | null;
+      titleInput?.focus({ preventScroll: true });
+    }, 40);
+    return () => window.clearTimeout(timer);
+  }, [draft?.id, batchActiveIdx, multipleFlow, createMode]);
+
+  useEffect(() => {
+    const el = drawerBodyRef.current;
+    if (!el || !draft) return;
+    const onScroll = () => setBodyScrolled(el.scrollTop > 6);
+    onScroll();
+    el.addEventListener("scroll", onScroll, { passive: true });
+    return () => el.removeEventListener("scroll", onScroll);
+  }, [draft]);
+
+  useEffect(() => {
     if (!onLabelsDraftChange) return;
     if (!draft || draft.id === "new") return;
     onLabelsDraftChange(draft.labels ?? []);
@@ -628,9 +1278,10 @@ export function TaskEditorDrawer({
   useEffect(() => {
     if (!draft) return;
     if (createMode !== "single") return;
-    setLabelsInput(formatLabelsForInput(draft.labels));
-    setLocationInput(formatLocationsForInput(draft.location));
-    setLinksInput(formatLinksForInput(draft.link));
+    setBasicsTitleTouched(false);
+    setLabelRows(labelTokensToRows(draft.labels));
+    setLinkRows(linkTokensToPairRows(draft.link));
+    setLocationRows(locationTokensToPairRows(draft.location));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [draft?.id, createMode]);
 
@@ -638,20 +1289,12 @@ export function TaskEditorDrawer({
     if (createMode !== "multiple") return;
     const row = batchItems[batchActiveIdx];
     if (!row) return;
-    setBatchLabelsInputByIdx((prev) => ({
-      ...prev,
-      [batchActiveIdx]: prev[batchActiveIdx] ?? formatLabelsForInput(row.labels)
-    }));
-    setBatchLocationInputByIdx((prev) => ({
-      ...prev,
-      [batchActiveIdx]: prev[batchActiveIdx] ?? formatLocationsForInput(row.location)
-    }));
-    setBatchLinksInputByIdx((prev) => ({
-      ...prev,
-      [batchActiveIdx]: prev[batchActiveIdx] ?? formatLinksForInput(row.link)
-    }));
+    setBasicsTitleTouched(false);
+    setBatchLabelRows(labelTokensToRows(row.labels));
+    setBatchLinkRows(linkTokensToPairRows(row.link));
+    setBatchLocationRows(locationTokensToPairRows(row.location));
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [createMode, batchActiveIdx, batchItems.length]);
+  }, [createMode, batchActiveIdx, batchItems[batchActiveIdx]?.key]);
 
   if (!draft) return null;
 
@@ -940,7 +1583,7 @@ export function TaskEditorDrawer({
         // Example: "label home location gym" should become ["home"], not ["home location gym"].
         const raw0 = m[1];
         const stopMatch = raw0.match(
-          /\b(?:location|lokasi|reminder|ingatkan|pengingat|due|tanggal|date|on|time|jam|pukul|repeat|every|priority|project|duration|durasi|selama|for)\b/
+          /\b(?:location|lokasi|links?|tautan|url|reminder|ingatkan|pengingat|due|tanggal|date|on|time|jam|pukul|repeat|every|priority|project|duration|durasi|selama|for)\b/
         );
         const raw1 = (stopMatch?.index !== undefined ? raw0.slice(0, stopMatch.index) : raw0).trim();
 
@@ -988,6 +1631,32 @@ export function TaskEditorDrawer({
             .replaceAll("|", ",");
           const tokens = parseLocationsInput(normalized);
           if (tokens.length) out.location = serializeLocationTokens(tokens);
+        }
+      }
+    }
+
+    // Links: "link docs https://example.com" / "links notes example.com"
+    {
+      const m = lower.match(/\b(?:links?|tautan|url)\b[: ]([^.]*)/);
+      if (m?.[1]) {
+        const raw = m[1].trim();
+        if (raw) {
+          const normalized = raw
+            .replace(/\s+(?:and|dan)\s+/gi, "|")
+            .replaceAll(";", "|")
+            .replaceAll(",", "|")
+            .replace(/\n+/g, "|");
+          const parts = normalized
+            .split("|")
+            .map((p) => p.trim())
+            .filter(Boolean)
+            .slice(0, 12);
+          const tokens: string[] = [];
+          for (const part of parts) {
+            const norm = normalizeLinkToken(part);
+            if (norm) tokens.push(norm);
+          }
+          if (tokens.length) out.link = sortLinksAsc(tokens);
         }
       }
     }
@@ -1054,12 +1723,34 @@ export function TaskEditorDrawer({
     return out;
   };
 
+  const syncOrganizeEditorsFromTask = (
+    source: {
+      labels?: string[] | null;
+      link?: string[] | null;
+      location?: string | null;
+    } | null | undefined,
+    mode: "single" | "batch"
+  ) => {
+    if (mode === "batch") {
+      setBatchLabelRows(labelTokensToRows(source?.labels));
+      setBatchLinkRows(linkTokensToPairRows(source?.link));
+      setBatchLocationRows(locationTokensToPairRows(source?.location));
+      return;
+    }
+    setLabelRows(labelTokensToRows(source?.labels));
+    setLinkRows(linkTokensToPairRows(source?.link));
+    setLocationRows(locationTokensToPairRows(source?.location));
+  };
+
   const applyVoiceTranscript = (text: string) => {
     const cleaned = text.trim().replace(/\s+/g, " ");
     if (!cleaned) return;
 
-    // Multiple-create: either add list items OR apply fields to the current editor draft.
-    if (draft?.id === "new" && createMode === "multiple") {
+    // Ensure the voice panel is visible so transcript / status stay in view.
+    setVoicePanelOpen(true);
+
+    // Multiple create/edit: apply to the active batch row (UI state lives in batchItems).
+    if (createMode === "multiple") {
       const splitBatchTitles = (raw: string): string[] => {
         const t = raw
           .trim()
@@ -1084,13 +1775,13 @@ export function TaskEditorDrawer({
         return out.slice(0, 50);
       };
 
-      const looksLikeFieldInput = /\b(priority|prioritas|due|tanggal|date|on|time|jam|pukul|repeat|every|labels?|label|lokasi|location|reminder|ingatkan|pengingat|duration|durasi|selama|for|description|deskripsi|title|judul)\b/i.test(
+      const looksLikeFieldInput = /\b(priority|prioritas|due|tanggal|date|on|time|jam|pukul|repeat|every|labels?|label|lokasi|location|links?|tautan|url|reminder|ingatkan|pengingat|duration|durasi|selama|for|description|deskripsi|title|judul)\b/i.test(
         text
       );
       const hasListSeparators = /[\n•;]/.test(text) || /\b(?:then|next|and then|also)\b/i.test(text);
 
-      // If it doesn't look like field commands, treat it as a list of task titles.
-      if (hasListSeparators && !looksLikeFieldInput) {
+      // Multi-create only: treat spoken lists as new task titles.
+      if (!isMultiEdit && hasListSeparators && !looksLikeFieldInput) {
         const incoming = splitBatchTitles(text);
         if (incoming.length === 0) return;
         setBatchItems((prev) => {
@@ -1102,13 +1793,12 @@ export function TaskEditorDrawer({
             .map((t) => t.trim())
             .filter(Boolean)
             .filter((t) => !existingKeys.has(t.toLowerCase()))
-            .map((t, i) => ({ key: `v-${now}-${i}`, title: t }));
+            .map((t, i) => ({ ...emptyBatchItem(), key: `v-${now}-${i}`, title: t }));
           return [...prev, ...additions].slice(0, 50);
         });
         return;
       }
 
-      // Otherwise apply parsed fields to the active row (dedicated per task).
       const parsed = parseVoiceFields(cleaned);
       setBatchItems((prev) => {
         const base = prev.length ? prev.slice() : [emptyBatchItem()];
@@ -1131,6 +1821,11 @@ export function TaskEditorDrawer({
             ? `${existingDesc}\n${cleaned}`
             : cleaned;
 
+        const mergedLabels =
+          parsed.labels && parsed.labels.length
+            ? mergeLabelTokens(cur.labels ?? [], parsed.labels)
+            : cur.labels;
+
         const {
           labels: _labels,
           _explicitTitle: _et,
@@ -1142,8 +1837,12 @@ export function TaskEditorDrawer({
           ...cur,
           ...taskFields,
           title: nextTitle,
-          description: nextDescBase
+          description: nextDescBase,
+          labels: mergedLabels ?? []
         };
+        queueMicrotask(() => {
+          syncOrganizeEditorsFromTask(base[idx], "batch");
+        });
         return base;
       });
       setBatchVoiceTouchedKeys((prev) => {
@@ -1191,13 +1890,17 @@ export function TaskEditorDrawer({
         ...taskFields
       } = parsed;
 
-      return {
+      const next = {
         ...prev,
         ...taskFields,
         title: nextTitle,
         description: nextDescBase,
         labels: mergedLabels ?? []
       };
+      queueMicrotask(() => {
+        syncOrganizeEditorsFromTask(next, "single");
+      });
+      return next;
     });
 
     if (parsed.durationMinutes !== undefined) {
@@ -1320,95 +2023,224 @@ export function TaskEditorDrawer({
 
   return (
     <div className="drawer-backdrop" onClick={onClose}>
-      <aside className="drawer" onClick={(e) => e.stopPropagation()}>
-        <header className="drawer-header">
-          <div className="drawer-header-top">
+      <aside
+        className="drawer"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="task-editor-heading"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <header
+          className={`drawer-header drawer-header--pro${bodyScrolled ? " is-scrolled" : ""}`}
+        >
+          <div className="drawer-header-line">
             <div className="drawer-header-copy">
-              <h2>{draft.id === "new" ? "Create task" : "Edit task"}</h2>
-              <div className="drawer-subtitle">
-                {draft.id === "new"
-                  ? createMode === "multiple"
-                    ? "Add many tasks quickly, then review each with the same editor."
-                    : "Fast capture with voice + a clean, focused form."
-                  : "Update details and keep your schedule accurate."}
-              </div>
+              <h2 id="task-editor-heading">
+                {draft.id === "new" ? "Create task" : "Edit task"}
+              </h2>
+              {multipleFlow && batchItems.length > 0 ? (
+                <span className="drawer-mode-meta" aria-live="polite">
+                  {batchActiveIdx + 1}/{batchItems.length}
+                </span>
+              ) : null}
+              {isMultiEdit ? (
+                <span className="drawer-mode-meta drawer-mode-meta--soft">
+                  {Array.isArray(task) ? task.length : 1} selected
+                </span>
+              ) : null}
             </div>
-          </div>
 
-          {draft.id === "new" ? (
-            <div className="drawer-header-actions" role="tablist" aria-label="Create mode">
-              <div className="segmented">
-                <button
-                  type="button"
-                  className={`ghost-button small ${createMode === "single" ? "is-active" : ""}`}
-                  onClick={() => setCreateMode("single")}
-                  title="Create one task (standard editor)"
-                  role="tab"
-                  aria-selected={createMode === "single"}
-                >
-                  Single
-                </button>
-                <button
-                  type="button"
-                  className={`ghost-button small ${createMode === "multiple" ? "is-active" : ""}`}
-                  onClick={() => {
-                    setCreateMode("multiple");
-                    setBatchItems([{ ...emptyBatchItem(), key: `m-${Date.now()}` }]);
-                    setBatchActiveIdx(0);
-                  }}
-                  title="Create multiple tasks at once"
-                  role="tab"
-                  aria-selected={createMode === "multiple"}
-                >
-                  Multiple
-                </button>
-              </div>
-              <span className="drawer-kbd-hint">
-                {createMode === "multiple"
-                  ? "Paste a list, then review tasks one by one."
-                  : "Tip: use Voice capture for speed."}
-              </span>
-            </div>
-          ) : null}
-        </header>
-        <div className="drawer-body">
-          {draft.id === "new" ? null : null}
-
-          <div className="drawer-card">
-            <div className="drawer-voice-top">
-              <div>
-                <div className="drawer-card-title">Voice capture</div>
-                <div className="drawer-card-desc">
-                  Speak naturally. For multiple tasks, either speak a list (to add rows) or speak field details for the active row.
+            {draft.id === "new" ? (
+              <div className="drawer-header-actions" role="tablist" aria-label="Create mode">
+                <div className="segmented">
+                  <button
+                    type="button"
+                    className={`ghost-button small ${createMode === "single" ? "is-active" : ""}`}
+                    onClick={() => setCreateMode("single")}
+                    title="Create one task (standard editor)"
+                    role="tab"
+                    aria-selected={createMode === "single"}
+                  >
+                    Single
+                  </button>
+                  <button
+                    type="button"
+                    className={`ghost-button small ${createMode === "multiple" ? "is-active" : ""}`}
+                    onClick={() => {
+                      setCreateMode("multiple");
+                      setBatchItems([{ ...emptyBatchItem(), key: `m-${Date.now()}` }]);
+                      setBatchActiveIdx(0);
+                    }}
+                    title="Create multiple tasks at once"
+                    role="tab"
+                    aria-selected={createMode === "multiple"}
+                  >
+                    Multiple
+                  </button>
                 </div>
               </div>
-              <div className="drawer-voice-meta">
-            <button
-              type="button"
-              className="ghost-button"
-              disabled={!voiceSupported || listening}
-              onClick={() => startVoiceInput()}
-              title={
-                voiceSupported
-                  ? "Start voice input (auto-stops after 1 minute of silence)"
-                  : "Voice input not supported in this browser"
-              }
-            >
-              {listening ? "Listening…" : "Voice input"}
-            </button>
-            {listening && (
-              <span className="pill subtle">
-                Auto-stops when you finish speaking
-              </span>
-            )}
-            {voiceError && <span className="pill subtle">Voice: {voiceError}</span>}
-              </div>
+            ) : null}
           </div>
-          {listening && voiceTranscript && (
-              <div className="drawer-transcript" aria-label="Live transcript">
-              {voiceTranscript}
+
+          {draft.id !== "new" ? (
+            <div className="drawer-id-meta" aria-label="Task identifiers">
+              {(
+                [
+                  { key: "id", label: "ID", value: stripDoubleColonSuffix(draft.id) },
+                  draft.parentId
+                    ? {
+                        key: "parent",
+                        label: "Parent",
+                        value: stripDoubleColonSuffix(draft.parentId)
+                      }
+                    : null,
+                  draft.childId
+                    ? {
+                        key: "child",
+                        label: "Child",
+                        value: stripDoubleColonSuffix(draft.childId)
+                      }
+                    : null
+                ] as Array<{ key: string; label: string; value: string } | null>
+              )
+                .filter((x): x is { key: string; label: string; value: string } =>
+                  Boolean(x?.value)
+                )
+                .map((item, index) => {
+                  const copied = copiedIdKey === item.key;
+                  return (
+                    <span key={item.key} className="drawer-id-meta-pair">
+                      {index > 0 ? (
+                        <span className="drawer-id-meta-sep" aria-hidden="true">
+                          ·
+                        </span>
+                      ) : null}
+                      <button
+                        type="button"
+                        className={`drawer-id-meta-btn${copied ? " is-copied" : ""}`}
+                        title="Click to copy"
+                        aria-label={`Copy ${item.label} ${item.value}`}
+                        onClick={() => copyIdValue(item.key, item.value)}
+                      >
+                        <span className="drawer-id-meta-k">{item.label}</span>
+                        <span className="drawer-id-meta-v">
+                          {copied ? "Copied" : item.value}
+                        </span>
+                      </button>
+                    </span>
+                  );
+                })}
+            </div>
+          ) : (
+            <p className="drawer-subtitle">
+              {createMode === "multiple"
+                ? "Paste a list, then review tasks one by one."
+                : "Fast capture with voice + a clean, focused form."}
+            </p>
+          )}
+        </header>
+        <div className="drawer-body" ref={drawerBodyRef}>
+          <div
+            className={`drawer-card drawer-card--voice${
+              voicePanelOpen ? "" : " drawer-card--voice-collapsed"
+            }${listening ? " is-listening" : ""}`}
+          >
+            <div
+              className="drawer-voice-bar"
+              onClick={
+                !voicePanelOpen && draft.id !== "new"
+                  ? () => setVoicePanelOpen(true)
+                  : undefined
+              }
+              role={!voicePanelOpen && draft.id !== "new" ? "button" : undefined}
+              tabIndex={!voicePanelOpen && draft.id !== "new" ? 0 : undefined}
+              onKeyDown={
+                !voicePanelOpen && draft.id !== "new"
+                  ? (e) => {
+                      if (e.key === "Enter" || e.key === " ") {
+                        e.preventDefault();
+                        setVoicePanelOpen(true);
+                      }
+                    }
+                  : undefined
+              }
+              aria-label={!voicePanelOpen && draft.id !== "new" ? "Show voice input" : undefined}
+            >
+              <div className="drawer-voice-copy">
+                <div className="drawer-voice-title-row">
+                  <span className="drawer-voice-mark" aria-hidden="true" />
+                  <div className="drawer-card-title">Voice</div>
+                  {listening ? (
+                    <span className="drawer-voice-status" aria-live="polite">
+                      Listening
+                    </span>
+                  ) : !voiceSupported ? (
+                    <span className="drawer-voice-status is-muted">Unavailable</span>
+                  ) : !voicePanelOpen ? (
+                    <span className="drawer-voice-status is-muted drawer-voice-status--idle">
+                      Ready
+                    </span>
+                  ) : null}
+                </div>
+                <div className="drawer-card-desc">
+                  {!voicePanelOpen
+                    ? "Tap to dictate updates"
+                    : listening
+                      ? "Speak naturally — stops when you pause."
+                      : draft.id === "new"
+                        ? "Speak to fill fields, or list multiple tasks."
+                        : "Speak to update this task."}
+                </div>
               </div>
-            )}
+              <div
+                className="drawer-voice-actions"
+                onClick={(e) => e.stopPropagation()}
+                onKeyDown={(e) => e.stopPropagation()}
+              >
+                {draft.id !== "new" ? (
+                  <button
+                    type="button"
+                    className={`drawer-voice-collapse${voicePanelOpen ? "" : " is-expand"}`}
+                    aria-expanded={voicePanelOpen}
+                    onClick={() => setVoicePanelOpen((v) => !v)}
+                    title={voicePanelOpen ? "Hide voice" : "Show voice"}
+                  >
+                    <span>{voicePanelOpen ? "Hide" : "Show"}</span>
+                    <span className="drawer-voice-chevron" aria-hidden="true" />
+                  </button>
+                ) : null}
+                {voicePanelOpen ? (
+                  <button
+                    type="button"
+                    className={`drawer-voice-cta${listening ? " is-listening" : ""}`}
+                    disabled={!voiceSupported || listening}
+                    onClick={() => startVoiceInput()}
+                    title={
+                      voiceSupported
+                        ? "Start voice input (auto-stops after a short pause)"
+                        : "Voice input not supported in this browser"
+                    }
+                  >
+                    <span className="drawer-voice-btn-dot" aria-hidden="true" />
+                    {listening ? "Listening…" : "Start listening"}
+                  </button>
+                ) : null}
+              </div>
+            </div>
+            {voicePanelOpen && (listening || voiceError || voiceTranscript) ? (
+              <div className="drawer-voice-body">
+                {voiceError ? (
+                  <div className="drawer-voice-error" role="status">
+                    Voice: {voiceError}
+                  </div>
+                ) : null}
+                {listening && voiceTranscript ? (
+                  <div className="drawer-transcript" aria-label="Live transcript">
+                    {voiceTranscript}
+                  </div>
+                ) : null}
+              </div>
+            ) : null}
           </div>
 
           {multipleFlow ? (
@@ -1423,7 +2255,7 @@ export function TaskEditorDrawer({
               </div>
 
               {isMultiCreate ? (
-                <div className="drawer-row drawer-row--between" style={{ marginTop: "0.55rem" }}>
+                <div className="drawer-row drawer-row--between drawer-row--spaced">
                   <div className="drawer-row drawer-row--tight">
                     <button
                       type="button"
@@ -1460,20 +2292,20 @@ export function TaskEditorDrawer({
                   </div>
                 </div>
               ) : (
-                <div className="drawer-row drawer-row--between" style={{ marginTop: "0.55rem" }}>
+                <div className="drawer-row drawer-row--between drawer-row--spaced">
                   <span className="muted small" aria-label="Multiple edit hint">
                     Editing {batchItems.length} task{batchItems.length === 1 ? "" : "s"} (latest due date first).
                   </span>
                 </div>
               )}
 
-              <div className="drawer-card" style={{ marginTop: "0.65rem" }}>
+              <div className="drawer-card drawer-card--inset">
                 <div className="drawer-card-head">
-                  <div className="drawer-row drawer-row--tight" style={{ justifyContent: "space-between", flex: 1 }}>
+                  <div className="drawer-row drawer-row--tight drawer-row--spread">
                     <div className="drawer-row drawer-row--tight">
                       <div className="drawer-card-title">Task details</div>
                       {batchItems.length > 1 ? (
-                        <span className="pill subtle" aria-label="Task position">
+                        <span className="pill subtle drawer-step-pill" aria-label="Task position">
                           {batchActiveIdx + 1}/{batchItems.length}
                         </span>
                       ) : null}
@@ -1496,234 +2328,139 @@ export function TaskEditorDrawer({
                   if (!row) return null;
                   return (
                     <>
-                      <div className="drawer-card" style={{ padding: 0, border: "none", boxShadow: "none" }}>
-                        <div className="drawer-card-head" style={{ marginBottom: "0.6rem" }}>
+                      <div className="drawer-card drawer-card--nested drawer-card--basics">
+                        <div className="drawer-card-head drawer-card-head--section">
                           <div>
                             <div className="drawer-card-title">Basics</div>
+                            <div className="drawer-card-desc">Title, context, priority, and repeat.</div>
                           </div>
                         </div>
-                      <label className="field">
-                        <span>Title</span>
-                        <input
-                          value={row.title}
-                          onChange={(e) => {
-                            const v = e.target.value;
+                        {renderBasicsEditor({
+                          title: row.title,
+                          description: row.description ?? "",
+                          priority: row.priority ?? "medium",
+                          repeat: (row.repeat ?? "none") as NonNullable<Task["repeat"]>,
+                          repeatEvery: row.repeatEvery,
+                          repeatUnit: row.repeatUnit,
+                          titleInputId: "task-editor-title",
+                          onChange: (patch) => {
                             setBatchItems((prev) =>
-                              prev.map((p, i) => (i === batchActiveIdx ? { ...p, title: v } : p))
+                              prev.map((p, i) => (i === batchActiveIdx ? { ...p, ...patch } : p))
                             );
-                          }}
-                          placeholder="What do you want to accomplish?"
-                          title="Task title (required)."
-                        />
-                      </label>
-
-                      <label className="field">
-                        <span>Description</span>
-                        <textarea
-                          value={row.description ?? ""}
-                          onChange={(e) => {
-                            const v = e.target.value;
-                            setBatchItems((prev) =>
-                              prev.map((p, i) => (i === batchActiveIdx ? { ...p, description: v } : p))
-                            );
-                          }}
-                          placeholder="Add more context, links, or notes."
-                          rows={4}
-                          title="Optional description for additional context."
-                        />
-                      </label>
-
-                      <div className="field-grid">
-                        <label className="field">
-                          <span>Priority</span>
-                          <select
-                            value={row.priority ?? "medium"}
-                            onChange={(e) => {
-                              const v = e.target.value as Task["priority"];
-                              setBatchItems((prev) =>
-                                prev.map((p, i) => (i === batchActiveIdx ? { ...p, priority: v } : p))
-                              );
-                            }}
-                            title="Priority sets urgency and completion points (low=1, medium=2, high=3, urgent=4)."
-                          >
-                            <option value="low">Low</option>
-                            <option value="medium">Medium</option>
-                            <option value="high">High</option>
-                            <option value="urgent">Urgent</option>
-                          </select>
-                        </label>
-
-                        <label className="field">
-                          <span>Repeat</span>
-                          <select
-                            value={row.repeat ?? "none"}
-                            onChange={(e) => {
-                              const v = e.target.value as Task["repeat"];
-                              setBatchItems((prev) =>
-                                prev.map((p, i) => (i === batchActiveIdx ? { ...p, repeat: v } : p))
-                              );
-                            }}
-                            title="Repeat pattern for recurring tasks."
-                          >
-                            <option value="none">No repetition</option>
-                            <option value="daily">Daily</option>
-                            <option value="weekly">Weekly</option>
-                            <option value="weekdays">Weekdays (Mon–Fri)</option>
-                            <option value="weekends">Weekends (Sat–Sun)</option>
-                            <option value="monthly">Monthly</option>
-                            <option value="quarterly">Quarterly</option>
-                            <option value="yearly">Annually</option>
-                            <option value="custom">Custom…</option>
-                          </select>
-                        </label>
+                          }
+                        })}
                       </div>
 
-                      {row.repeat === "custom" ? (
-                        <div className="field-grid">
-                          <label className="field">
-                            <span>Every</span>
-                            <input
-                              type="number"
-                              min={1}
-                              value={row.repeatEvery ?? 1}
-                              onChange={(e) => {
-                                const n = Number(e.target.value) || 1;
-                                setBatchItems((prev) =>
-                                  prev.map((p, i) =>
-                                    i === batchActiveIdx ? { ...p, repeatEvery: n } : p
-                                  )
-                                );
-                              }}
-                              title="Repeat interval count (e.g. every 2 weeks)."
-                            />
-                          </label>
-                          <label className="field">
-                            <span>Unit</span>
-                            <select
-                              value={row.repeatUnit ?? "week"}
-                              onChange={(e) => {
-                                const v = e.target.value as Task["repeatUnit"];
-                                setBatchItems((prev) =>
-                                  prev.map((p, i) =>
-                                    i === batchActiveIdx ? { ...p, repeatUnit: v } : p
-                                  )
-                                );
-                              }}
-                              title="Repeat interval unit."
-                            >
-                              <option value="day">Day(s)</option>
-                              <option value="week">Week(s)</option>
-                              <option value="month">Month(s)</option>
-                              <option value="quarter">Quarter(s)</option>
-                              <option value="year">Year(s)</option>
-                            </select>
-                          </label>
-                        </div>
-                      ) : null}
-                      </div>
-
-                      <div className="drawer-card" style={{ padding: 0, border: "none", boxShadow: "none" }}>
-                        <div className="drawer-card-head" style={{ margin: "0.8rem 0 0.6rem" }}>
+                      <div className="drawer-card drawer-card--nested drawer-card--schedule">
+                        <div className="drawer-card-head drawer-card-head--section">
                           <div>
                             <div className="drawer-card-title">Schedule</div>
-                            <div className="drawer-card-desc">When should it happen, and how long?</div>
+                            <div className="drawer-card-desc">When it happens, and how long it takes.</div>
                           </div>
                         </div>
-                      <div className="field-grid">
-                        <label className="field">
-                          <span>Date</span>
-                          <input
-                            type="date"
-                            value={row.dueDate ?? ""}
-                            onChange={(e) => {
-                              const v = e.target.value || undefined;
-                              setBatchItems((prev) =>
-                                prev.map((p, i) => (i === batchActiveIdx ? { ...p, dueDate: v } : p))
-                              );
-                            }}
-                            title="Due date (optional)."
-                          />
-                        </label>
-                        <label className="field">
-                          <span>Time</span>
-                          <input
-                            type="time"
-                            value={row.dueTime ?? ""}
-                            onChange={(e) => {
-                              const v = e.target.value || undefined;
-                              setBatchItems((prev) =>
-                                prev.map((p, i) => (i === batchActiveIdx ? { ...p, dueTime: v } : p))
-                              );
-                            }}
-                            title="Due time (optional)."
-                          />
-                        </label>
+                        {renderScheduleEditor({
+                          dueDate: row.dueDate,
+                          dueTime: row.dueTime,
+                          durationAmount: batchDurationAmount,
+                          durationUnit: batchDurationUnit,
+                          onDueDate: (v) => {
+                            setBatchItems((prev) =>
+                              prev.map((p, i) => (i === batchActiveIdx ? { ...p, dueDate: v } : p))
+                            );
+                          },
+                          onDueTime: (v) => {
+                            setBatchItems((prev) =>
+                              prev.map((p, i) => (i === batchActiveIdx ? { ...p, dueTime: v } : p))
+                            );
+                          },
+                          onDurationAmount: (nextAmount) => {
+                            setBatchDurationAmount(nextAmount);
+                            const mins = durationMinutesFromUi(nextAmount, batchDurationUnit);
+                            setBatchItems((prev) =>
+                              prev.map((p, i) =>
+                                i === batchActiveIdx ? { ...p, durationMinutes: mins } : p
+                              )
+                            );
+                          },
+                          onDurationUnit: (u) => {
+                            setBatchDurationUnit(u);
+                            const mins = durationMinutesFromUi(batchDurationAmount, u);
+                            setBatchItems((prev) =>
+                              prev.map((p, i) =>
+                                i === batchActiveIdx ? { ...p, durationMinutes: mins } : p
+                              )
+                            );
+                          }
+                        })}
                       </div>
 
-                      <label className="field">
-                        <span>Duration</span>
-                        <div className="drawer-row">
-                          <input
-                            type="number"
-                            min={1}
-                            value={batchDurationAmount}
-                            onChange={(e) => {
-                              const nextAmount = e.target.value;
-                              setBatchDurationAmount(nextAmount);
-                              const amount = Number(nextAmount);
-                              const mult = batchDurationUnit === "day" ? 1440 : batchDurationUnit === "hour" ? 60 : 1;
-                              const mins =
-                                nextAmount.trim().length > 0 && Number.isFinite(amount) && amount > 0
-                                  ? Math.round(amount * mult)
-                                  : undefined;
-                              setBatchItems((prev) =>
-                                prev.map((p, i) =>
-                                  i === batchActiveIdx ? { ...p, durationMinutes: mins } : p
-                                )
-                              );
-                            }}
-                            placeholder="e.g. 30"
-                            title="Estimated duration amount (optional)."
-                            style={{ flex: 1, minWidth: 140 }}
-                          />
-                          <select
-                            value={batchDurationUnit}
-                            onChange={(e) => {
-                              const u = e.target.value as typeof batchDurationUnit;
-                              setBatchDurationUnit(u);
-                              const amount = Number(batchDurationAmount);
-                              const mult = u === "day" ? 1440 : u === "hour" ? 60 : 1;
-                              const mins =
-                                batchDurationAmount.trim().length > 0 && Number.isFinite(amount) && amount > 0
-                                  ? Math.round(amount * mult)
-                                  : undefined;
-                              setBatchItems((prev) =>
-                                prev.map((p, i) =>
-                                  i === batchActiveIdx ? { ...p, durationMinutes: mins } : p
-                                )
-                              );
-                            }}
-                            title="Duration unit."
-                            style={{ width: 160 }}
-                          >
-                            <option value="minute">Minutes</option>
-                            <option value="hour">Hours</option>
-                            <option value="day">Days</option>
-                          </select>
-                        </div>
-                      </label>
-                      </div>
-
-                      <div className="drawer-card" style={{ padding: 0, border: "none", boxShadow: "none" }}>
-                        <div className="drawer-card-head" style={{ margin: "0.8rem 0 0.6rem" }}>
+                      <div className="drawer-card drawer-card--nested drawer-card--organize">
+                        <div className="drawer-card-head drawer-card-head--section">
                           <div>
                             <div className="drawer-card-title">Organize</div>
-                            <div className="drawer-card-desc">Labels, links, location, and reminders.</div>
+                            <div className="drawer-card-desc">Tags, places, links, and reminders.</div>
                           </div>
                         </div>
-                      <label className="field">
-                        <span>Reminder</span>
+                      {renderTextRowsEditor({
+                        label: "Labels",
+                        hint: "Add a label",
+                        rows: batchLabelRows,
+                        onChange: commitBatchLabelRows,
+                        textPlaceholder: "e.g. Work, Deep focus",
+                        preview: rowsToLabelTokens(batchLabelRows).map((tok) => ({
+                          key: tok,
+                          text: tok
+                        }))
+                      })}
+
+                      {renderPairRowsEditor({
+                        label: "Location",
+                        hint: "Add a place name and optional map/URL",
+                        rows: batchLocationRows,
+                        onChange: commitBatchLocationRows,
+                        textPlaceholder: "Place name or note",
+                        urlPlaceholder: "https://…",
+                        preview: batchLocationRows
+                          .map((r) => {
+                            const value = pairRowsToLocationValue([r]);
+                            if (!value) return null;
+                            const tok = deserializeLocationTokens(value)[0];
+                            if (!tok) return null;
+                            const { label, query } = splitLocationStoredToken(tok);
+                            const meta = locationHrefMetaForToken(tok);
+                            return {
+                              key: r.key,
+                              text: label ?? query,
+                              href: meta?.href
+                            };
+                          })
+                          .filter(Boolean) as Array<{ key: string; text: string; href?: string }>
+                      })}
+
+                      {renderPairRowsEditor({
+                        label: "Links",
+                        hint: "Add a label and optional URL",
+                        rows: batchLinkRows,
+                        onChange: commitBatchLinkRows,
+                        textPlaceholder: "Label or note",
+                        urlPlaceholder: "https://…",
+                        preview: pairRowsToLinkTokens(batchLinkRows).map((tok) => {
+                          const parsed = parseLinkAliasToken(tok);
+                          if (!parsed) return { key: tok, text: tok };
+                          return {
+                            key: tok,
+                            text: parsed.label ?? shortLinkText(parsed.href),
+                            href: parsed.href
+                          };
+                        })
+                      })}
+
+                      <div className="drawer-organize-block">
+                        <div className="drawer-organize-block-head">
+                          <span className="drawer-organize-block-title">Reminder</span>
+                        </div>
                         <select
+                          className="drawer-organize-select"
                           value={
                             row.reminderMinutesBefore !== undefined
                               ? String(row.reminderMinutesBefore)
@@ -1749,136 +2486,7 @@ export function TaskEditorDrawer({
                           <option value="60">1 hour before</option>
                           <option value="1440">1 day before</option>
                         </select>
-                      </label>
-
-                      <label className="field">
-                        <span>Labels</span>
-                        <textarea
-                          value={
-                            batchLabelsInputByIdx[batchActiveIdx] ?? formatLabelsForInput(row.labels)
-                          }
-                          onChange={(e) => {
-                            const raw = e.target.value;
-                            setBatchLabelsInputByIdx((prev) => ({ ...prev, [batchActiveIdx]: raw }));
-                            const tokens = parseLabelsInput(raw);
-                            setBatchItems((prev) =>
-                              prev.map((p, i) => (i === batchActiveIdx ? { ...p, labels: tokens } : p))
-                            );
-                          }}
-                          onBlur={() => {
-                            const raw = batchLabelsInputByIdx[batchActiveIdx] ?? "";
-                            const tokens = parseLabelsInput(raw);
-                            setBatchItems((prev) =>
-                              prev.map((p, i) => (i === batchActiveIdx ? { ...p, labels: tokens } : p))
-                            );
-                            setBatchLabelsInputByIdx((prev) => ({
-                              ...prev,
-                              [batchActiveIdx]: formatLabelsForInput(tokens)
-                            }));
-                          }}
-                          placeholder={"Work\nDeep focus\nErrands"}
-                          title="Multiple labels supported. Use one per line, or separate with commas/semicolons."
-                          rows={2}
-                          style={{ resize: "vertical" }}
-                        />
-                      </label>
-
-                      <label className="field">
-                        <span>Location</span>
-                        <textarea
-                          value={
-                            batchLocationInputByIdx[batchActiveIdx] ?? formatLocationsForInput(row.location)
-                          }
-                          onChange={(e) => {
-                            const raw = e.target.value;
-                            setBatchLocationInputByIdx((prev) => ({ ...prev, [batchActiveIdx]: raw }));
-                            const tokens = parseLocationsInput(raw);
-                            const v = serializeLocationTokens(tokens);
-                            setBatchItems((prev) =>
-                              prev.map((p, i) => (i === batchActiveIdx ? { ...p, location: v } : p))
-                            );
-                          }}
-                          onBlur={() => {
-                            const raw = batchLocationInputByIdx[batchActiveIdx] ?? "";
-                            const tokens = parseLocationsInput(raw);
-                            const v = serializeLocationTokens(tokens);
-                            setBatchItems((prev) =>
-                              prev.map((p, i) => (i === batchActiveIdx ? { ...p, location: v } : p))
-                            );
-                            setBatchLocationInputByIdx((prev) => ({
-                              ...prev,
-                              [batchActiveIdx]: formatLocationsForInput(v)
-                            }));
-                          }}
-                          placeholder={"Outdoor\nHome\nAlias=>https://example.com"}
-                          title="Multiple locations supported. Use one per line, or separate with commas/semicolons. Aliases: Label=>value, Label -> value, or Label | value. URL-like values become clickable in the preview."
-                          rows={2}
-                          style={{ resize: "vertical" }}
-                        />
-                        {renderTokenPreview(
-                          (() => {
-                            const raw = batchLocationInputByIdx[batchActiveIdx] ?? "";
-                            const tokens = parseLocationsInput(raw);
-                            return tokens.map((tok) => {
-                              const { label, query } = splitLocationStoredToken(tok);
-                              const meta = locationHrefMetaForToken(tok);
-                              return { key: tok, text: label ?? query, href: meta?.href };
-                            });
-                          })()
-                        )}
-                      </label>
-
-                      <label className="field">
-                        <span>Links</span>
-                        <textarea
-                          value={batchLinksInputByIdx[batchActiveIdx] ?? formatLinksForInput(row.link)}
-                          onChange={(e) => {
-                            const raw = e.target.value;
-                            setBatchLinksInputByIdx((prev) => ({ ...prev, [batchActiveIdx]: raw }));
-                            const tokens = parseLinksInput(raw);
-                            // Only commit parsed tokens when we have a valid link or the user cleared the field.
-                            if (tokens.length > 0 || raw.trim().length === 0) {
-                              setBatchItems((prev) =>
-                                prev.map((p, i) =>
-                                  i === batchActiveIdx ? { ...p, link: tokens.length ? tokens : undefined } : p
-                                )
-                              );
-                            }
-                          }}
-                          onBlur={() => {
-                            const raw = batchLinksInputByIdx[batchActiveIdx] ?? "";
-                            const tokens = parseLinksInput(raw);
-                            setBatchItems((prev) =>
-                              prev.map((p, i) =>
-                                i === batchActiveIdx ? { ...p, link: tokens.length ? tokens : undefined } : p
-                              )
-                            );
-                            setBatchLinksInputByIdx((prev) => ({
-                              ...prev,
-                              [batchActiveIdx]: formatLinksForInput(tokens)
-                            }));
-                          }}
-                          placeholder={"Cover Letter=>https://...\nResume=>https://...\nOr plain text notes"}
-                          title="Multiple entries supported. Use one per line, or separate with commas/semicolons. Supports plain text, URL, or aliases (Label=>URL, Label -> URL, Label | URL). Clickable preview below."
-                          rows={2}
-                          style={{ resize: "vertical" }}
-                        />
-                        {renderTokenPreview(
-                          (() => {
-                            const raw = batchLinksInputByIdx[batchActiveIdx] ?? "";
-                            const tokens = parseLinksInput(raw);
-                            return tokens.map((tok) => {
-                              const parsed = parseLinkAliasToken(tok);
-                              if (!parsed) return { key: tok, text: tok };
-                              return {
-                                key: tok,
-                                text: parsed.label ?? shortLinkText(parsed.href),
-                                href: parsed.href
-                              };
-                            });
-                          })()
-                        )}
-                      </label>
+                      </div>
                       </div>
                     </>
                   );
@@ -1889,300 +2497,116 @@ export function TaskEditorDrawer({
           ) : null}
 
           {multipleFlow ? null : (
-            <div className="drawer-card">
+            <div className="drawer-card drawer-card--basics">
               <div className="drawer-card-head">
                 <div>
                   <div className="drawer-card-title">Basics</div>
                   <div className="drawer-card-desc">Start with a clear title and optional context.</div>
                 </div>
               </div>
-
-          <label className="field">
-            <span>Title</span>
-            <input
-              value={draft.title}
-              onChange={(e) => setDraft({ ...draft, title: e.target.value })}
-              placeholder="What do you want to accomplish?"
-                  title="Task title (required)."
-            />
-          </label>
-
-          <label className="field">
-            <span>Description</span>
-            <textarea
-              value={draft.description ?? ""}
-                onChange={(e) => setDraft({ ...draft, description: e.target.value })}
-              placeholder="Add more context, links, or notes."
-              rows={4}
-                title="Optional description for additional context."
-            />
-          </label>
-
-          <div className="field-grid">
-            <label className="field">
-              <span>Priority</span>
-              <select
-                value={draft.priority}
-                onChange={(e) =>
-                  setDraft({
-                    ...draft,
-                    priority: e.target.value as Task["priority"]
-                  })
-                }
-                  title="Priority sets urgency and completion points (low=1, medium=2, high=3, urgent=4)."
-              >
-                <option value="low">Low</option>
-                <option value="medium">Medium</option>
-                <option value="high">High</option>
-                <option value="urgent">Urgent</option>
-              </select>
-            </label>
-
-            <label className="field">
-              <span>Repeat</span>
-              <select
-                value={draft.repeat ?? "none"}
-                onChange={(e) =>
-                  setDraft({
-                    ...draft,
-                    repeat: e.target.value as Task["repeat"]
-                  })
-                }
-                  title="Repeat pattern for recurring tasks."
-              >
-                <option value="none">No repetition</option>
-                <option value="daily">Daily</option>
-                <option value="weekly">Weekly</option>
-                <option value="weekdays">Weekdays (Mon–Fri)</option>
-                <option value="weekends">Weekends (Sat–Sun)</option>
-                <option value="monthly">Monthly</option>
-                <option value="quarterly">Quarterly</option>
-                <option value="yearly">Annually</option>
-                <option value="custom">Custom…</option>
-              </select>
-            </label>
-          </div>
-            </div>
-          )}
-
-          {draft.repeat === "custom" && (
-            <div className="field-grid">
-              <label className="field">
-                <span>Every</span>
-                <input
-                  type="number"
-                  min={1}
-                  value={draft.repeatEvery ?? 1}
-                  onChange={(e) =>
-                    setDraft({
-                      ...draft,
-                      repeatEvery: Number(e.target.value) || 1
-                    })
-                  }
-                />
-              </label>
-              <label className="field">
-                <span>Unit</span>
-                <select
-                  value={draft.repeatUnit ?? "week"}
-                  onChange={(e) =>
-                    setDraft({
-                      ...draft,
-                      repeatUnit: e.target.value as Task["repeatUnit"]
-                    })
-                  }
-                >
-                  <option value="day">Day(s)</option>
-                  <option value="week">Week(s)</option>
-                  <option value="month">Month(s)</option>
-                  <option value="quarter">Quarter(s)</option>
-                  <option value="year">Year(s)</option>
-                </select>
-              </label>
+              {renderBasicsEditor({
+                title: draft.title,
+                description: draft.description ?? "",
+                priority: draft.priority,
+                repeat: (draft.repeat ?? "none") as NonNullable<Task["repeat"]>,
+                repeatEvery: draft.repeatEvery,
+                repeatUnit: draft.repeatUnit,
+                titleInputId: "task-editor-title",
+                onChange: (patch) => setDraft({ ...draft, ...patch })
+              })}
             </div>
           )}
 
           {multipleFlow ? null : (
-            <div className="drawer-card">
+            <div className="drawer-card drawer-card--schedule">
               <div className="drawer-card-head">
                 <div>
                   <div className="drawer-card-title">Schedule</div>
-                  <div className="drawer-card-desc">
-                    Set when it’s due and how long it typically takes.
-                  </div>
+                  <div className="drawer-card-desc">When it’s due, and how long it typically takes.</div>
                 </div>
               </div>
-
-          <div className="field-grid">
-            <label className="field">
-              <span>Date</span>
-              <input
-                type="date"
-                value={draft.dueDate ?? ""}
-                onChange={(e) =>
-                  setDraft({
-                    ...draft,
-                    dueDate: e.target.value || undefined
-                  })
-                }
-              />
-            </label>
-            <label className="field">
-              <span>Time</span>
-              <input
-                type="time"
-                value={draft.dueTime ?? ""}
-                onChange={(e) =>
-                  setDraft({
-                    ...draft,
-                    dueTime: e.target.value || undefined
-                  })
-                }
-              />
-            </label>
-          </div>
-
-          <label className="field">
-            <span>Duration</span>
-                <div className="drawer-row">
-              <input
-                type="number"
-                min={1}
-                value={durationAmount}
-                onChange={(e) => setDurationAmount(e.target.value)}
-                placeholder="e.g. 30"
-                    style={{ flex: 1, minWidth: 140 }}
-              />
-              <select
-                value={durationUnit}
-                onChange={(e) => setDurationUnit(e.target.value as typeof durationUnit)}
-                    style={{ width: 160 }}
-              >
-                <option value="minute">Minutes</option>
-                <option value="hour">Hours</option>
-                <option value="day">Days</option>
-              </select>
-            </div>
-                <div className="muted small" style={{ marginTop: "0.35rem" }}>
-              Voice examples: “for 30 minutes”, “selama 2 jam”, “durasi 2 hari”.
-            </div>
-          </label>
+              {renderScheduleEditor({
+                dueDate: draft.dueDate,
+                dueTime: draft.dueTime,
+                durationAmount,
+                durationUnit,
+                onDueDate: (v) => setDraft({ ...draft, dueDate: v }),
+                onDueTime: (v) => setDraft({ ...draft, dueTime: v }),
+                onDurationAmount: setDurationAmount,
+                onDurationUnit: setDurationUnit
+              })}
             </div>
           )}
 
           {multipleFlow ? null : (
-            <div className="drawer-card">
+            <div className="drawer-card drawer-card--organize">
               <div className="drawer-card-head">
                 <div>
                   <div className="drawer-card-title">Organize</div>
-                  <div className="drawer-card-desc">Labels, links, location, and reminders.</div>
+                  <div className="drawer-card-desc">Tags, places, links, and reminders.</div>
                 </div>
               </div>
 
-          <label className="field">
-                <span>Labels</span>
-                <textarea
-                  value={labelsInput}
-              onChange={(e) => {
-                    const raw = e.target.value;
-                    setLabelsInput(raw);
-                const tokens = parseLabelsInput(raw);
-                    setDraft({ ...draft, labels: tokens });
-              }}
-              onBlur={() => {
-                    const tokens = parseLabelsInput(labelsInput);
-                    setDraft({ ...draft, labels: tokens });
-                    setLabelsInput(formatLabelsForInput(tokens));
-                  }}
-                  placeholder={"Work\nDeep focus\nErrands"}
-                  title="Multiple labels supported. Use one per line, or separate with commas/semicolons."
-                  rows={2}
-                  style={{ resize: "vertical" }}
-                />
-          </label>
+          {renderTextRowsEditor({
+            label: "Labels",
+            hint: "Add a label",
+            rows: labelRows,
+            onChange: commitLabelRows,
+            textPlaceholder: "e.g. Work, Deep focus",
+            preview: rowsToLabelTokens(labelRows).map((tok) => ({
+              key: tok,
+              text: tok
+            }))
+          })}
 
-          <label className="field">
-            <span>Location</span>
-                <textarea
-                  value={locationInput}
-              onChange={(e) => {
-                    const raw = e.target.value;
-                    setLocationInput(raw);
-                    const tokens = parseLocationsInput(raw);
-                    const v = serializeLocationTokens(tokens);
-                    setDraft({ ...draft, location: v });
-              }}
-              onBlur={() => {
-                    const tokens = parseLocationsInput(locationInput);
-                    const v = serializeLocationTokens(tokens);
-                    setDraft({ ...draft, location: v });
-                    setLocationInput(formatLocationsForInput(v));
-                  }}
-                  placeholder={"Outdoor\nHome\nAlias=>https://example.com"}
-                  title="Multiple locations supported. Use one per line, or separate with commas/semicolons. Aliases: Label=>value, Label -> value, or Label | value. URL-like values become clickable in the preview."
-                  rows={2}
-                  style={{ resize: "vertical" }}
-                />
-                {renderTokenPreview(
-                  (() => {
-                    const tokens = parseLocationsInput(locationInput);
-                    return tokens.map((tok) => {
-                      const { label, query } = splitLocationStoredToken(tok);
-                      const meta = locationHrefMetaForToken(tok);
-                      return {
-                        key: tok,
-                        text: label ?? query,
-                        href: meta?.href
-                      };
-                    });
-                  })()
-                )}
-          </label>
+          {renderPairRowsEditor({
+            label: "Location",
+            hint: "Add a place name and optional map/URL",
+            rows: locationRows,
+            onChange: commitLocationRows,
+            textPlaceholder: "Place name or note",
+            urlPlaceholder: "https://…",
+            preview: locationRows
+              .map((r) => {
+                const value = pairRowsToLocationValue([r]);
+                if (!value) return null;
+                const tok = deserializeLocationTokens(value)[0];
+                if (!tok) return null;
+                const { label, query } = splitLocationStoredToken(tok);
+                const meta = locationHrefMetaForToken(tok);
+                return {
+                  key: r.key,
+                  text: label ?? query,
+                  href: meta?.href
+                };
+              })
+              .filter(Boolean) as Array<{ key: string; text: string; href?: string }>
+          })}
 
-          <label className="field">
-                <span>Links</span>
-                <textarea
-                  value={linksInput}
-                  onChange={(e) => {
-                    const raw = e.target.value;
-                    setLinksInput(raw);
-                    const tokens = parseLinksInput(raw);
-                    // Only commit parsed tokens when we have a valid link or the user cleared the field.
-                    if (tokens.length > 0 || raw.trim().length === 0) {
-                      setDraft({ ...draft, link: tokens.length ? tokens : undefined });
-                    }
-              }}
-              onBlur={() => {
-                    const tokens = parseLinksInput(linksInput);
-                    setDraft({ ...draft, link: tokens.length ? tokens : undefined });
-                    setLinksInput(formatLinksForInput(tokens));
-                  }}
-                  placeholder={"Cover Letter=>https://...\nResume=>https://...\nOr plain text notes"}
-                  title="Multiple entries supported. Use one per line, or separate with commas/semicolons. Supports plain text, URL, or aliases (Label=>URL, Label -> URL, Label | URL). Clickable preview below."
-                  rows={3}
-                  style={{ resize: "vertical" }}
-                />
-                {renderTokenPreview(
-                  (() => {
-                    const tokens = parseLinksInput(linksInput);
-                    return tokens.map((tok) => {
-                      const parsed = parseLinkAliasToken(tok);
-                      if (!parsed) {
-                        return { key: tok, text: tok };
-                      }
-                      return {
-                        key: tok,
-                        text: parsed.label ?? shortLinkText(parsed.href),
-                        href: parsed.href
-                      };
-                    });
-                  })()
-                )}
-          </label>
+          {renderPairRowsEditor({
+            label: "Links",
+            hint: "Add a label and optional URL",
+            rows: linkRows,
+            onChange: commitLinkRows,
+            textPlaceholder: "Label or note",
+            urlPlaceholder: "https://…",
+            preview: pairRowsToLinkTokens(linkRows).map((tok) => {
+              const parsed = parseLinkAliasToken(tok);
+              if (!parsed) return { key: tok, text: tok };
+              return {
+                key: tok,
+                text: parsed.label ?? shortLinkText(parsed.href),
+                href: parsed.href
+              };
+            })
+          })}
 
-          <label className="field">
-            <span>Reminder</span>
+          <div className="drawer-organize-block">
+            <div className="drawer-organize-block-head">
+              <span className="drawer-organize-block-title">Reminder</span>
+            </div>
             <select
+              className="drawer-organize-select"
               value={
                 draft.reminderMinutesBefore !== undefined
                   ? String(draft.reminderMinutesBefore)
@@ -2206,12 +2630,21 @@ export function TaskEditorDrawer({
               <option value="60">1 hour before</option>
               <option value="1440">1 day before</option>
             </select>
-          </label>
+          </div>
             </div>
           )}
         </div>
         <footer className="drawer-footer">
           <div className="drawer-footer-left">
+            {multipleFlow && batchItems.length > 0 ? (
+              <span className="pill subtle drawer-footer-progress" aria-live="polite">
+                Task {batchActiveIdx + 1} of {batchItems.length}
+              </span>
+            ) : (
+              <span className="drawer-footer-hint muted small">
+                {draft.id === "new" ? "Title required to save" : "Changes save when you confirm"}
+              </span>
+            )}
             {multipleFlow && batchItems.length > 1 ? (
               <>
                 <button

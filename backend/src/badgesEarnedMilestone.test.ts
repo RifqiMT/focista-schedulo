@@ -16,5 +16,12 @@ describe("buildBadgesEarnedMilestoneBlock", () => {
     expect(b.next).toBe(20);
     expect(b.achievedCount).toBe(3);
   });
+
+  it("includes a plain-English description", () => {
+    const b = buildBadgesEarnedMilestoneBlock(0);
+    expect(b.description).toBe(
+      "Rewards for collecting badges themselves (every 5 badges)."
+    );
+  });
 });
 

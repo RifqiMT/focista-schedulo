@@ -116,8 +116,10 @@ Recurrence engine, historical loading, completion robustness, day-agenda timelin
 
 - Stats and productivity analysis remain reliable and profile-aware
 - Milestone feedback is timely and understandable
+- Achievement and milestone cards use short plain-English descriptions that match shipped formulas
 - The **current-week** completion chart and **weekday-context** tooltips make daily performance interpretable without exporting data
 - Badge PNG export includes clear profile naming
+- Progress tooltips do not compete with toasts (exclusive overlay + single toast)
 
 **Highest-value features**
 

@@ -33,6 +33,8 @@ Map functional and non-functional requirements to personas, user stories, primar
 | FR-16 | Badge PNG export + modal naming | C | US-405 | `badgePngExport.ts`, `BadgesModalDialogBody.tsx` | PNG export smoke | EM-06 |
 | FR-17 | Lock affordance for protected profiles | A | US-406 | `ProfileManagement.tsx` | Visual lock review | PM-02 |
 | FR-18 | Staged profile boot progress + fast-path load | E | US-103 | `App.tsx` / `ProfileManagement.tsx` load orchestration; profiles runtime fast path | Boot UX validation | PM-10 |
+| FR-19 | Plain-English achievement/milestone descriptions | C | US-407 | `/api/stats` achievement + milestone `description` fields; `badgesEarnedMilestone.ts`; `GamificationPanel.tsx` | Copy/UI parity vs `VARIABLES.md` | EM-05 |
+| FR-20 | Exclusive tooltip + single-toast feedback | A–E | US-408 | `uiExclusiveOverlay.ts`; `App.tsx` `enqueueToast`; TaskBoard / GamificationPanel / ProductivityAnalysisModal | Overlay exclusivity smoke | PM-07 |
 
 ---
 

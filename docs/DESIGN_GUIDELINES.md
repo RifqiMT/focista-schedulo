@@ -129,10 +129,25 @@ Toasts use local CSS variables on `.toast` variants:
 
 - Support success/error/info variants with shared motion (`toast-enter`).
 - Prefer concise titles + one supporting sentence.
+- **Single toast at a time:** the queue replaces rather than stacking multiple toasts.
+- Showing a toast must **dismiss any active exclusive tooltip/hovercard** so feedback layers never compete (`dismissExclusiveTooltip` in `enqueueToast`).
 
-### App Footer (`AppFooter`)
+### Exclusive tooltips and hovercards
 
-- Keep footer secondary; do not compete with planning chrome.
+- At most **one** custom tooltip/hovercard may be visible app-wide (`claimExclusiveTooltip` / `dismissExclusiveTooltip` in `uiExclusiveOverlay.ts`).
+- Consumers: task hovercards (`TaskBoard`), weekly-bar and badge tooltips (`GamificationPanel`), analysis chart tooltips (`ProductivityAnalysisModal`).
+- Claiming a new tooltip dismisses the previous owner; releasing on cleanup clears the slot only if still owned.
+
+### Header data actions
+
+- Import/Export use `header-action-btn` with glyph + label for scannable data ops.
+- Keep tooltips/titles explaining merge behavior and export formats; do not reintroduce Sync/Save buttons.
+
+### Achievements and milestones (Progress)
+
+- Each achievement card shows **name + plain-English description** from `/api/stats`.
+- Each milestone card shows **name + optional `description` line** under the title (`.milestone-desc` / `.achievement-desc`).
+- Keep copy short, actionable, and aligned with formulas in `VARIABLES.md`.
 
 ---
 
@@ -167,8 +182,8 @@ Toasts use local CSS variables on `.toast` variants:
 
 ## Content / Copy Standards
 
-- Prefer plain language over jargon in user-facing errors.
-- Align Progress/achievement wording with formula semantics (`VARIABLES.md`).
+- Prefer plain language over jargon in user-facing errors **and** achievement/milestone descriptions.
+- Align Progress/achievement wording with formula semantics (`VARIABLES.md`). Canonical shipped achievement strings are listed there.
 - Showcase blocks should explain **why** the action is blocked (demo integrity), not only that it failed.
 
 ---
