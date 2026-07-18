@@ -2,8 +2,6 @@ import express from "express";
 import cors from "cors";
 import compression from "compression";
 import { z } from "zod";
-import { promises as fs } from "fs";
-import { watch as fsWatch } from "fs";
 import path from "path";
 import { computeMonthlyGrinding } from "./monthlyGrinding";
 import { computeYearlyGrinding } from "./yearlyGrinding";
@@ -17,9 +15,32 @@ import {
   updateProfile as updateProfileRecord,
   verifyProfileUnlock
 } from "./profileService";
+import { createDataStorage } from "./storage";
+import {
+  INLINE_TRANSFER_MAX_BYTES,
+  canUseBlobTransfer,
+  createPresignedGetUrl,
+  deleteBlobQuietly,
+  handleBlobClientUpload,
+  putJsonBlob,
+  readBlobText
+} from "./blobTransfer";
+import type { HandleUploadBody } from "@vercel/blob/client";
 
 const app = express();
+const isVercel = Boolean(process.env.VERCEL);
+const isProduction =
+  process.env.NODE_ENV === "production" ||
+  process.env.FOCISTA_ENV === "production" ||
+  isVercel;
 const FRONTEND_ORIGIN = process.env.FRONTEND_ORIGIN?.trim();
+// On Vercel same-origin deploys, CORS lock is optional (browser calls same host).
+if (isProduction && !FRONTEND_ORIGIN && !isVercel) {
+  console.error(
+    "[startup] FRONTEND_ORIGIN is required in production (set to your Vercel UI origin)."
+  );
+  process.exit(1);
+}
 if (FRONTEND_ORIGIN) {
   app.use(cors({ origin: FRONTEND_ORIGIN, credentials: false }));
 } else {
@@ -44,12 +65,14 @@ app.use((req, res, next) => {
 
 const PORT = process.env.PORT || 4000;
 const DATA_DIR = path.join(__dirname, "..", "data");
-const UNIFIED_DATA_FILE = path.join(DATA_DIR, "focista-unified-data.json");
-const TASKS_FILE = path.join(DATA_DIR, "tasks.runtime.json");
-const PROJECTS_FILE = path.join(DATA_DIR, "projects.runtime.json");
-const PROFILES_FILE = path.join(DATA_DIR, "profiles.runtime.json");
-const LEGACY_TASKS_FILE = path.join(DATA_DIR, "tasks.json");
-const LEGACY_PROJECTS_FILE = path.join(DATA_DIR, "projects.json");
+const UNIFIED_DATA_FILE = "focista-unified-data.json";
+const TASKS_FILE = "tasks.runtime.json";
+const PROJECTS_FILE = "projects.runtime.json";
+const PROFILES_FILE = "profiles.runtime.json";
+const LEGACY_TASKS_FILE = "tasks.json";
+const LEGACY_PROJECTS_FILE = "projects.json";
+const storage = createDataStorage({ dataDir: DATA_DIR });
+console.log(`[storage] backend=${storage.kind} debounceMs=${storage.persistDebounceMs}`);
 
 const TaskSchema = z.object({
   id: z.string(),
@@ -113,6 +136,127 @@ type Profile = z.infer<typeof ProfileSchema>;
 let tasks: Task[] = [];
 let projects: Project[] = [];
 let profiles: Profile[] = [];
+
+/** Resolves once full runtime data is loaded (critical for Vercel cold starts). */
+let bootstrapPromise: Promise<void> | null = null;
+let lightBootstrapPromise: Promise<void> | null = null;
+let lightBootstrapComplete = false;
+let dataBootstrapComplete = false;
+
+function ensureBootstrapped(): Promise<void> {
+  if (!bootstrapPromise) {
+    bootstrapPromise = loadData()
+      .then(() => {
+        lightBootstrapComplete = true;
+        dataBootstrapComplete = true;
+        startDataAutoSync();
+      })
+      .catch((err) => {
+        bootstrapPromise = null;
+        throw err;
+      });
+  }
+  return bootstrapPromise;
+}
+
+async function loadLightRuntimeFastPath(): Promise<void> {
+  await ensureDataDir();
+  try {
+    const [profilesRaw, projectsRaw] = await Promise.all([
+      storage.readText(PROFILES_FILE),
+      storage.readText(PROJECTS_FILE)
+    ]);
+    if (profilesRaw != null) {
+      const parsed = JSON.parse(profilesRaw);
+      const safe = z.array(ProfileSchema).safeParse(parsed);
+      profiles = safe.success ? safe.data : [];
+    } else if (!profiles.length) {
+      profiles = [];
+    }
+    if (projectsRaw != null) {
+      const parsed = JSON.parse(projectsRaw);
+      const safe = z.array(ProjectSchema).safeParse(parsed);
+      projects = safe.success ? safe.data : [];
+    } else if (!projects.length) {
+      projects = [];
+    }
+  } catch (err) {
+    console.warn(
+      "[bootstrap] light fast-path failed; waiting for full load",
+      err instanceof Error ? err.message : String(err)
+    );
+    await ensureBootstrapped();
+    return;
+  }
+  lightBootstrapComplete = true;
+}
+
+function ensureLightBootstrapped(): Promise<void> {
+  if (lightBootstrapComplete || dataBootstrapComplete) return Promise.resolve();
+  if (!lightBootstrapPromise) {
+    lightBootstrapPromise = loadLightRuntimeFastPath()
+      .catch((err) => {
+        lightBootstrapPromise = null;
+        throw err;
+      })
+      .finally(() => {
+        void ensureBootstrapped().catch((err) => {
+          console.error("[bootstrap] background full load failed", err);
+        });
+      });
+  }
+  return lightBootstrapPromise;
+}
+
+function isLightFastPath(req: { method?: string; path: string }): boolean {
+  if ((req.method ?? "GET").toUpperCase() !== "GET") return false;
+  return req.path === "/api/profiles" || req.path === "/api/projects";
+}
+
+/** Vercel Hobby maxDuration is ~60s; leave headroom so we can return 503 instead of a platform 504. */
+const FULL_BOOTSTRAP_BUDGET_MS = 50_000;
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+if (isVercel) {
+  app.use(async (req, res, next) => {
+    if (req.path === "/health") return next();
+    try {
+      if (isLightFastPath(req)) {
+        await ensureLightBootstrapped();
+        return next();
+      }
+      if (dataBootstrapComplete) return next();
+
+      // Must await on the request path: fire-and-forget work is frozen after the response on serverless.
+      // Race a budget so we return 503 (client retries) instead of hanging into a platform 504.
+      const boot = ensureBootstrapped();
+      const timedOut = await Promise.race([
+        boot.then(() => false),
+        sleep(FULL_BOOTSTRAP_BUDGET_MS).then(() => true)
+      ]);
+      if (timedOut) {
+        res.setHeader("Retry-After", "5");
+        return res.status(503).json({
+          ok: false,
+          warming: true,
+          error: "Workspace data is still warming up. Retry in a few seconds."
+        });
+      }
+      return next();
+    } catch (err) {
+      console.error("[startup] bootstrap failed", err);
+      if (!res.headersSent) {
+        res.status(503).json({
+          ok: false,
+          error: err instanceof Error ? err.message : String(err)
+        });
+      }
+    }
+  });
+}
 let lastProfileBackfillDiagnostics: {
   totalBackfilled: number;
   byProfileId: Record<string, number>;
@@ -406,44 +550,6 @@ function canonicalizeProfilesAndRemap(
   return { profiles: canonicalProfiles, projects, tasks };
 }
 
-function mergeTasks(existing: Task[], incoming: Task[]): Task[] {
-  const byId = new Map<string, Task>();
-  for (const t of existing) byId.set(t.id, t);
-  for (const t of incoming) {
-    const prev = byId.get(t.id);
-    if (!prev) byId.set(t.id, t);
-    else {
-      // Prefer incoming values but preserve cancellation/completion intent if either is true.
-      byId.set(t.id, {
-        ...prev,
-        ...t,
-        completed: prev.completed || t.completed,
-        cancelled: (prev.cancelled ?? false) || (t.cancelled ?? false)
-      });
-    }
-  }
-  const merged = Array.from(byId.values());
-  const bySemantic = new Map<string, Task>();
-  for (const t of merged) {
-    const key = isRepeatingTask(t)
-      ? `series::${seriesKeyForTask(t)}::${t.dueDate ?? ""}`
-      : `single::${(t.profileId ?? "").trim().toLowerCase()}::${(t.projectId ?? "")
-          .trim()
-          .toLowerCase()}::${t.title.trim().toLowerCase()}::${t.description?.trim().toLowerCase() ?? ""}::${
-          t.dueDate ?? ""
-        }::${t.dueTime ?? ""}::${t.priority}::${t.completed ? 1 : 0}::${t.cancelled ? 1 : 0}`;
-    const prev = bySemantic.get(key);
-    if (!prev) {
-      bySemantic.set(key, t);
-      continue;
-    }
-    const prevRecency = toEpochMs(prev.completedAt);
-    const nextRecency = toEpochMs(t.completedAt);
-    if (nextRecency >= prevRecency) bySemantic.set(key, t);
-  }
-  return Array.from(bySemantic.values());
-}
-
 function toEpochMs(iso: string | undefined): number {
   const s = (iso ?? "").trim();
   if (!s) return 0;
@@ -502,30 +608,14 @@ async function readSyncSourceFromDataDir(): Promise<{
 }> {
   // Sync is explicitly non-monolith: ignore unified snapshot file.
   // Use runtime split files (and compatible JSON fallbacks) only.
-  const entries = await fs.readdir(DATA_DIR).catch(() => []);
-  const jsonFiles = entries.filter((n) => {
-    const lower = n.toLowerCase();
-    return lower.endsWith(".json") && lower !== "focista-unified-data.json";
-  });
-  const fileMetas = await Promise.all(
-    jsonFiles.map(async (name) => {
-      const full = path.join(DATA_DIR, name);
-      const st = await fs.stat(full).catch(() => null);
-      return st ? { name, full, mtimeMs: st.mtimeMs } : null;
-    })
-  );
-  const ordered = fileMetas.filter(Boolean).sort((a, b) => a!.mtimeMs - b!.mtimeMs) as Array<{
-    name: string;
-    full: string;
-    mtimeMs: number;
-  }>;
+  const ordered = await storage.listSyncJsonEntries();
 
   let incomingProjects: Project[] = [];
   let incomingTasks: Task[] = [];
   let incomingProfiles: Profile[] = [];
 
   for (const f of ordered) {
-    const raw = await fs.readFile(f.full, "utf8").catch(() => "");
+    const raw = (await storage.readText(f.name).catch(() => null)) ?? "";
     if (!raw.trim()) continue;
     let parsed: unknown;
     try {
@@ -610,23 +700,6 @@ function broadcastDataVersion() {
 function bumpDataVersion(): void {
   dataVersion += 1;
   broadcastDataVersion();
-}
-
-function makeCache<T>() {
-  let cache: CachedValue<T> | null = null;
-  return {
-    get(): T | null {
-      if (!cache) return null;
-      if (cache.version !== dataVersion) return null;
-      return cache.value;
-    },
-    set(value: T) {
-      cache = { version: dataVersion, value, at: Date.now() };
-    },
-    clear() {
-      cache = null;
-    }
-  };
 }
 
 function makeScopedCache<T>() {
@@ -943,7 +1016,7 @@ function findExistingParentIdForSeries(seriesKey: string, excludeTaskId?: string
   )?.parentId;
 }
 
-function allocateNextChildId(parentId: string, seriesKey: string): string {
+function allocateNextChildId(seriesKey: string): string {
   let max = 0;
   for (const t of tasks) {
     if (!isRepeatingTask(t)) continue;
@@ -1198,7 +1271,7 @@ function repairMissingProfileIdsForRepeatingSeries(): boolean {
 }
 
 async function ensureDataDir() {
-  await fs.mkdir(DATA_DIR, { recursive: true });
+  await storage.ensureReady();
 }
 
 async function readUnifiedDataFile(): Promise<{
@@ -1207,7 +1280,8 @@ async function readUnifiedDataFile(): Promise<{
   profiles: Profile[];
 } | null> {
   try {
-    const raw = await fs.readFile(UNIFIED_DATA_FILE, "utf8");
+    const raw = await storage.readText(UNIFIED_DATA_FILE);
+    if (raw == null) return null;
     const parsed = JSON.parse(raw);
     const rec =
       typeof parsed === "object" && parsed !== null && !Array.isArray(parsed)
@@ -1266,6 +1340,9 @@ async function readUnifiedDataFile(): Promise<{
   }
 }
 
+/** When true, persist* no-ops so cold bootstrap never re-uploads multi-MB Blobs. */
+let bootstrapPersistSuppressed = false;
+
 async function readRuntimeDataFiles(): Promise<{
   projects: Project[];
   tasks: Task[];
@@ -1273,8 +1350,15 @@ async function readRuntimeDataFiles(): Promise<{
 } | null> {
   const parseArrayFile = async <T>(file: string, schema: z.ZodType<T>): Promise<T[] | null> => {
     try {
-      const raw = await fs.readFile(file, "utf8");
+      const raw = await storage.readText(file);
+      if (raw == null) return null;
       const parsed = JSON.parse(raw);
+      if (!Array.isArray(parsed)) return [];
+      // Zod over a multi-MB tasks array can exceed Vercel Hobby maxDuration on cold start.
+      // Trust runtime snapshots written by this app; validate strictly only off Vercel.
+      if (isVercel && file === TASKS_FILE) {
+        return parsed as T[];
+      }
       const safe = z.array(schema).safeParse(parsed);
       return safe.success ? safe.data : [];
     } catch {
@@ -1300,12 +1384,23 @@ async function readRuntimeDataFiles(): Promise<{
 
 async function loadData() {
   await ensureDataDir();
+  // On Vercel, never rewrite Blobs during bootstrap — uploads of ~12MB tasks can alone exceed maxDuration.
+  const prevSuppress = bootstrapPersistSuppressed;
+  if (isVercel) bootstrapPersistSuppressed = true;
+  try {
   // Runtime mode (non-monolith): split files are primary source for normal app usage.
   const runtime = await readRuntimeDataFiles();
   if (runtime) {
     projects = runtime.projects;
     tasks = runtime.tasks;
     profiles = runtime.profiles;
+    if (isVercel) {
+      // Vercel Hobby maxDuration (~60s) cannot afford multi-pass series repairs over multi-MB task sets.
+      // Serve the Blob snapshot as-is; local/dev still runs full normalization below.
+      statsCache.clear();
+      productivityCache.clear();
+      return;
+    }
   } else {
     const unified = await readUnifiedDataFile();
     if (unified) {
@@ -1314,13 +1409,14 @@ async function loadData() {
       profiles = unified.profiles;
       // Bootstrap runtime files from unified snapshot once.
       await Promise.all([
-        fs.writeFile(TASKS_FILE, JSON.stringify(tasks, null, 2), "utf8"),
-        fs.writeFile(PROJECTS_FILE, JSON.stringify(projects, null, 2), "utf8"),
-        fs.writeFile(PROFILES_FILE, JSON.stringify(profiles, null, 2), "utf8")
+        storage.writeText(TASKS_FILE, JSON.stringify(tasks, null, 2)),
+        storage.writeText(PROJECTS_FILE, JSON.stringify(projects, null, 2)),
+        storage.writeText(PROFILES_FILE, JSON.stringify(profiles, null, 2))
       ]);
     } else {
     try {
-      const rawTasks = await fs.readFile(LEGACY_TASKS_FILE, "utf8");
+      const rawTasks = await storage.readText(LEGACY_TASKS_FILE);
+      if (rawTasks == null) throw new Error("missing legacy tasks");
       const parsed = JSON.parse(rawTasks);
       const safe = z.array(TaskSchema).safeParse(parsed);
       if (safe.success) tasks = safe.data;
@@ -1330,7 +1426,8 @@ async function loadData() {
     }
 
     try {
-      const rawProjects = await fs.readFile(LEGACY_PROJECTS_FILE, "utf8");
+      const rawProjects = await storage.readText(LEGACY_PROJECTS_FILE);
+      if (rawProjects == null) throw new Error("missing legacy projects");
       const parsed = JSON.parse(rawProjects);
       const safe = z.array(ProjectSchema).safeParse(parsed);
       if (safe.success) projects = safe.data;
@@ -1655,9 +1752,17 @@ async function loadData() {
 
   statsCache.clear();
   productivityCache.clear();
+  } finally {
+    bootstrapPersistSuppressed = prevSuppress;
+  }
 }
 
 function startDataAutoSync() {
+  if (!storage.watchJsonChanges) {
+    console.log("[storage] hot-reload watch disabled (remote object store)");
+    return;
+  }
+
   let timer: NodeJS.Timeout | null = null;
   let reloading = false;
   let queued = false;
@@ -1682,10 +1787,9 @@ function startDataAutoSync() {
     }, 150);
   };
 
-  // Watch the whole folder so edits/renames are caught reliably across editors.
-  fsWatch(DATA_DIR, { persistent: true }, (_eventType, filename) => {
-    const name = typeof filename === "string" ? filename : "";
-    if (!name.endsWith(".json")) return;
+  // Local fs only: watch the data folder so edits/renames reload reliably.
+  storage.watchJsonChanges((filename) => {
+    if (!filename.endsWith(".json")) return;
     scheduleReload();
   });
 }
@@ -1700,15 +1804,18 @@ let dirtyProfiles = false;
 
 async function persistRuntimeData(): Promise<void> {
   await ensureDataDir();
+  // Compact JSON on Vercel: prettier dumps inflate Blob size/time for multi-MB tasks.
+  const encode = (value: unknown) =>
+    isVercel ? JSON.stringify(value) : JSON.stringify(value, null, 2);
   const writes: Array<Promise<void>> = [];
   if (dirtyTasks) {
-    writes.push(fs.writeFile(TASKS_FILE, JSON.stringify(tasks, null, 2), "utf8"));
+    writes.push(storage.writeText(TASKS_FILE, encode(tasks)));
   }
   if (dirtyProjects) {
-    writes.push(fs.writeFile(PROJECTS_FILE, JSON.stringify(projects, null, 2), "utf8"));
+    writes.push(storage.writeText(PROJECTS_FILE, encode(projects)));
   }
   if (dirtyProfiles) {
-    writes.push(fs.writeFile(PROFILES_FILE, JSON.stringify(profiles, null, 2), "utf8"));
+    writes.push(storage.writeText(PROFILES_FILE, encode(profiles)));
   }
   await Promise.all(writes);
   dirtyTasks = false;
@@ -1741,7 +1848,7 @@ async function flushPersistQueue(): Promise<void> {
   }
 }
 
-function schedulePersistFlush(delayMs = 40): Promise<void> {
+function schedulePersistFlush(delayMs = storage.persistDebounceMs): Promise<void> {
   return new Promise<void>((resolve, reject) => {
     persistResolvers.push(resolve);
     persistRejectors.push(reject);
@@ -1758,6 +1865,7 @@ async function persistTasks() {
   // while in-memory `tasks` is already updated.
   statsCache.clear();
   productivityCache.clear();
+  if (bootstrapPersistSuppressed) return;
   dirtyTasks = true;
   await schedulePersistFlush();
 }
@@ -1765,6 +1873,7 @@ async function persistTasks() {
 async function persistProjects() {
   statsCache.clear();
   productivityCache.clear();
+  if (bootstrapPersistSuppressed) return;
   dirtyProjects = true;
   await schedulePersistFlush();
 }
@@ -1772,12 +1881,22 @@ async function persistProjects() {
 async function persistProfiles() {
   statsCache.clear();
   productivityCache.clear();
+  if (bootstrapPersistSuppressed) return;
   dirtyProfiles = true;
   await schedulePersistFlush();
 }
 
 app.get("/health", (_req, res) => {
-  res.json({ status: "ok", service: "focista-schedulo-backend" });
+  res.json({
+    status: "ok",
+    service: "focista-schedulo-backend",
+    storage: storage.kind,
+    production: isProduction,
+    bootstrap: {
+      profilesReady: lightBootstrapComplete || dataBootstrapComplete,
+      dataReady: dataBootstrapComplete
+    }
+  });
 });
 
 app.get("/api/events", (req, res) => {
@@ -2087,18 +2206,10 @@ function resolveEffectiveProfileId(profileIdQuery: unknown): string | null {
       ? profileIdQuery.trim()
       : null;
   if (requested && profiles.some((p) => p.id === requested)) return requested;
-  if (profiles.length === 0) return null;
-  if (profiles.length === 1) return profiles[0]!.id;
-  const countsByProfile = new Map<string, number>();
-  for (const t of tasks) {
-    const pid = t.profileId ?? null;
-    if (!pid) continue;
-    countsByProfile.set(pid, (countsByProfile.get(pid) ?? 0) + 1);
-  }
-  const mostPopulated = profiles
-    .map((p) => ({ id: p.id, count: countsByProfile.get(p.id) ?? 0 }))
-    .sort((a, b) => b.count - a.count)[0];
-  return mostPopulated?.id ?? profiles[0]!.id;
+  // No (or unknown) profileId: do not invent a scope. Callers that need a
+  // default profile must pass one explicitly. Returning null keeps exports,
+  // restores, and unscoped reads from silently dropping other profiles' data.
+  return null;
 }
 
 app.get("/api/tasks", (req, res) => {
@@ -2238,7 +2349,7 @@ app.post("/api/tasks", async (req, res) => {
         allocateNextParentIdForPrefix(parentPrefix))
       : sortedParsedData.parentId;
   const childId =
-    repeating && parentId ? allocateNextChildId(parentId, seriesKey) : sortedParsedData.childId;
+    repeating && parentId ? allocateNextChildId(seriesKey) : sortedParsedData.childId;
   const durationMinutes =
     parentId && sortedParsedData.durationMinutes === undefined
       ? firstDefinedDurationMinutesForParent(parentId)
@@ -2360,7 +2471,7 @@ function applyTaskUpdateInMemory(
     repeating && resolvedParentId
       ? (resolvedParentId === existing.parentId && existing.childId
           ? existing.childId
-          : allocateNextChildId(resolvedParentId, seriesKey))
+          : allocateNextChildId(seriesKey))
       : sortedParsedData.childId ?? existing.childId;
 
   const next: Task = {
@@ -3679,10 +3790,32 @@ app.post("/api/admin/save-data", async (_req, res) => {
   }
 });
 
+app.post("/api/admin/blob-upload", async (req, res) => {
+  if (!canUseBlobTransfer()) {
+    return res.status(503).json({
+      ok: false,
+      error:
+        "Blob transfer is not configured. Set BLOB_READ_WRITE_TOKEN (required for large import/export on Vercel)."
+    });
+  }
+  try {
+    const body = req.body as HandleUploadBody;
+    const result = await handleBlobClientUpload({ body, request: req });
+    return res.json(result);
+  } catch (error) {
+    console.error("[blob-upload]", error);
+    return res.status(400).json({
+      ok: false,
+      error: error instanceof Error ? error.message : String(error)
+    });
+  }
+});
+
 app.post("/api/admin/export-data", async (req, res) => {
   const body = z
     .object({
-      profilePasswords: z.record(z.string(), z.string()).optional()
+      profilePasswords: z.record(z.string(), z.string()).optional(),
+      delivery: z.enum(["auto", "inline", "blob"]).optional()
     })
     .safeParse(req.body ?? {});
   if (!body.success) {
@@ -3744,15 +3877,50 @@ app.post("/api/admin/export-data", async (req, res) => {
       return profileAllowed && projectAllowed;
     });
 
+    const data = {
+      app: "focista-schedulo",
+      exportedAt: new Date().toISOString(),
+      profiles: exportProfiles,
+      projects: exportProjects,
+      tasks: exportTasks
+    };
+    const deliveryPref = body.data.delivery ?? "auto";
+    const json = JSON.stringify(data);
+    const bytes = Buffer.byteLength(json, "utf8");
+    const preferBlob =
+      deliveryPref === "blob" ||
+      (deliveryPref === "auto" &&
+        (isVercel || bytes > INLINE_TRANSFER_MAX_BYTES) &&
+        canUseBlobTransfer());
+
+    if (preferBlob) {
+      const blob = await putJsonBlob(
+        `focista-schedulo/exports/export-${Date.now()}.json`,
+        json
+      );
+      const downloadUrl = await createPresignedGetUrl(blob.pathname);
+      return res.json({
+        ok: true,
+        delivery: "blob",
+        pathname: blob.pathname,
+        downloadUrl,
+        byteLength: bytes,
+        excludedLockedProfiles: deniedProfileNames
+      });
+    }
+
+    if (bytes > INLINE_TRANSFER_MAX_BYTES) {
+      return res.status(413).json({
+        ok: false,
+        error:
+          "Export payload exceeds inline size limits and Blob transfer is unavailable. Configure BLOB_READ_WRITE_TOKEN."
+      });
+    }
+
     return res.json({
       ok: true,
-      data: {
-        app: "focista-schedulo",
-        exportedAt: new Date().toISOString(),
-        profiles: exportProfiles,
-        projects: exportProjects,
-        tasks: exportTasks
-      },
+      delivery: "inline",
+      data,
       excludedLockedProfiles: deniedProfileNames
     });
   } catch (error) {
@@ -3800,18 +3968,43 @@ app.post("/api/admin/sync-from-data", async (_req, res) => {
 });
 
 app.post("/api/admin/import", async (req, res) => {
-  const schema = z.object({
-    format: z.enum(["json", "csv"]),
-    content: z.string().min(1)
-  });
+  const schema = z
+    .object({
+      format: z.enum(["json", "csv"]),
+      content: z.string().min(1).optional(),
+      blobPathname: z.string().min(1).optional()
+    })
+    .refine((v) => Boolean(v.content) !== Boolean(v.blobPathname), {
+      message: "Provide exactly one of content or blobPathname"
+    });
   const parsed = schema.safeParse(req.body);
   if (!parsed.success) {
     return res.status(400).json({ ok: false, error: parsed.error.flatten() });
   }
 
-  const { format, content } = parsed.data as { format: ImportFormat; content: string };
+  const { format } = parsed.data as {
+    format: ImportFormat;
+    content?: string;
+    blobPathname?: string;
+  };
+  let content = parsed.data.content;
+  let stagedPathname: string | undefined;
 
   try {
+    if (parsed.data.blobPathname) {
+      stagedPathname = parsed.data.blobPathname;
+      if (!stagedPathname.startsWith("focista-schedulo/imports/")) {
+        return res.status(400).json({
+          ok: false,
+          error: "Invalid blobPathname (expected focista-schedulo/imports/...)"
+        });
+      }
+      content = await readBlobText(stagedPathname);
+    }
+    if (!content) {
+      return res.status(400).json({ ok: false, error: "Missing import content" });
+    }
+
     let incomingProjects: Project[] = [];
     let incomingTasks: Task[] = [];
     let incomingProfiles: Profile[] = [];
@@ -4138,6 +4331,9 @@ app.post("/api/admin/import", async (req, res) => {
         importedTasksByProfileName
       }
     });
+    if (stagedPathname) {
+      void deleteBlobQuietly(stagedPathname);
+    }
   } catch (error) {
     res.status(500).json({
       ok: false,
@@ -4146,10 +4342,17 @@ app.post("/api/admin/import", async (req, res) => {
   }
 });
 
-loadData().then(() => {
-  startDataAutoSync();
-  app.listen(PORT, () => {
-    console.log(`Focista Schedulo backend listening on http://localhost:${PORT}`);
-  });
-});
+if (!isVercel) {
+  ensureBootstrapped()
+    .then(() => {
+      app.listen(PORT, () => {
+        console.log(`Focista Schedulo backend listening on http://localhost:${PORT}`);
+      });
+    })
+    .catch((err) => {
+      console.error("[startup] failed to load data", err);
+      process.exit(1);
+    });
+}
 
+export default app;

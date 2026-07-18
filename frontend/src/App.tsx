@@ -5,12 +5,14 @@ import { GamificationPanel } from "./components/GamificationPanel";
 import { ProfileManagement } from "./components/ProfileManagement";
 import Logo from "./assets/focista-schedulo-logo.png";
 import { Toast, Toaster } from "./components/Toaster";
+import { AppFooter } from "./components/AppFooter";
 import {
   isAppTrueFullscreenActive,
   PST_TRUE_FULLSCREEN_CONTEXT_EVENT
 } from "./fullscreenApi";
 import { getFriendlyErrorMessage } from "./utils/friendlyError";
 import { apiFetch, apiUrl } from "./apiClient";
+import { shouldStageImportViaBlob, uploadImportFileToBlob } from "./blobImport";
 
 type TimeScope =
   | "all"
@@ -33,8 +35,6 @@ export function App() {
   const [selectedProjectId, setSelectedProjectId] = useState<string | null>(null);
   // Default timeframe is "today" for a focused daily view.
   const [timeScope, setTimeScope] = useState<TimeScope>("today");
-  const [syncingData, setSyncingData] = useState(false);
-  const [syncingFromData, setSyncingFromData] = useState(false);
   const [importingData, setImportingData] = useState(false);
   const [importError, setImportError] = useState<string | null>(null);
   const [activeProfileId, setActiveProfileId] = useState<string | null>(null);
@@ -133,20 +133,29 @@ export function App() {
     let cancelled = false;
     const bootstrapActiveProfile = async () => {
       try {
-        const [profilesRes, countsRes] = await Promise.all([
-          apiFetch("/api/profiles"),
-          apiFetch("/api/profiles/task-counts")
-        ]);
-        if (!profilesRes.ok || !countsRes.ok) return;
+        // Profiles first (fast path). Avoid racing task-counts on cold start —
+        // that endpoint needs the full tasks blob and can starve profile loading.
+        const profilesRes = await apiFetch("/api/profiles");
+        if (!profilesRes.ok) return;
         const profiles = (await profilesRes.json()) as Array<{ id: string; name: string }>;
-        const countsPayload = (await countsRes.json()) as {
-          countsByProfileId?: Record<string, number>;
-        };
         if (!profiles.length) {
           if (!cancelled) setActiveProfileId(null);
           return;
         }
-        const counts = countsPayload.countsByProfileId ?? {};
+
+        let counts: Record<string, number> = {};
+        try {
+          const countsRes = await apiFetch("/api/profiles/task-counts");
+          if (countsRes.ok) {
+            const countsPayload = (await countsRes.json()) as {
+              countsByProfileId?: Record<string, number>;
+            };
+            counts = countsPayload.countsByProfileId ?? {};
+          }
+        } catch {
+          // Counts are optional for initial profile selection.
+        }
+
         const stored = window.localStorage.getItem("pst.activeProfileId");
         const storedProfile = stored ? profiles.find((p) => p.id === stored) : null;
         const storedCount = storedProfile ? Number(counts[storedProfile.id] ?? 0) : 0;
@@ -154,7 +163,7 @@ export function App() {
           .map((p) => ({ ...p, count: Number(counts[p.id] ?? 0) }))
           .sort((a, b) => b.count - a.count)[0];
         const nextProfileId =
-          storedProfile && storedCount > 0
+          storedProfile && (storedCount > 0 || Object.keys(counts).length === 0)
             ? storedProfile.id
             : (bestProfile?.id ?? profiles[0]?.id ?? null);
         if (!cancelled) setActiveProfileId(nextProfileId);
@@ -233,64 +242,44 @@ export function App() {
     };
   }, [activeProfileId, selectedProjectId]);
 
-  const syncDataFromJson = async () => {
-    if (syncingData) return;
-    setSyncingData(true);
-    const started = performance.now();
+  /**
+   * Auto sync + save after import only.
+   * Boot no longer runs this — full sync/save on every page load blocked the UI
+   * behind multi‑MB Blob I/O and felt stuck on "Loading profiles…".
+   * Day-to-day mutations already persist via the runtime flush path.
+   */
+  const autoSyncAndSave = async (opts?: { quiet?: boolean }) => {
+    const quiet = opts?.quiet !== false;
     try {
-      const res = await apiFetch("/api/admin/save-data", { method: "POST" });
-      const elapsed = performance.now() - started;
-      if (!res.ok) {
-        const message = await getFriendlyErrorMessage(res);
-        pushToast({
-          kind: "error",
-          title: "Save failed",
-          message,
-          durationMs: elapsed
-        });
-        return;
+      const syncRes = await apiFetch("/api/admin/sync-from-data", { method: "POST" });
+      if (!syncRes.ok) {
+        if (!quiet) {
+          const message = await getFriendlyErrorMessage(syncRes);
+          pushToast({ kind: "error", title: "Auto sync failed", message });
+        }
+        return false;
       }
-      window.dispatchEvent(new Event("pst:projects-changed"));
-      window.dispatchEvent(new Event("pst:tasks-changed"));
-      pushToast({ kind: "success", title: "Saved", message: "Data saved and normalized.", durationMs: elapsed });
-    } finally {
-      setSyncingData(false);
-    }
-  };
-
-  const syncAndMergeFromDataFolder = async () => {
-    if (syncingFromData) return;
-    setSyncingFromData(true);
-    const started = performance.now();
-    try {
-      const res = await apiFetch("/api/admin/sync-from-data", { method: "POST" });
-      const elapsed = performance.now() - started;
-      if (!res.ok) {
-        const message = await getFriendlyErrorMessage(res);
-        pushToast({
-          kind: "error",
-          title: "Sync failed",
-          message,
-          durationMs: elapsed
-        });
-        return;
+      const saveRes = await apiFetch("/api/admin/save-data", { method: "POST" });
+      if (!saveRes.ok) {
+        if (!quiet) {
+          const message = await getFriendlyErrorMessage(saveRes);
+          pushToast({ kind: "error", title: "Auto save failed", message });
+        }
+        return false;
       }
-      const out = await res.json().catch(() => null);
       window.dispatchEvent(new Event("pst:projects-changed"));
       window.dispatchEvent(new Event("pst:tasks-changed"));
       await ensureVisibleProfileAfterDataOps();
-      const filesRead = out?.filesRead ?? 0;
-      const importedTasks = out?.imported?.tasks ?? 0;
-      const importedProjects = out?.imported?.projects ?? 0;
-      const importedProfiles = out?.imported?.profiles ?? 0;
-      pushToast({
-        kind: "success",
-        title: "Synced",
-        message: `Synced from data folder (${filesRead} file(s)); merged ${importedProfiles} profile(s), ${importedProjects} project(s), ${importedTasks} task(s).`,
-        durationMs: elapsed
-      });
-    } finally {
-      setSyncingFromData(false);
+      return true;
+    } catch (err) {
+      if (!quiet) {
+        pushToast({
+          kind: "error",
+          title: "Auto sync/save failed",
+          message: err instanceof Error ? err.message : "Unexpected sync/save error."
+        });
+      }
+      return false;
     }
   };
 
@@ -307,11 +296,36 @@ export function App() {
         pushToast({ kind: "error", title: "Import failed", message: "Unsupported file type." });
         return;
       }
-      const content = await file.text();
+
+      let importBody: { format: "json" | "csv"; content?: string; blobPathname?: string };
+      if (shouldStageImportViaBlob(file)) {
+        try {
+          const blobPathname = await uploadImportFileToBlob(file);
+          importBody = { format, blobPathname };
+        } catch (err) {
+          const message =
+            err instanceof Error
+              ? err.message
+              : "Could not stage the import file in Blob storage.";
+          const elapsed = performance.now() - started;
+          setImportError(message);
+          pushToast({
+            kind: "error",
+            title: "Import failed",
+            message,
+            durationMs: elapsed
+          });
+          return;
+        }
+      } else {
+        const content = await file.text();
+        importBody = { format, content };
+      }
+
       const res = await apiFetch("/api/admin/import", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ format, content })
+        body: JSON.stringify(importBody)
       });
       if (!res.ok) {
         const message = await getFriendlyErrorMessage(res);
@@ -348,6 +362,8 @@ export function App() {
       window.dispatchEvent(new Event("pst:projects-changed"));
       window.dispatchEvent(new Event("pst:tasks-changed"));
       await ensureVisibleProfileAfterDataOps();
+      // Normalize + flush after import (replaces manual Save).
+      await autoSyncAndSave({ quiet: true });
       pushToast({
         kind: "success",
         title: "Imported",
@@ -416,26 +432,10 @@ export function App() {
                   e.currentTarget.value = "";
                 }}
               />
-              <span title="Import tasks and projects from an exported JSON/CSV file (merges duplicates and normalizes data).">
+              <span title="Import tasks and projects from an exported JSON/CSV file (merges duplicates and normalizes data). Sync/save run automatically afterward.">
                 {importingData ? "Importing…" : "Import"}
               </span>
             </label>
-            <button
-              className="ghost-button"
-              onClick={syncAndMergeFromDataFolder}
-              disabled={syncingFromData}
-              title="Sync & merge from backend/data/focista-unified-data.json (legacy JSON fallback only when unified file is missing)."
-            >
-              {syncingFromData ? "Syncing…" : "Sync"}
-            </button>
-            <button
-              className="ghost-button"
-              onClick={syncDataFromJson}
-              disabled={syncingData}
-              title="Save current data to one unified JSON file in backend/data, dedupe duplicates, and normalize series IDs."
-            >
-              {syncingData ? "Saving…" : "Save"}
-            </button>
             <button
               className="ghost-button"
               onClick={openExport}
@@ -472,6 +472,7 @@ export function App() {
         />
         <GamificationPanel activeProfileId={activeProfileId} />
       </main>
+      <AppFooter />
     </div>
   );
 }

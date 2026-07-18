@@ -2,6 +2,7 @@ import React, { useEffect, useLayoutEffect, useMemo, useRef, useState } from "re
 import { createPortal } from "react-dom";
 import { TaskEditorDrawer } from "./TaskEditorDrawer";
 import { apiFetch, apiUrl } from "../apiClient";
+import { apiFetchWarming } from "../apiWarming";
 import { getFriendlyErrorMessage } from "../utils/friendlyError";
 
 export interface Task {
@@ -35,6 +36,7 @@ export interface Task {
   projectId: string | null;
   completed: boolean;
   cancelled?: boolean;
+  completedAt?: string;
   virtual?: boolean;
   parentId?: string;
   childId?: string;
@@ -196,7 +198,10 @@ interface TaskBoardProps {
 }
 
 function isJuly2026DueDate(dueDate: string | undefined): boolean {
-  return /^2026-07-\d{2}$/.test((dueDate ?? "").trim());
+  const iso = (dueDate ?? "").trim();
+  if (!/^2026-07-\d{2}$/.test(iso)) return false;
+  // Historical backfill only — never force-complete today or future July days.
+  return iso < toISODateLocal(new Date());
 }
 
 function formatWithWeekday(dateStr: string | undefined): string {
@@ -790,7 +795,9 @@ export function TaskBoard({
   const [exportProfilePasswords, setExportProfilePasswords] = useState<Record<string, string>>({});
   const [showExportProfilePasswords, setShowExportProfilePasswords] = useState<Record<string, boolean>>({});
   const [exportPreparing, setExportPreparing] = useState(false);
-  const [openCluster, setOpenCluster] = useState<"timeframe" | "view" | "status" | null>(null);
+  const [openCluster, setOpenCluster] = useState<
+    "timeframe" | "view" | "status" | "project-assoc" | null
+  >(null);
   const [hoveredTask, setHoveredTask] = useState<{
     task: Task;
     anchorIso: string | null;
@@ -1237,7 +1244,9 @@ export function TaskBoard({
         }
       }
 
-      const res = await apiFetch(`${base.pathname}${base.search}`, { signal: controller.signal });
+      const res = await apiFetchWarming(`${base.pathname}${base.search}`, {
+        signal: controller.signal
+      });
       const elapsed = performance.now() - started;
       if (!res.ok) {
         const message = await getFriendlyErrorMessage(res);
@@ -1541,7 +1550,7 @@ export function TaskBoard({
     const snapshotRes = await apiFetch("/api/admin/export-data", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ profilePasswords })
+      body: JSON.stringify({ profilePasswords, delivery: "auto" })
     });
     const elapsedFetch = performance.now() - started;
     if (!snapshotRes.ok) {
@@ -1555,9 +1564,27 @@ export function TaskBoard({
       return false;
     }
     const snapshot = await snapshotRes.json();
-    const allTasksRaw: Task[] = snapshot?.data?.tasks ?? [];
+    let exportPayload = snapshot?.data;
+    if (snapshot?.delivery === "blob" && typeof snapshot?.downloadUrl === "string") {
+      try {
+        const blobRes = await fetch(snapshot.downloadUrl);
+        if (!blobRes.ok) {
+          throw new Error(`Blob download failed (${blobRes.status})`);
+        }
+        exportPayload = await blobRes.json();
+      } catch (err) {
+        toast({
+          kind: "error",
+          title: "Export failed",
+          message: err instanceof Error ? err.message : "Could not download export from Blob.",
+          durationMs: performance.now() - started
+        });
+        return false;
+      }
+    }
+    const allTasksRaw: Task[] = exportPayload?.tasks ?? [];
     const allProjects: { id: string; name: string; profileId?: string | null }[] =
-      snapshot?.data?.projects ?? [];
+      exportPayload?.projects ?? [];
     const allProfiles: Array<{
       id: string;
       name: string;
@@ -1565,7 +1592,7 @@ export function TaskBoard({
       passwordHash?: string;
       createdAt: string;
       updatedAt: string;
-    }> = snapshot?.data?.profiles ?? [];
+    }> = exportPayload?.profiles ?? [];
     const excludedLockedProfiles: string[] = Array.isArray(snapshot?.excludedLockedProfiles)
       ? snapshot.excludedLockedProfiles
       : [];
@@ -2628,11 +2655,12 @@ export function TaskBoard({
     void refreshTasks({ silent: true, appendHistory: true });
   };
 
-  const jumpToHistoryDate = () => {
+  const handleHistoryJumpDateChange = (value: string) => {
+    setHistoryJumpDate(value);
     if (historyLoadingMore) return;
-    if (!/^\d{4}-\d{2}-\d{2}$/.test(historyJumpDate)) return;
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) return;
     setHistoryLoadingMore(true);
-    void refreshTasks({ silent: true, jumpToDate: historyJumpDate });
+    void refreshTasks({ silent: true, jumpToDate: value });
   };
 
   const deleteSelected = () => {
@@ -5296,9 +5324,14 @@ export function TaskBoard({
         {!loading && viewMode === "calendar" && renderCalendar()}
         {!loading && viewMode === "list" && completionFilter !== "completed" &&
           filteredTasks
-            .filter(
-              (task) => !(completionFilter === "all" && task.completed && isRepeating(task))
-            )
+            .filter((task) => {
+              // Week/month/all views collapse completed repeats into parent groups.
+              // Day scopes keep them inline so "Today" never looks empty when work is done.
+              const isDayScope =
+                timeScope === "yesterday" || timeScope === "today" || timeScope === "tomorrow";
+              if (isDayScope) return true;
+              return !(completionFilter === "all" && task.completed && isRepeating(task));
+            })
             .map((task) => {
               // Only repeating series should have expandable occurrences.
               if (!isRepeating(task)) {
@@ -5386,6 +5419,7 @@ export function TaskBoard({
               );
             })}
         {!loading && viewMode === "list" && completionFilter === "all" && groupedByParent &&
+          !(timeScope === "yesterday" || timeScope === "today" || timeScope === "tomorrow") &&
           groupedByParent.map(({ key, representative, count, items }) => {
             // Non-recurring tasks must render as a normal task card (no parent grouping).
             if (!isRepeating(representative)) {
@@ -5514,9 +5548,9 @@ export function TaskBoard({
               !(groupedByParent?.some(({ representative }) => isRepeating(representative)) ?? false)) ||
             (completionFilter === "active" && filteredTasks.length === 0)) && (
           <div className="empty-state">
-            <h3>No tasks yet</h3>
+            <h3>No tasks in this view</h3>
             <p className="muted">
-              Start by creating a task with a title, priority, and reminder.
+              Try another timeframe, clear project filters, or switch workspace profile.
             </p>
           </div>
         )}
@@ -5537,20 +5571,13 @@ export function TaskBoard({
               <input
                 type="date"
                 value={historyJumpDate}
-                onChange={(e) => setHistoryJumpDate(e.target.value)}
+                onChange={(e) => handleHistoryJumpDateChange(e.target.value)}
                 className="task-search-input"
                 style={{ width: "12rem", maxWidth: "100%" }}
-                title="Jump to older tasks near this date."
+                disabled={historyLoadingMore}
+                aria-label="Jump to historical tasks on this date"
+                title="Select a date to load historical tasks around that day."
               />
-              <button
-                className="ghost-button small"
-                type="button"
-                onClick={jumpToHistoryDate}
-                disabled={historyLoadingMore || !historyJumpDate}
-                title="Jump to historical tasks around selected date."
-              >
-                Jump to date
-              </button>
               <button
                 className="ghost-button small"
                 type="button"

@@ -1,7 +1,13 @@
 # Design Guidelines
 
-**Last updated:** 2026-05-04  
+**Last updated:** 2026-07-18  
 **Owner:** Design + Frontend Engineering
+
+---
+
+## Purpose
+
+Define the visual system, interaction standards, and accessibility baseline for Focista Schedulo. Source of truth for CSS tokens: `frontend/src/styles.css`.
 
 ---
 
@@ -11,78 +17,165 @@
 - Keep interaction density high but non-overwhelming.
 - Preserve consistency across profile, task, project, and progress modules.
 - Maintain accessibility as a baseline quality requirement.
+- Prefer immediate, non-blocking feedback (toasts) over modal interruption for routine outcomes.
+- Match chart and achievement **copy** to shipped formulas (calendar week ≠ rolling seven days unless explicitly intended).
 
 ---
 
-## Color Palette (Current Theme)
+## Theme Overview
 
-| Token | Purpose | Value |
-|---|---|---|
-| `--bg` | app background | `#ffffff` |
-| `--surface` | panels/cards secondary | `#fafafa` |
-| `--text-main` | primary text | `#111827` |
-| `--text-muted` | secondary text | `#6b7280` |
-| `--accent-red` | brand/action emphasis | `#ce1126` |
-| `--accent-red-hover` | interactive hover emphasis | `#e63946` |
-| `--accent-gold` | highlight/focus/success accent | `#facc15` |
-| `--accent-gold-soft` | subtle highlighted background | `#fef3c7` |
+The product ships a **light planning theme** optimized for daytime productivity work. There is **no separate dark theme** in the current codebase; do not document or ship dark-mode tokens without an explicit product decision.
+
+### Core Theme Tokens (`:root`)
+
+| Token | Friendly Name | Purpose | Value |
+|---|---|---|---|
+| `--bg` | App Background | Page canvas | `#ffffff` |
+| `--surface` | Surface | Panels / secondary surfaces | `#fafafa` |
+| `--surface-strong` | Strong Surface | Elevated/primary panels | `#ffffff` |
+| `--border-subtle` | Subtle Border | Dividers, quiet edges | `#e5e7eb` |
+| `--border-strong` | Strong Border | Emphasized outlines | `#d1d5db` |
+| `--text-main` | Primary Text | Body and titles | `#111827` |
+| `--text-muted` | Muted Text | Secondary labels, hints | `#6b7280` |
+| `--accent-red` | Brand Red | Primary action / brand emphasis | `#ce1126` |
+| `--accent-red-soft` | Soft Brand Red | Soft brand backgrounds | `#fee2e2` |
+| `--accent-red-hover` | Brand Red Hover | Interactive hover emphasis | `#e63946` |
+| `--accent-gold` | Accent Gold | Highlight / focus / success accent | `#facc15` |
+| `--accent-gold-soft` | Soft Gold | Subtle highlighted background | `#fef3c7` |
+
+### Typography
+
+| Element | Guidance |
+|---|---|
+| Font stack | `system-ui, -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", sans-serif` |
+| Body color | `var(--text-main)` |
+| Secondary copy | `var(--text-muted)` |
+| Density | Prefer scannable labels; avoid competing headline hierarchy in operational panels |
 
 ---
 
 ## Priority Color Mapping
 
-| Priority | Visual Guidance |
-|---|---|
-| low | warm yellow subtle contrast |
-| medium | violet accent |
-| high | orange accent |
-| urgent | strong red accent |
+Priority must be visually consistent across cards, pills, hovercards, and agenda entries.
 
-The same priority semantics must be reused across cards, pills, hovercards, and agenda entries.
+| Priority | Visual Guidance | Representative Color |
+|---|---|---|
+| `low` | Warm yellow / gold subtle contrast | `rgba(250, 204, 21, 0.95)` |
+| `medium` | Violet accent (distinct from status blue/green) | `rgba(147, 51, 234, 0.95)` |
+| `high` | Orange accent | `rgba(249, 115, 22, 0.95)` |
+| `urgent` | Strong red accent | `rgba(185, 28, 28, 1)` |
+
+XP weights for the same priorities are documented in `VARIABLES.md` (`scoreFor`: 1/2/3/4).
+
+---
+
+## Toast / Feedback Palette
+
+Toasts use local CSS variables on `.toast` variants:
+
+| Toast Type | Accent | Soft / Ring |
+|---|---|---|
+| Default / neutral | `#64748b` | slate soft/ring |
+| Success (`.toast--success`) | `#059669` | emerald soft/ring |
+| Error (`.toast--error`) | `#be123c` | rose soft/ring |
+| Info (`.toast--info`) | `#0369a1` | sky soft/ring |
+
+**Rules**
+
+- Error toasts must include user-friendly root cause and suggested next step (`friendlyError.ts`).
+- Do not show status-only transport text for critical failures.
+- Keep toast stack non-blocking (bottom-left, capped height).
 
 ---
 
 ## Component Guidelines
 
-### Profile Hub
-- Keep profile actions compact and clearly discoverable.
-- Display active profile identity consistently.
-- Password-related controls should be explicit and reversible.
-- Use a consistent **lock** icon (or equivalent) next to password-protected profiles in selectors and summaries so protection state is scannable.
-- When profile policy is read-only (e.g., `Test`), disable destructive controls and provide clear explanatory tooltips/toasts.
+### Profile Hub (`ProfileManagement`)
 
-### Task Board
+- Keep profile actions compact and clearly discoverable.
+- Display active profile identity consistently (`name` + `title` where space allows).
+- Password-related controls should be explicit and reversible.
+- Use a consistent **lock** icon next to password-protected profiles in selectors and summaries.
+- When profile policy is read-only (`Test`), disable destructive controls and provide clear explanatory tooltips/toasts.
+- Boot/loading: show **progress bar + staged status** while profiles (and subsequent tasks) load; avoid a blank shell with no feedback.
+
+### Task Board (`TaskBoard`)
+
 - Group controls by intent (search, timeframe, status, project association, bulk actions).
 - Avoid text clutter; preserve high scanability.
 - Keep interaction latency feedback immediate through subtle non-blocking toasts.
-- Error toasts must include user-friendly root cause and suggested next step, not status-only transport text.
+- Do not expose manual Sync/Save header buttons; persistence ops are automated.
 
-### Task Editor Drawer
-- Field grouping order: identity -> schedule -> recurrence -> context -> associations.
+### Task Editor Drawer (`TaskEditorDrawer`)
+
+- Field grouping order: identity → schedule → recurrence → context → associations.
 - Validate progressively and keep error text concise.
 
-### Progress and Productivity
+### Project Sidebar (`ProjectSidebar`)
+
+- Keep project list scannable; emphasize active project filter state.
+- Honor showcase read-only disablement for create/edit/delete.
+
+### Progress and Productivity (`GamificationPanel`, `ProductivityAnalysisModal`, badges)
+
 - Present summary KPIs first, deep analysis second.
-- **Weekly chart:** seven bars for the **current local Monday–Sunday**; label or helper copy should avoid implying a rolling “last seven days” window unless product copy is explicitly aligned with implementation.
-- **Bar tooltips:** structure content as (1) day totals, (2) per-task XP spread, (3) weekday-historical comparison so users can parse density without cognitive overload.
-- Badge/milestone visuals should reinforce progression without distracting from task execution.
-- **Badges modal:** header pattern `Profile: Name - Title`; exported PNG cards may use **name only** for compact artwork—keep this distinction intentional and consistent.
+- **Weekly chart:** seven bars for the **current local Monday–Sunday**; label/helper copy must not imply a rolling “last seven days” window unless product intentionally aligns copy with implementation.
+- **Bar tooltips:** structure as (1) day totals, (2) per-task XP spread, (3) weekday-historical comparison.
+- Badge/milestone visuals reinforce progression without distracting from task execution.
+- **Badges modal:** header pattern `Profile: Name - Title`; exported PNG cards may use **name only**—keep this distinction intentional.
+- Support fullscreen chart/badge experiences via existing fullscreen helpers without covering critical chrome unexpectedly.
+
+### Toaster (`Toaster`)
+
+- Support success/error/info variants with shared motion (`toast-enter`).
+- Prefer concise titles + one supporting sentence.
+
+### App Footer (`AppFooter`)
+
+- Keep footer secondary; do not compete with planning chrome.
+
+---
+
+## Layout Guidance
+
+| Breakpoint | Layout |
+|---|---|
+| Desktop | Left rail (profile/project), center task board, right progress rail |
+| Tablet / mobile | Stacked layout with predictable control grouping |
+| Parity | Maintain critical actions across breakpoints |
+
+---
+
+## Motion Guidance
+
+- Use short, purposeful transitions (toast enter ~240ms ease-out).
+- Prefer subtle feedback over decorative motion.
+- Do not animate in ways that obscure form validation or error text.
 
 ---
 
 ## Accessibility Standards
 
 - Keyboard navigable controls for all core actions.
-- Visible focus states on actionable elements.
-- Color is never the sole state communicator.
+- Visible focus states on actionable elements (gold outline accents are common for focus).
+- Color is never the sole state communicator (pair with icons/text, especially lock and read-only).
 - Maintain legible contrast in all panels and overlays.
 - Disabled states must remain visually clear and semantically announced where possible.
+- Modal dialogs (Analysis, Badges) must trap focus appropriately and expose accessible names.
 
 ---
 
-## Responsive Layout Guidance
+## Content / Copy Standards
 
-- Desktop: left rail (profile/project), center task board, right progress rail.
-- Tablet/mobile: stacked layout with predictable control grouping.
-- Maintain parity of critical actions across breakpoints.
+- Prefer plain language over jargon in user-facing errors.
+- Align Progress/achievement wording with formula semantics (`VARIABLES.md`).
+- Showcase blocks should explain **why** the action is blocked (demo integrity), not only that it failed.
 
+---
+
+## Related Documents
+
+- Variables: `VARIABLES.md`
+- Personas: `USER_PERSONAS.md`
+- Guardrails: `GUARDRAILS.md`
+- Stories: `USER_STORIES.md` (US-403–US-406, US-103)

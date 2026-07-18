@@ -1,7 +1,13 @@
 # Product and Engineering Guardrails
 
-**Last updated:** 2026-05-04  
+**Last updated:** 2026-07-18  
 **Owner:** Product + Engineering
+
+---
+
+## Purpose
+
+Define the technical and business limitations that bound safe product development for Focista Schedulo. Treat exceptions as explicit, jointly approved decisions (Product + Engineering), documented in the changelog.
 
 ---
 
@@ -9,23 +15,29 @@
 
 - **User-facing copy accuracy:** Achievement or chart labels must match shipped formulas (e.g. any text implying a rolling seven-day window must match code, or be revised). Prefer a single source of truth documented in `VARIABLES.md`.
 - Keep profile data boundaries strict; no cross-profile leakage.
-- Preserve user data ownership with reliable import/export capability.
+- Preserve user data ownership with reliable import/export capability (including large Blob-staged transfers in production).
 - Prioritize execution reliability over feature volume.
 - Avoid introducing behavior changes without documentation and changelog updates.
 - Preserve showcase integrity: profile `Test` acts as read-only during demonstrations.
+- Do not position the product as multi-user collaborative or as an enterprise RBAC system while those remain non-goals.
 
 ---
 
 ## Technical Guardrails
 
 - **API field names vs. semantics:** Some response keys are historical (e.g. `last7Days` carrying a **calendar-week** series). Do not rename lightly without a coordinated frontend migration; when behavior changes, update `API_CONTRACTS.md`, `VARIABLES.md`, and consumer components in the same release.
-- Runtime persistence must remain non-monolith for high-frequency operations.
-- Validate all mutation payloads before persistence.
+- Runtime persistence must remain non-monolith for high-frequency operations (split `tasks` / `projects` / `profiles` JSON objects).
+- Production durable store is **Vercel Blob** (or local `fs` in development) — do **not** introduce Redis or MongoDB without an approved architecture change.
+- Unified JSON (`focista-unified-data.json`) is interchange-oriented; do not reintroduce it as the primary high-frequency write path.
+- Validate all mutation payloads before persistence (Zod).
 - Avoid destructive save/sync patterns that can wipe valid datasets.
 - Preserve deterministic recurrence identity (parent/child normalization).
 - Maintain graceful recovery on API mutation failures.
 - Any read-only business policy must be enforced server-side, not UI-only.
 - Centralize user-facing error interpretation to ensure clear root-cause messaging.
+- Large import/export on constrained serverless body limits must use **Blob staging** (`blobPathname` / presigned download); do not rely on raising Hobby body limits as the primary strategy.
+- Do not force expensive full sync/save on every application boot in production; prefer post-import automation and quiet reload patterns.
+- Long-running Node API process is required for in-memory working set and SSE; do not assume purely stateless per-request diskless compute without redesign.
 
 ---
 
@@ -34,15 +46,31 @@
 - Target: majority of core actions under 1 second in normal local usage.
 - Batch operations are preferred over N individual mutation calls.
 - Avoid redundant foreground refetches after successful optimistic updates.
-- Any potentially degrading change must include before/after measurement evidence.
+- Use longer persistence debounce on Blob (~1500ms) than local fs (~40ms) to protect free-tier upload quotas.
+- Any potentially degrading change must include before/after measurement evidence (see Performance Guardrail rule).
+- Profile-gated performance diagnostics may exist for specific profile names; do not expose noisy logging to all users by default.
 
 ---
 
 ## Security and Privacy Guardrails
 
 - Never store plaintext secrets/passwords in repository files.
-- Use hashed profile passwords only where lock is enabled.
+- Never commit `.env.local`, tokens, or Blob credentials.
+- Use hashed profile passwords only where lock is enabled (scrypt).
 - Block or constrain sensitive export behavior for locked profiles without valid credentials.
+- Require password confirmation for deleting password-protected profiles.
+- Require `FRONTEND_ORIGIN` in production API environments.
+- Exclude tokens, hashes, and stack traces from user-facing error toasts.
+
+---
+
+## Data and Transfer Guardrails
+
+- Import must merge/dedupe rather than blindly overwrite without safeguards.
+- Export modes: JSON, CSV, Both — document and test each.
+- When Blob transfer is not configured and payloads exceed inline limits, return clear `413` with actionable guidance.
+- Import body must provide **exactly one** of `content` or `blobPathname`.
+- Treat presigned export URLs as short-lived; do not log them in durable public logs.
 
 ---
 
@@ -52,7 +80,28 @@ Before release:
 
 1. Verify task/project/profile CRUD under active profile scope.
 2. Verify recurrence create/edit/complete/delete integrity.
-3. Verify import/export/save/sync critical flows.
-4. Verify progress/insights correctness.
-5. Update docs + traceability + changelog in same release cycle.
+3. Verify import/export and **automated** sync/save critical flows (including Blob staging when targeting Prod).
+4. Verify progress/insights correctness (calendar-week series + tooltips).
+5. Verify showcase `Test` blocks mutations at API and UI.
+6. Verify friendly errors on top failure paths (including `413`).
+7. Update docs + traceability + changelog in the same release cycle.
+8. Confirm deployment env vars for the target topology (`DEPLOYMENT_VERCEL.md`).
 
+---
+
+## Explicit Non-Goals (Do Not Build Without Re-scoping)
+
+- Multi-user real-time collaborative editing
+- Bi-directional Google/Outlook calendar sync
+- Enterprise RBAC / approval workflows
+- Redis/Mongo as primary persistence in current topology
+- Dark mode theme system (not shipped)
+
+---
+
+## Related Documents
+
+- PRD non-goals: `PRD.md`
+- Architecture constraints: `ARCHITECTURE.md`
+- Deployment: `DEPLOYMENT_VERCEL.md`
+- Documentation standard: `PRODUCT_DOCUMENTATION_STANDARD.md`

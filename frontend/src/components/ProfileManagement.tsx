@@ -21,6 +21,16 @@ function profileSelectOptionLabel(p: Profile): string {
   return p.isPasswordProtected ? `${p.name} · 🔒` : p.name;
 }
 
+function profileInitials(name: string): string {
+  const parts = name
+    .trim()
+    .split(/\s+/)
+    .filter(Boolean);
+  if (parts.length === 0) return "?";
+  if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase();
+  return `${parts[0][0] ?? ""}${parts[1][0] ?? ""}`.toUpperCase();
+}
+
 function ProfileLockIcon({ className }: { className?: string }) {
   return (
     <span className={className} aria-hidden="true">
@@ -33,9 +43,20 @@ function ProfileLockIcon({ className }: { className?: string }) {
   );
 }
 
+function ProfileChevronIcon() {
+  return (
+    <svg className="profile-switcher-chevron-svg" viewBox="0 0 24 24" focusable="false" aria-hidden="true">
+      <path d="M6 9l6 6 6-6" />
+    </svg>
+  );
+}
+
 export function ProfileManagement({ activeProfileId, onChooseProfile, onToast }: Props) {
   const [profiles, setProfiles] = useState<Profile[]>([]);
-  const [loading, setLoading] = useState(false);
+  const [loading, setLoading] = useState(true);
+  const [loadProgress, setLoadProgress] = useState(8);
+  const [loadStage, setLoadStage] = useState("Connecting to workspace…");
+  const [loadHint, setLoadHint] = useState("First load can take a moment while saved data warms up.");
   const [submitting, setSubmitting] = useState(false);
   const [createName, setCreateName] = useState("");
   const [createTitle, setCreateTitle] = useState("");
@@ -69,10 +90,17 @@ export function ProfileManagement({ activeProfileId, onChooseProfile, onToast }:
 
   const loadProfiles = useCallback(async () => {
     setLoading(true);
+    setLoadProgress(12);
+    setLoadStage("Connecting to workspace…");
+    setLoadHint("First load can take a moment while saved data warms up.");
     try {
       const res = await apiFetch("/api/profiles");
+      setLoadProgress(78);
+      setLoadStage("Reading profiles…");
       if (!res.ok) throw new Error(await getFriendlyErrorMessage(res));
       const data = (await res.json()) as Profile[];
+      setLoadProgress(96);
+      setLoadStage("Almost ready…");
       setProfiles(data);
     } catch (error) {
       onToast({
@@ -81,6 +109,7 @@ export function ProfileManagement({ activeProfileId, onChooseProfile, onToast }:
         message: error instanceof Error ? error.message : String(error)
       });
     } finally {
+      setLoadProgress(100);
       setLoading(false);
     }
   }, [onToast]);
@@ -88,6 +117,56 @@ export function ProfileManagement({ activeProfileId, onChooseProfile, onToast }:
   useEffect(() => {
     void loadProfiles();
   }, [loadProfiles]);
+
+  useEffect(() => {
+    if (!loading) return;
+    const stages: Array<{ atMs: number; progress: number; stage: string; hint: string }> = [
+      {
+        atMs: 0,
+        progress: 12,
+        stage: "Connecting to workspace…",
+        hint: "Opening a secure session with the production API."
+      },
+      {
+        atMs: 2500,
+        progress: 28,
+        stage: "Warming saved workspace…",
+        hint: "Loading profile records first so you can continue sooner."
+      },
+      {
+        atMs: 7000,
+        progress: 48,
+        stage: "Still working…",
+        hint: "Large workspaces take longer on the first request after idle."
+      },
+      {
+        atMs: 15000,
+        progress: 62,
+        stage: "Loading your profiles…",
+        hint: "Hang tight — progress continues in the background."
+      },
+      {
+        atMs: 30000,
+        progress: 74,
+        stage: "Taking longer than usual…",
+        hint: "You can keep this tab open; the request is still in progress."
+      }
+    ];
+    const started = Date.now();
+    const tick = () => {
+      const elapsed = Date.now() - started;
+      let next = stages[0]!;
+      for (const s of stages) {
+        if (elapsed >= s.atMs) next = s;
+      }
+      setLoadProgress((p) => Math.max(p, Math.min(88, next.progress)));
+      setLoadStage(next.stage);
+      setLoadHint(next.hint);
+    };
+    tick();
+    const id = window.setInterval(tick, 700);
+    return () => window.clearInterval(id);
+  }, [loading]);
 
   useEffect(() => {
     if (profiles.length === 0) return;
@@ -445,15 +524,70 @@ export function ProfileManagement({ activeProfileId, onChooseProfile, onToast }:
         </div>
       </div>
 
-      <div className="profile-active-strip profile-scope-card">
-        <label className="profile-select-wrap">
-          <span className="muted profile-field-label">Current workspace profile</span>
-          <div className="profile-select-row">
+      <div
+        className="profile-switcher profile-scope-card rail-picker"
+        data-empty={currentProfile ? undefined : "true"}
+        data-showcase={isShowcaseReadOnlyActive ? "true" : undefined}
+      >
+        <label className="profile-switcher-trigger rail-picker-trigger" htmlFor="workspace-profile-select">
+          <div
+            key={currentProfile?.id ?? "none"}
+            className="profile-switcher-identity rail-picker-identity"
+            aria-live="polite"
+          >
+            <div
+              className={`profile-switcher-avatar rail-picker-mark${
+                isShowcaseReadOnlyActive ? " profile-switcher-avatar--showcase" : ""
+              }`}
+              aria-hidden="true"
+            >
+              {currentProfile ? profileInitials(currentProfile.name) : "—"}
+            </div>
+            <div className="profile-switcher-copy rail-picker-copy">
+              <div className="profile-switcher-name-row">
+                <strong className="profile-switcher-name rail-picker-name">
+                  {currentProfile?.name ?? "Choose a profile"}
+                </strong>
+                {currentProfile?.isPasswordProtected ? (
+                  <span
+                    className="profile-select-lock-wrap"
+                    title="Password protected"
+                    role="img"
+                    aria-label="Password protected"
+                  >
+                    <ProfileLockIcon />
+                  </span>
+                ) : null}
+                <span
+                  className={`profile-switcher-status rail-picker-status${
+                    isShowcaseReadOnlyActive ? " profile-switcher-status--showcase" : ""
+                  }`}
+                >
+                  {currentProfile
+                    ? isShowcaseReadOnlyActive
+                      ? "Showcase"
+                      : "Live"
+                    : "Unassigned"}
+                </span>
+              </div>
+              <p className="profile-switcher-title rail-picker-meta">
+                {currentProfile?.title?.trim()
+                  ? currentProfile.title
+                  : currentProfile
+                    ? `${profiles.length} profile${profiles.length === 1 ? "" : "s"} available`
+                    : "Create or select a profile to continue"}
+              </p>
+            </div>
+          </div>
+
+          <div className="profile-select-shell">
             <select
+              id="workspace-profile-select"
               className="profile-select"
               value={activeProfileId ?? ""}
               onChange={(e) => handleChooseProfile(e.target.value)}
-              disabled={profiles.length === 0}
+              disabled={profiles.length === 0 || loading}
+              aria-label="Switch workspace profile"
             >
               <option value="" disabled>
                 Select profile
@@ -468,34 +602,32 @@ export function ProfileManagement({ activeProfileId, onChooseProfile, onToast }:
                 </option>
               ))}
             </select>
+            <span className="profile-switcher-chevron rail-picker-chevron" aria-hidden="true">
+              <ProfileChevronIcon />
+            </span>
           </div>
-          <span className="muted profile-helper-text">
-            Projects and tasks are filtered to the selected profile.
-          </span>
-          {currentProfile ? (
-            <div className="profile-selected-summary" aria-live="polite">
-              <strong className="profile-selected-name-row">
-                <span>
-                  {currentProfile.name}
-                  {currentProfile.title ? ` — ${currentProfile.title}` : ""}
-                </span>
-                {currentProfile.isPasswordProtected ? (
-                  <span
-                    className="profile-select-lock-wrap"
-                    title="Password protected"
-                    role="img"
-                    aria-label="Password protected"
-                  >
-                    <ProfileLockIcon />
-                  </span>
-                ) : null}
-              </strong>
-            </div>
-          ) : null}
         </label>
       </div>
 
-      {loading ? <p>Loading profiles...</p> : null}
+      {loading ? (
+        <div className="profile-loading" role="status" aria-live="polite" aria-busy="true">
+          <div className="profile-loading-stage">{loadStage}</div>
+          <div
+            className="profile-loading-track"
+            aria-valuemin={0}
+            aria-valuemax={100}
+            aria-valuenow={Math.round(loadProgress)}
+            role="progressbar"
+            aria-label="Profile loading progress"
+          >
+            <div className="profile-loading-fill" style={{ width: `${loadProgress}%` }} />
+          </div>
+          <div className="profile-loading-meta">
+            <span>{Math.round(loadProgress)}%</span>
+            <span className="profile-loading-hint">{loadHint}</span>
+          </div>
+        </div>
+      ) : null}
       {!loading && profiles.length === 0 ? (
         <div className="profile-empty muted">No profiles yet. Create one to start scoped planning.</div>
       ) : null}

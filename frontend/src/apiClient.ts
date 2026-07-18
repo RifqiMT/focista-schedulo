@@ -6,7 +6,7 @@
  */
 const configuredBase = (import.meta.env.VITE_API_BASE_URL as string | undefined)?.trim().replace(/\/$/, "");
 
-export function getApiOrigin(): string {
+function getApiOrigin(): string {
   if (configuredBase) return configuredBase;
   if (typeof window !== "undefined" && window.location?.origin) return window.location.origin;
   return "";

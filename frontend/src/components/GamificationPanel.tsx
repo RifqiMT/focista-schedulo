@@ -9,6 +9,7 @@ import {
 } from "../fullscreenApi";
 import { ProductivityAnalysisModal } from "./ProductivityAnalysisModal";
 import { apiFetch, apiUrl } from "../apiClient";
+import { apiFetchWarming } from "../apiWarming";
 
 interface Stats {
   profileId?: string | null;
@@ -172,7 +173,7 @@ export function GamificationPanel({ activeProfileId }: { activeProfileId: string
       const requestedProfileId = activeProfileId ?? null;
       const url = new URL(apiUrl("/api/stats"));
       if (activeProfileId) url.searchParams.set("profileId", activeProfileId);
-      const res = await apiFetch(`${url.pathname}${url.search}`, {
+      const res = await apiFetchWarming(`${url.pathname}${url.search}`, {
         cache: "no-store",
         signal: controller.signal
       });
@@ -241,17 +242,33 @@ export function GamificationPanel({ activeProfileId }: { activeProfileId: string
     }, 15_000);
 
     // Real-time updates via SSE (fallback is the interval + events above).
-    try {
-      const es = new EventSource(apiUrl("/api/events"));
-      sseRef.current = es;
-      es.addEventListener("dataVersion", () => {
-        void fetchStats();
-      });
-      es.addEventListener("error", () => {
-        // Browser will auto-retry based on server-sent `retry`.
-      });
-    } catch {
-      // ignore (SSE unsupported / blocked)
+    // On Vercel serverless, long-lived SSE is unreliable — skip and rely on polling.
+    const host = typeof window !== "undefined" ? window.location.hostname : "";
+    const skipSse = /\.vercel\.app$/i.test(host);
+    if (!skipSse) {
+      try {
+        const es = new EventSource(apiUrl("/api/events"));
+        sseRef.current = es;
+        let errorStreak = 0;
+        es.addEventListener("dataVersion", () => {
+          errorStreak = 0;
+          void fetchStats();
+        });
+        es.addEventListener("error", () => {
+          errorStreak += 1;
+          // Stop auto-reconnect spam when the API is down (e.g. local backend restarting).
+          if (errorStreak >= 3) {
+            try {
+              es.close();
+            } catch {
+              // ignore
+            }
+            if (sseRef.current === es) sseRef.current = null;
+          }
+        });
+      } catch {
+        // ignore (SSE unsupported / blocked)
+      }
     }
 
     return () => {

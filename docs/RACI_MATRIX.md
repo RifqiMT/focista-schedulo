@@ -1,6 +1,6 @@
 # RACI Matrix
 
-**Last updated:** 2026-05-04  
+**Last updated:** 2026-07-18  
 **Owner:** Product Operations
 
 ---
@@ -42,9 +42,13 @@ Legend:
 | Profile scoping and policy enforcement | C | A | R | R | C | I | I |
 | Recurrence integrity and data safeguards | I | A | C | R | I | C | I |
 | Friendly error-message UX quality | C | A | R | R | C | I | I |
+| Progress chart / tooltip / badge export UX | C | A | R | C | C | C | I |
+| Blob persistence and large transfer paths | C | A | C | R | I | I | I |
+| Automated sync/save and boot progress UX | C | A | R | C | C | I | I |
 | Metrics and OKR definition updates | C | C | I | I | I | A/R | I |
 | Traceability matrix maintenance | C | C | I | I | I | C | A/R |
 | Design guideline governance | C | C | C | I | A/R | I | I |
+| Deployment topology / env hardening | I | A | C | R | I | I | C |
 | Release checklist completion | A | C | R | R | C | C | R |
 | Changelog publication | C | C | I | I | I | I | A/R |
 
@@ -54,9 +58,16 @@ Legend:
 
 | Decision Area | Accountable | Escalation Path |
 |---|---|---|
-| Product scope trade-off | PM | PM -> Eng Lead -> Product Ops |
-| Architecture/persistence strategy | Eng Lead | Eng Lead -> PM -> Product Ops |
-| UX/accessibility standard changes | Design | Design -> PM -> Eng Lead |
-| Metric definition disputes | Analytics | Analytics -> PM -> Product Ops |
-| Release readiness conflict | PM + Eng Lead | PM/Eng Lead -> Product Ops |
+| Product scope trade-off | PM | PM → Eng Lead → Product Ops |
+| Architecture/persistence strategy | Eng Lead | Eng Lead → PM → Product Ops |
+| UX/accessibility standard changes | Design | Design → PM → Eng Lead |
+| Metric definition disputes | Analytics | Analytics → PM → Product Ops |
+| Release readiness conflict | PM + Eng Lead | PM/Eng Lead → Product Ops |
 
+---
+
+## Related Documents
+
+- Operating model: `OPERATING_MODEL.md`
+- Release checklist: `RELEASE_CHECKLIST_TEMPLATE.md`
+- Documentation standard: `PRODUCT_DOCUMENTATION_STANDARD.md`

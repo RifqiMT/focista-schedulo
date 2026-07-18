@@ -1,13 +1,15 @@
 # Product Requirements Document (PRD)
 
-**Last updated:** 2026-05-04  
+**Last updated:** 2026-07-18  
 **Owner:** Product
 
 ---
 
 ## 1) Product Summary
 
-Focista Schedulo is a local-first productivity application designed to help users plan, execute, and track work through profile-scoped task/project organization, recurrence intelligence, calendar planning, and gamified progress feedback.
+Focista Schedulo is a local-first productivity application designed to help users plan, execute, and track work through profile-scoped task and project organization, recurrence intelligence, calendar planning, gamified progress feedback, and portable data operations (including production-scale Blob transfers).
+
+**Tagline:** Plan with clarity, focus without noise, and celebrate what you complete.
 
 ---
 
@@ -15,12 +17,14 @@ Focista Schedulo is a local-first productivity application designed to help user
 
 Users struggle with:
 
-- fragmented planning between lists and calendar tools
-- unreliable recurring task behavior
-- context leakage between personal/work planning scopes
-- weak motivation loops after task completion
+- Fragmented planning between lists and calendar tools
+- Unreliable recurring task behavior
+- Context leakage between personal and work planning scopes
+- Weak motivation loops after task completion
+- Fragile import/export when datasets exceed serverless body limits
+- Opaque failure messages that block recovery
 
-Focista Schedulo addresses these through deterministic scheduling logic, scoped organization (profiles/projects), and measurable progress insights.
+Focista Schedulo addresses these through deterministic scheduling logic, scoped organization (profiles/projects), measurable progress insights, Blob-staged large transfers, and friendly root-cause error communication.
 
 ---
 
@@ -30,6 +34,8 @@ Focista Schedulo addresses these through deterministic scheduling logic, scoped 
 2. Ensure profile-aware data boundaries for tasks, projects, and progress.
 3. Provide robust recurrence and historical task visibility.
 4. Enable product learning through measurable metrics and trend analytics.
+5. Preserve user data ownership with reliable import/export at production scale.
+6. Keep demos safe via showcase read-only policy and clear blocked-action messaging.
 
 ---
 
@@ -37,8 +43,10 @@ Focista Schedulo addresses these through deterministic scheduling logic, scoped 
 
 - Multi-user collaborative editing
 - External calendar sync (Google/Outlook bi-directional)
-- Enterprise RBAC/workflow approvals
-- Cloud-first distributed architecture
+- Enterprise RBAC / workflow approvals
+- Redis- or MongoDB-backed primary persistence
+- Native mobile apps
+- Multi-tenant SaaS billing / org administration
 
 ---
 
@@ -47,8 +55,10 @@ Focista Schedulo addresses these through deterministic scheduling logic, scoped 
 - Professionals managing multiple workstreams
 - Habit/routine-oriented users with recurrence-heavy planning
 - Personal planners requiring structure and reminders
+- Progress-motivated users who respond to streaks, badges, and charts
+- Presenters who need a safe demo dataset (`Test` profile)
 
-Detailed profiles are documented in `USER_PERSONAS.md`.
+Detailed profiles: `USER_PERSONAS.md`.
 
 ---
 
@@ -57,15 +67,16 @@ Detailed profiles are documented in `USER_PERSONAS.md`.
 ### 6.1 Profile Management
 
 - Create/edit/delete/select profiles
-- Optional password-protected profiles
+- Optional password-protected profiles with lock indicator in selector
 - Profile-scoped filtering for tasks, projects, and progress modules
-- Showcase read-only behavior for profile named `Test` (mutation-blocked by UI and API)
+- Showcase read-only behavior for profile named `Test` (UI + API)
 - Password confirmation required for deleting password-protected profiles
+- Staged boot progress (progress bar + status); production fast-path loads profiles before large tasks blob
 
 ### 6.2 Task Management
 
 - Rich metadata fields (priority, due date/time, duration, repeat rules, labels, links, locations, reminders)
-- Bulk actions: delete/move/update
+- Bulk actions: delete/move/update via batch endpoints
 - Recurring task materialization and deterministic identity normalization
 - Completion toggling with optimistic UI reconciliation
 
@@ -73,6 +84,7 @@ Detailed profiles are documented in `USER_PERSONAS.md`.
 
 - Project CRUD with stable IDs
 - Association integrity between project and task entities
+- Profile-scoped listing and filtering
 
 ### 6.4 Planning Views
 
@@ -82,20 +94,27 @@ Detailed profiles are documented in `USER_PERSONAS.md`.
 
 ### 6.5 Progress and Insights
 
-- `/api/stats` for streak, XP, level, milestones, and the **current calendar week** completion series (local Monday–Sunday; exposed under the legacy response key `last7Days`)
-- Per-day bar tooltips: completions and XP for that day, per-task XP (priority score) min/max/average, and **weekday-historical** completion min/max/average across the filtered timeline
-- `/api/productivity-insights` for trend visualization and longitudinal analysis
-- Badges and milestone UI with **high-resolution PNG export**; modal titling uses `Profile: Name - Title` while badge cards and exports emphasize **profile name** for legibility
-- Profile selector surfaces a **lock indicator** for password-protected profiles
+- `/api/stats` for streak, XP, level, milestones, grinding, and the **current calendar week** completion series (local Monday–Sunday; legacy key `last7Days`)
+- Per-day bar tooltips: completions, XP, per-task XP min/max/average, weekday-historical completion min/max/average
+- `/api/productivity-insights` for trend visualization
+- Badges and milestone UI with high-resolution PNG export
+- Modal titling: `Profile: Name - Title`; badge cards/exports emphasize profile **name**
 
 ### 6.6 Data Operations
 
-- Import (JSON/CSV)
-- Export (JSON/CSV/Both)
-- Save
-- Sync-from-data
-- Reload-data
-- Friendly root-cause error messaging for failed data operations
+- Import (JSON/CSV), including Blob staging via client upload + `blobPathname`
+- Export (JSON/CSV/Both), including short-lived presigned Blob download URLs for large payloads
+- **Automated sync + save** after import (no manual Sync/Save header buttons)
+- Quiet `reload-data` on tab return
+- Admin endpoints retained for programmatic save/sync/reload
+- Friendly root-cause error messaging for failed data operations (including `413`)
+
+### 6.7 Persistence and Deployment
+
+- Split runtime objects: `tasks.runtime.json`, `projects.runtime.json`, `profiles.runtime.json`
+- Pluggable storage: `fs` (local) or `vercel-blob` (prod)
+- Production topology: Vercel SPA (+ optional Services) + Node API + Vercel Blob
+- Explicit non-use of Redis/MongoDB in current topology
 
 ---
 
@@ -110,11 +129,17 @@ Detailed profiles are documented in `USER_PERSONAS.md`.
 | FR-05 | List + calendar + day-agenda planning workflows |
 | FR-06 | Bulk task actions with efficient backend mutation paths |
 | FR-07 | Gamification and productivity analytics endpoints |
-| FR-08 | Data import/export/save/sync admin operations |
+| FR-08 | Data import/export plus automated save/sync admin operations |
 | FR-09 | Historical tasks availability and navigation |
 | FR-10 | Performance-oriented runtime persistence (non-monolith) |
 | FR-11 | User-friendly, root-cause error feedback for failed actions |
 | FR-12 | Showcase read-only profile policy enforcement (`Test`) |
+| FR-13 | Vercel Prod split hosting with Blob durable store |
+| FR-14 | Large-payload import/export via Vercel Blob staging |
+| FR-15 | Calendar-week progress chart with rich weekday tooltips |
+| FR-16 | Badge PNG export and consistent modal naming |
+| FR-17 | Lock affordance for password-protected profiles |
+| FR-18 | Staged profile boot progress and production fast-path loading |
 
 ---
 
@@ -128,6 +153,9 @@ Detailed profiles are documented in `USER_PERSONAS.md`.
 | NFR-04 | UI interactions must degrade gracefully on transient API failures |
 | NFR-05 | Architecture and docs must remain traceable and auditable |
 | NFR-06 | Error messages must be understandable and actionable for non-technical users |
+| NFR-07 | Production must not require Redis/MongoDB or a mandatory API disk volume when Blob is configured |
+| NFR-08 | Blob debounce and transfer paths must respect free-tier upload/body limits |
+| NFR-09 | `FRONTEND_ORIGIN` required in production; `VITE_API_BASE_URL` required for split-host Production builds |
 
 ---
 
@@ -136,6 +164,8 @@ Detailed profiles are documented in `USER_PERSONAS.md`.
 - Prioritize reliability and trust over cosmetic feature expansion.
 - Keep data ownership local-first with explicit user-controlled import/export.
 - Maintain profile separation semantics as a product integrity requirement.
+- Preserve showcase integrity for demos and training.
+- Ship documentation and changelog updates with behavior changes.
 
 ---
 
@@ -143,9 +173,11 @@ Detailed profiles are documented in `USER_PERSONAS.md`.
 
 - Validate all inbound mutation payloads (Zod-backed contracts).
 - Use batch endpoints for high-frequency multi-item operations.
-- Coalesce persistence writes where safe.
+- Coalesce persistence writes where safe; use longer debounce on Blob.
 - Keep recurrence identity deterministic across startup/reload/mutation paths.
-- Enforce read-only profile safeguards at API level (never UI-only enforcement).
+- Enforce read-only profile safeguards at API level (never UI-only).
+- Prefer Blob staging over raising serverless body limits for large transfers.
+- Do not rename legacy API keys lightly (`last7Days`); document semantic divergence.
 
 ---
 
@@ -154,7 +186,9 @@ Detailed profiles are documented in `USER_PERSONAS.md`.
 - Faster core action completion times
 - Reduced recurrence integrity defects
 - Improved daily/weekly engagement depth
-- Stable export/import success rates
+- Stable export/import success rates (including Blob-staged paths)
+- High friendly-error coverage on failure paths
+- Zero showcase mutation escapes
 
 Detailed definitions: `PRODUCT_METRICS.md` and `METRICS_AND_OKRS.md`.
 
@@ -164,19 +198,32 @@ Detailed definitions: `PRODUCT_METRICS.md` and `METRICS_AND_OKRS.md`.
 
 | Risk | Mitigation |
 |---|---|
-| Recurrence regression under complex edits | deterministic normalization + regression tests |
-| Performance degradation with growth | batch operations + non-monolith runtime persistence |
-| Data inconsistency across profile scope | profile-aware API filtering and validation |
-| Documentation drift | documentation standard + traceability updates per release |
-| Unclear failure communication | centralized friendly error formatter and status-aware fallback copy |
+| Recurrence regression under complex edits | Deterministic normalization + regression tests |
+| Performance degradation with growth | Batch operations + non-monolith runtime persistence |
+| Data inconsistency across profile scope | Profile-aware API filtering and validation |
+| Documentation drift | Documentation standard + traceability updates per release |
+| Unclear failure communication | Centralized friendly error formatter |
+| Large import/export HTTP 413 on Hobby | Blob staging (`blobPathname` / presigned download) |
+| Blob free-tier upload pressure | Longer Blob write debounce; avoid boot-time full sync/save |
 
 ---
 
 ## 13) Release Readiness Checklist
 
-- Functional requirements verified
+- Functional requirements verified (including FR-13–FR-18)
 - Core NFR checks completed
 - Variable/metric definitions reconciled
 - Traceability matrix updated
+- Guardrails and API contracts current
 - Changelog entry published
+- Deployment env vars verified for target topology
 
+---
+
+## 14) Related Documents
+
+- Personas: `USER_PERSONAS.md`
+- Stories: `USER_STORIES.md`
+- Architecture: `ARCHITECTURE.md`
+- Guardrails: `GUARDRAILS.md`
+- Traceability: `TRACEABILITY_MATRIX.md`

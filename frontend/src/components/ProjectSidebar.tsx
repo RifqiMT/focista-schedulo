@@ -13,6 +13,24 @@ interface ProjectSidebarProps {
   onSelectProject: (id: string | null) => void;
 }
 
+function projectInitials(name: string): string {
+  const parts = name
+    .trim()
+    .split(/\s+/)
+    .filter(Boolean);
+  if (parts.length === 0) return "P";
+  if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase();
+  return `${parts[0][0] ?? ""}${parts[1][0] ?? ""}`.toUpperCase();
+}
+
+function projectAccentIndex(seed: string): number {
+  let hash = 0;
+  for (let i = 0; i < seed.length; i += 1) {
+    hash = (hash * 31 + seed.charCodeAt(i)) >>> 0;
+  }
+  return hash % 5;
+}
+
 export function ProjectSidebar({
   activeProfileId,
   selectedProjectId,
@@ -197,63 +215,131 @@ export function ProjectSidebar({
     setPendingDeleteProject(null);
   };
 
+  const selectedProject =
+    selectedProjectId == null
+      ? null
+      : projects.find((p) => p.id === selectedProjectId) ?? null;
+  const selectedAccent = selectedProject
+    ? projectAccentIndex(selectedProject.id || selectedProject.name)
+    : 0;
+
   return (
-    <aside className="sidebar">
-      <div className="sidebar-header">
-        <h2>Projects</h2>
+    <aside className="sidebar projects-sidebar projects-sidebar--dropdown">
+      <div className="sidebar-header projects-sidebar-header">
+        <div className="projects-header-copy">
+          <h2>Projects</h2>
+          <p className="projects-header-sub">Choose a board filter</p>
+        </div>
         <button
-          className="ghost-button small"
+          className="ghost-button small projects-new-btn"
           onClick={startNew}
           title="Create a new project (group tasks by context)."
           disabled={!activeProfileId || isShowcaseReadOnlyActive}
         >
-          New
+          <span className="projects-new-btn-icon" aria-hidden="true">
+            <svg viewBox="0 0 24 24" focusable="false">
+              <path d="M12 5v14M5 12h14" />
+            </svg>
+          </span>
+          <span>New</span>
         </button>
       </div>
-      <nav className="sidebar-list">
-        <button
-          className={`sidebar-item ${
-            selectedProjectId === null ? "sidebar-item-active" : ""
-          }`}
-          onClick={() => onSelectProject(null)}
-          title="Show tasks from all projects."
-        >
-          <span>All tasks</span>
-        </button>
-        {projects.map((project) => (
-          <div key={project.id} className="sidebar-item-row">
-            <button
-              className={`sidebar-item ${
-                selectedProjectId === project.id ? "sidebar-item-active" : ""
-              }`}
-              onClick={() => onSelectProject(project.id)}
-              title={`Filter tasks to project: ${project.name}`}
-            >
-              <span>{project.name}</span>
-            </button>
-            <div className="sidebar-item-actions">
-              <button
-                className="icon-button"
-                aria-label="Edit project"
-                onClick={() => startEdit(project)}
-                title="Rename this project."
-                disabled={isShowcaseReadOnlyActive}
+
+      <div className="projects-picker rail-picker" aria-label="Project filter">
+        <label className="projects-picker-trigger rail-picker-trigger" htmlFor="project-filter-select">
+          <div className="projects-picker-identity rail-picker-identity" aria-live="polite">
+            {selectedProject ? (
+              <span
+                className={`projects-picker-mark rail-picker-mark accent-${selectedAccent}`}
+                aria-hidden="true"
               >
-                ✎
-              </button>
-              <button
-                className="icon-button"
-                aria-label="Delete project"
-                onClick={() => setPendingDeleteProject(project)}
-                title="Delete this project and all tasks in it."
-                disabled={isShowcaseReadOnlyActive}
+                {projectInitials(selectedProject.name)}
+              </span>
+            ) : (
+              <span
+                className="projects-picker-mark projects-picker-mark--all rail-picker-mark"
+                aria-hidden="true"
               >
-                ×
-              </button>
-            </div>
+                <svg viewBox="0 0 24 24" focusable="false">
+                  <path d="M4.5 6.5h6v6h-6zM13.5 6.5h6v6h-6zM4.5 15.5h6v6h-6zM13.5 15.5h6v6h-6z" />
+                </svg>
+              </span>
+            )}
+            <span className="projects-picker-copy rail-picker-copy">
+              <strong className="projects-picker-name rail-picker-name">
+                {selectedProject?.name ?? "All tasks"}
+              </strong>
+              <span className="projects-picker-meta rail-picker-meta">
+                {selectedProject
+                  ? "Filtered to this project"
+                  : projects.length === 0
+                    ? "No projects yet"
+                    : `${projects.length} project${projects.length === 1 ? "" : "s"} available`}
+              </span>
+            </span>
           </div>
-        ))}
-      </nav>
+          <div className="projects-picker-shell">
+            <select
+              id="project-filter-select"
+              className="projects-picker-select"
+              value={selectedProjectId ?? ""}
+              onChange={(e) => {
+                const value = e.target.value;
+                onSelectProject(value ? value : null);
+              }}
+              disabled={!activeProfileId && projects.length === 0}
+              aria-label="Filter tasks by project"
+            >
+              <option value="">All tasks</option>
+              {projects.map((project) => (
+                <option key={project.id} value={project.id}>
+                  {project.name}
+                </option>
+              ))}
+            </select>
+            <span className="projects-picker-chevron rail-picker-chevron" aria-hidden="true">
+              <svg viewBox="0 0 24 24" focusable="false">
+                <path d="M6 9l6 6 6-6" />
+              </svg>
+            </span>
+          </div>
+        </label>
+
+        {selectedProject ? (
+          <div className="projects-picker-toolbar" role="group" aria-label="Selected project actions">
+            <button
+              className="ghost-button small projects-toolbar-btn"
+              type="button"
+              onClick={() => startEdit(selectedProject)}
+              title="Rename this project."
+              disabled={isShowcaseReadOnlyActive}
+            >
+              <svg viewBox="0 0 24 24" focusable="false" aria-hidden="true">
+                <path d="M4 20l4.2-1 9.8-9.8-3.2-3.2L5 15.8 4 20zM13.8 6.2l3.2 3.2" />
+              </svg>
+              <span>Rename</span>
+            </button>
+            <button
+              className="ghost-button small projects-toolbar-btn projects-toolbar-btn--danger"
+              type="button"
+              onClick={() => setPendingDeleteProject(selectedProject)}
+              title="Delete this project and all tasks in it."
+              disabled={isShowcaseReadOnlyActive}
+            >
+              <svg viewBox="0 0 24 24" focusable="false" aria-hidden="true">
+                <path d="M4 7h16M9 7V5h6v2M8 7l1 12h6l1-12M10 10v7M14 10v7" />
+              </svg>
+              <span>Delete</span>
+            </button>
+          </div>
+        ) : (
+          <p className="projects-picker-hint">
+            {projects.length === 0
+              ? "Create a project to group related tasks."
+              : "Showing every project on the board. Pick one to focus."}
+          </p>
+        )}
+      </div>
       {editing && (
         <div className="project-editor">
           <input

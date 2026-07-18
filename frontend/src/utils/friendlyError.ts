@@ -13,9 +13,11 @@ function fallbackByStatus(status: number): string {
   if (status === 403) return "This action is not allowed for your current profile or role.";
   if (status === 404) return "The requested item was not found. It may have been removed already.";
   if (status === 409) return "This action conflicts with existing data. Please refresh and retry.";
-  if (status === 413) return "The uploaded data is too large. Please split it into smaller files.";
+  if (status === 413)
+    return "The upload is too large for a direct API request. On Vercel, large imports use Blob staging automatically—retry, or split the file if the error persists.";
   if (status === 422) return "The data format is invalid. Please verify the file structure and values.";
   if (status === 429) return "Too many requests. Please wait a moment, then try again.";
+  if (status === 503) return "The workspace is still warming up. Please wait a moment and try again.";
   if (status >= 500) return "Server issue detected. Please try again in a moment.";
   return `Request failed (${status}). Please try again.`;
 }

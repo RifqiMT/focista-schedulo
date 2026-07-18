@@ -1,13 +1,13 @@
 # Release Checklist Template
 
-**Last updated:** 2026-05-04  
+**Last updated:** 2026-07-18  
 **Owner:** Product Operations + Engineering
 
 ---
 
 ## Usage
 
-Copy this template for each release (for example, `docs/releases/2026-05-xx.md`) and complete all sections before release sign-off.
+Copy this template for each release (for example, `docs/releases/2026-07-18_docs-refresh.md`) and complete all sections before release sign-off.
 
 ---
 
@@ -18,6 +18,7 @@ Copy this template for each release (for example, `docs/releases/2026-05-xx.md`)
 - Release owner:
 - Scope summary:
 - Primary risk areas:
+- Topology target (local / Vercel+Blob / split host):
 
 ---
 
@@ -25,12 +26,17 @@ Copy this template for each release (for example, `docs/releases/2026-05-xx.md`)
 
 - [ ] Profile management flows validated (create/edit/delete/select/lock/unlock)
 - [ ] Profile scoping verified (tasks/projects/progress stay within active profile)
+- [ ] Lock indicator visible for password-protected profiles
 - [ ] Showcase profile policy (`Test`) verified as read-only for mutations
 - [ ] Task CRUD verified in list/calendar/day agenda views
 - [ ] Recurring task flows verified (create/edit/complete/delete/materialize)
 - [ ] Bulk actions verified (batch update/move/delete)
 - [ ] Project CRUD and association integrity verified
-- [ ] Import/sync/save/export flows verified (`JSON`, `CSV`, `Both`)
+- [ ] Import + automated sync/save verified (no Sync/Save header buttons required)
+- [ ] Export verified (`JSON`, `CSV`, `Both`)
+- [ ] Large transfer path verified when targeting Prod (Blob upload / `blobPathname` / presigned export)
+- [ ] Boot progress / staged profile loading validated
+- [ ] Progress weekly chart + tooltips + badge PNG export validated
 
 Notes:
 
@@ -43,7 +49,8 @@ Notes:
 - [ ] Build succeeds (`npm run build`)
 - [ ] No critical regressions in manual smoke test
 - [ ] Core action performance reviewed against target (<1s perceived where applicable)
-- [ ] Error toasts in critical failure paths are user-friendly and root-cause clear
+- [ ] Error toasts in critical failure paths are user-friendly and root-cause clear (incl. `413`)
+- [ ] `/health` storage kind matches expected backend
 
 Evidence links/log references:
 
@@ -56,6 +63,7 @@ Evidence links/log references:
 - [ ] Password-protected profile deletion requires password validation
 - [ ] Locked-profile export behavior validated with correct/incorrect passwords
 - [ ] No secrets introduced in repository changes
+- [ ] Production env vars present (`FRONTEND_ORIGIN`, Blob token, `VITE_API_BASE_URL` if split)
 
 ---
 
@@ -66,8 +74,11 @@ Evidence links/log references:
 - [ ] `docs/USER_PERSONAS.md` and `docs/USER_STORIES.md` updated as needed
 - [ ] `docs/VARIABLES.md` updated for new/changed variables or formulas
 - [ ] `docs/PRODUCT_METRICS.md` and `docs/METRICS_AND_OKRS.md` reconciled
+- [ ] `docs/DESIGN_GUIDELINES.md` updated if UI/theme changed
 - [ ] `docs/TRACEABILITY_MATRIX.md` updated
 - [ ] `docs/GUARDRAILS.md` updated when constraints changed
+- [ ] `docs/ARCHITECTURE.md` / `docs/API_CONTRACTS.md` / `docs/DEPLOYMENT_VERCEL.md` updated as needed
+- [ ] `docs/DOCS_CODE_CROSSWALK.md` verification checklist reviewed
 - [ ] `docs/CHANGELOG.md` updated with release highlights
 
 ---
@@ -79,4 +90,3 @@ Evidence links/log references:
 - Design sign-off (if applicable): ______ Date: __________
 - Analytics sign-off (if applicable): ____ Date: __________
 - Product Ops sign-off: ________________ Date: __________
-

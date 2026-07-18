@@ -1,6 +1,6 @@
 # Releases Documentation
 
-**Last updated:** 2026-05-04  
+**Last updated:** 2026-07-18  
 **Owner:** Product Operations + Engineering
 
 ---
@@ -21,7 +21,16 @@ This folder stores serial, release-specific documentation artifacts (for example
 ## Standard Flow
 
 1. Copy from `docs/RELEASE_CHECKLIST_TEMPLATE.md`.
-2. Fill release metadata and verification evidence.
+2. Fill release metadata and verification evidence (include Blob transfer and auto sync/save checks when relevant).
 3. Collect product + engineering sign-off.
 4. Archive final release notes and keep historical drafts for auditability.
+5. Ensure `docs/CHANGELOG.md` references the release outcome.
 
+---
+
+## Related Documents
+
+- Template: `../RELEASE_CHECKLIST_TEMPLATE.md`
+- Changelog: `../CHANGELOG.md`
+- Traceability: `../TRACEABILITY_MATRIX.md`
+- Operating model: `../OPERATING_MODEL.md`

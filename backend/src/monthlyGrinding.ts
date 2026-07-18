@@ -28,16 +28,6 @@ function monthEndIso(now: Date): string {
   return toIsoLocal(d);
 }
 
-function startOfWeekMondayIso(isoDate: string): string {
-  const d = new Date(`${isoDate}T12:00:00`);
-  if (Number.isNaN(d.getTime())) return isoDate;
-  // JS: 0=Sun..6=Sat. Convert so Monday=0..Sunday=6.
-  const dow = d.getDay();
-  const mondayBased = (dow + 6) % 7;
-  d.setDate(d.getDate() - mondayBased);
-  return toIsoLocal(d);
-}
-
 function firstMondayOnOrAfterIso(isoDate: string): string {
   const d = new Date(`${isoDate}T12:00:00`);
   if (Number.isNaN(d.getTime())) return isoDate;
