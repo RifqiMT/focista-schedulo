@@ -110,7 +110,7 @@ In production, the browser resolves the API origin via `frontend/src/apiClient.t
 - **Caching:** `Cache-Control: no-store`; server may use an in-memory stats cache keyed by scoped profile (invalidated around mutations).
 - **Time basis:** “today”, streaks, and weekly buckets use the **server machine’s local calendar** (`toIsoLocal`).
 
-**Weekly series (`last7Days`):** The response field **`last7Days`** is a legacy name. It is an array of **seven** objects for the **current calendar week Monday–Sunday** (local), ordered Monday → Sunday. Each element includes:
+**Weekly series (`last7Days`):** The response field **`last7Days`** is a legacy name. It is an array of **seven** objects for the **current calendar week Monday–Sunday** (local), ordered Monday → Sunday. Progress UI consumes this payload for **two** charts: completions (**This week**, heights from `completed`) and **XP this week** (heights from `points`), with a shared calendar-date “today” highlight on the client. Each element includes:
 
 | Field | Type | Description |
 |---|---|---|

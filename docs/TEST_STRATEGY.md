@@ -78,6 +78,7 @@ Provide a practical and auditable testing strategy that validates functional cor
    - Task complete persist failures toast and refresh (no silent snap-back).
 6. **Progress surface**
    - `/api/stats` `last7Days` has seven entries for the **current local Monday–Sunday** and aligns with completion counts by progress day.
+   - Progress shows **This week** (completions) and **XP this week** (`points`) charts; today is calendar-date matched with shared `--chart-today*` accent.
    - Weekly chart tooltips expose day totals, per-task XP spread, and weekday-historical stats.
    - Achievement/milestone cards show plain-English `description` lines matching `VARIABLES.md`.
    - Badge PNG export completes without layout regression (cards vs. modal header naming).
@@ -88,6 +89,7 @@ Provide a practical and auditable testing strategy that validates functional cor
    - `/health` reports expected storage kind (`neon` or `fs`).
    - Neon row tables (or local split runtime files) remain the write path.
    - On Vercel: Neon debounce `0`; complete awaits persist; freshness reload via `tasks_revision` before list/complete (`taskCompletePersist.test.ts`).
+   - Create/update/batch use selective `persistTasks({ ids })` (touched set only); task editor awaits save and blocks dismiss while saving.
    - Storage selection requires `DATABASE_URL` for `neon`; invalid backend values are rejected.
 9. **Feedback layering**
    - Exclusive tooltip slot: opening a new tooltip dismisses the previous; toasts dismiss tooltips.

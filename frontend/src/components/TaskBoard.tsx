@@ -5907,7 +5907,7 @@ export function TaskBoard({
             return { ...prev, task: { ...prev.task, link: nextLinks } };
           });
         }}
-        onSave={(updatedOrMany) => {
+        onSave={async (updatedOrMany) => {
           const save = async () => {
             if (isShowcaseReadOnlyActive) {
               notifyShowcaseReadOnly();
@@ -6101,7 +6101,7 @@ export function TaskBoard({
             }
             setEditingTask(null);
           };
-          void save();
+          await save();
         }}
       />
       {moveDialogTasks && (

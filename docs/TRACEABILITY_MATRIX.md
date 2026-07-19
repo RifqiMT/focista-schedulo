@@ -30,7 +30,9 @@ Map functional and non-functional requirements to personas, user stories, primar
 | FR-12 | Showcase read-only profile enforcement | D | US-602 | Read-only guards in `backend/src/index.ts`; UI disable gates | Blocked mutation regression | PM-08 |
 | FR-13 | Vercel Prod split hosting + Neon store | A, E | US-503 | `frontend/vercel.json`, `vite.config.ts`, env wiring, `DEPLOYMENT_VERCEL.md`, `neonStorage.ts` | Vercel build guard + `/health` storage check | QM-02 |
 | FR-14 | Large-payload import/export via Neon staging | A, E | US-504 | `transferStaging.ts`, `transferImport.ts`, `/api/admin/transfer-upload`, import/export admin routes, `/api/admin/export-tasks-page` | Large payload smoke; parts fallback; `413` messaging | PM-09 |
-| FR-15 | Calendar-week progress chart + rich tooltips | C | US-403, US-404 | `/api/stats` `last7Days` builder; `GamificationPanel.tsx` | Weekly bar/tooltip review | EM-05 |
+| FR-15 | Calendar-week progress charts (completions + XP) + rich tooltips + shared today highlight | C | US-403, US-404 | `/api/stats` `last7Days` builder; `GamificationPanel.tsx` (activity + XP week charts) | Weekly bar/tooltip/today review | EM-05 |
+| FR-25 | Selective Neon task upsert (touched ids only) | C | US-201, US-202, US-203 | `persistTasks({ ids })` on create/update/batch + rebuild parent/child ids; `neonStorage.ts` | Create/update/batch write-set review | EM-02, NFR-02 |
+| FR-26 | Task editor save progress + await persist | C | US-202 | `TaskEditorDrawer.tsx`, `TaskBoard.tsx` `onSave` await | Save-in-progress dismiss lock smoke | EM-02 |
 | FR-16 | Badge PNG export + modal naming | C | US-405 | `badgePngExport.ts`, `BadgesModalDialogBody.tsx` | PNG export smoke | EM-06 |
 | FR-17 | Lock affordance for protected profiles | A | US-406 | `ProfileManagement.tsx` | Visual lock review | PM-02 |
 | FR-18 | Staged profile boot progress + fast-path load | E | US-103 | `App.tsx` / `ProfileManagement.tsx` load orchestration; profiles runtime fast path | Boot UX validation | PM-10 |
@@ -67,7 +69,7 @@ Map functional and non-functional requirements to personas, user stories, primar
 | Metric | Source | Formula Authority | Related Requirements |
 |---|---|---|---|
 | NSM-01 WCST | Stats/insights data | `VARIABLES.md` + backend formulas | FR-02, FR-07 |
-| EM-05 | Weekly chart interpretability | `last7Days` payload + tooltip fields | FR-07, FR-15 |
+| EM-05 | Weekly chart interpretability | `last7Days` completions + XP charts + today tokens | FR-07, FR-15 |
 | EM-06 | Badge export adoption | PNG export actions | FR-16 |
 | EM-07 | Monthly grinding attainment | `monthlyGrinding` / `yearlyGrinding` | FR-07 |
 | PM-04 | Action latency compliance | Frontend timing + `X-Server-Time-Ms` | FR-06, FR-10 |

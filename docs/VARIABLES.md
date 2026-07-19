@@ -26,6 +26,9 @@ flowchart TB
   subgraph Weekly surface
     WTS[Weekday historical series]
     L7[last7Days calendar-week payload]
+    ActChart[This week completions chart]
+    XpChart[XP this week chart]
+    TodayTok[todayDateIso + chart-today tokens]
   end
 
   subgraph Gamification formulas
@@ -57,6 +60,7 @@ flowchart TB
     Runtime[Tasks/projects/profiles]
     Store[DataStorage fs or Neon]
     Rev[tasks_revision]
+    SelPersist[persistTasks ids selective upsert]
     Staging[stagingPathname / transfer_staging]
     Auto[autoSyncAndSave]
   end
@@ -77,6 +81,12 @@ flowchart TB
   XP --> Stats
   Streak --> Stats
   L7 --> Stats
+  L7 --> ActChart
+  L7 --> XpChart
+  TodayTok --> ActChart
+  TodayTok --> XpChart
+  ActChart --> UI
+  XpChart --> UI
   MG --> Stats
   YG --> Stats
   BEM --> Stats
@@ -102,6 +112,7 @@ flowchart TB
   Runtime --> Store
   Store --> Rev
   Rev --> Store
+  SelPersist --> Store
   Staging --> Runtime
   Auto --> Store
 ```
@@ -208,16 +219,22 @@ The JSON key `last7Days` is a **legacy name**. Shipped behavior: an ordered arra
 |---|---|---|---|---|---|
 | `stats.last7Days` | Weekly Progress Series | Seven day-buckets for charting and achievement checks that iterate this array. | Week starts Monday 00:00 local; `i = 0..6` | `GET /api/stats`; `GamificationPanel.tsx` | Array length `7` |
 | `stats.last7Days[].date` | Series Day | ISO calendar date for the bar. | Local `YYYY-MM-DD` | Stats payload; chart axis | `2026-07-13` |
-| `stats.last7Days[].completed` | Completions Count | Tasks completed on that progress day. | Count where `completionDateIso === date` | Chart height; tooltip | `3` |
-| `stats.last7Days[].points` | Day XP | Sum of priority weights for tasks completed that day. | `sum(scoreFor(task))` | Tooltip; achievements | `7` |
+| `stats.last7Days[].completed` | Completions Count | Tasks completed on that progress day. | Count where `completionDateIso === date` | Completions chart height; tooltip | `3` |
+| `stats.last7Days[].points` | Day XP | Sum of priority weights for tasks completed that day. | `sum(scoreFor(task))` | **XP this week** chart height + value; tooltip; achievements | `7` |
 | `stats.last7Days[].taskXpMin` | Per-task XP Minimum | Smallest priority score among tasks completed that day. | `min(xps)` or `null` | Rich tooltip | `2` |
 | `stats.last7Days[].taskXpMax` | Per-task XP Maximum | Largest priority score among tasks completed that day. | `max(xps)` or `null` | Rich tooltip | `4` |
 | `stats.last7Days[].taskXpAvg` | Per-task XP Average | Mean priority score for tasks completed that day (one decimal). | `round((points / n) * 10) / 10` or `null` | Rich tooltip | `2.7` |
 | `stats.last7Days[].weekdayTaskMin` | Weekday Historical Minimum | Min completions on this weekday across the filtered timeline (including zero days). | `min(count per weekday)` | Rich tooltip | `0` |
 | `stats.last7Days[].weekdayTaskMax` | Weekday Historical Maximum | Max completions on this weekday over the same span. | `max(count per weekday)` | Rich tooltip | `5` |
 | `stats.last7Days[].weekdayTaskAvg` | Weekday Historical Average | Mean completions for this weekday (one decimal). | `round(mean * 10) / 10` | Rich tooltip | `2.4` |
+| `todayDateIso` | Today ISO Date | Client local calendar date used to mark “today” bars. | `YYYY-MM-DD` from `new Date()` local parts | `GamificationPanel.tsx` | `2026-07-19` |
+| `weekXp` | Week XP Total | Sum of day XP across the current calendar-week series. | `sum(last7Days[].points)` | XP this week meta chip | `42` |
+| `--chart-activity*` | Completions Chart Palette | Brand-red capsule series for the completions week chart. | CSS custom properties | `styles.css`; activity bars | `#ce1126` |
+| `--chart-xp*` | XP Chart Palette | Teal capsule series for the XP week chart. | CSS custom properties | `styles.css`; XP bars | `#0f766e` |
+| `--chart-today*` | Today Accent Palette | Champagne-amber shared today highlight (ink/mid/soft/deep). | CSS custom properties | Today cols + pulse/pill | `#b45309` |
+| `--weekly-track-w` / `--weekly-bar-w` / `--weekly-track-h` | Week Bar Geometry | Fixed day-column footprint so today highlight does not expand width. | Rem-based tokens (narrower on small screens) | `.weekly-bars` | `1.2rem` / `0.75rem` / `3.75rem` |
 
-**Implementation note:** Achievements that loop over `last7Days` (for example Consistency Builder progress) use the **same seven calendar-week dates** as the weekly chart. Card copy describes this as “every day for 7 days.”
+**Implementation note:** Achievements that loop over `last7Days` (for example Consistency Builder progress) use the **same seven calendar-week dates** as the weekly charts. Card copy describes this as “every day for 7 days.” Today is `d.date === todayDateIso`, not “last index in the array.”
 
 ---
 
@@ -278,6 +295,8 @@ The JSON key `last7Days` is a **legacy name**. Shipped behavior: an ordered arra
 | `export.delivery` | Export Delivery Mode | How large exports are delivered to the client (request preference). | `auto` \| `inline` \| `staging` \| `parts` | `/api/admin/export-data` | `auto` |
 | `droppedRows` | Import Skip Counts | Counts of projects/tasks/profiles skipped during per-row import validation. | `{ projects, tasks, profiles }` integers | import response payload; import toast | `{ tasks: 2, projects: 0, profiles: 0 }` |
 | `persistDebounceMs` | Persistence Debounce | Delay before flushing dirty entities to storage. | `fs` ≈ 40; Neon ≈ 200 off-Vercel; Neon **`0`** when `VERCEL` set | `DataStorage` / `neonStorage.ts` | `0` on Vercel |
+| `persistTasks({ ids })` | Selective Task Persist | Upsert only the listed task ids (and related siblings) instead of rewriting the full tasks table. | Touched set = mutated + series members + parent siblings after rebuild | `backend/src/index.ts` create/update/batch | `{ ids: ["t1","t2"] }` |
+| `saveProgress` / `saveStage` | Editor Save Progress | Task drawer save affordance while awaiting persist. | Progress 0–100 + stage label | `TaskEditorDrawer.tsx` | `72`, `"Saving…"` |
 | `tasks_revision` | Tasks Revision Counter | Monotonic Neon `runtime_meta` value bumped on task writes. | Increment on persist | `runtime_meta`; `neonStorage.ts` | `42` |
 | `ensureTasksMemoryFresh()` | Tasks Memory Freshness | Reloads in-memory tasks when remote `tasks_revision` is newer (Vercel multi-isolate). | Peek revision → `loadData` if newer | `GET /api/tasks`, `PATCH .../complete` | n/a |
 

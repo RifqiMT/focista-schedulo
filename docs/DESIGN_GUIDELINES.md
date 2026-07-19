@@ -121,8 +121,13 @@ Toasts use local CSS variables on `.toast` variants:
 
 - Present summary KPIs first, deep analysis second. AI Productivity Summary lives in the **Tasks** toolbar (not Progress), so Progress actions stay Analysis · Badges.
 - **Analysis dual-series charts:** Raw = brand red (`#ce1126`, dashed when Average is also shown); Average = blue (`#2563eb`). Legend dots, tooltips, chart strokes, and PNG export must use the same tokens (`--pa-chart-raw` / `--pa-chart-avg`).
-- **Weekly chart:** seven bars for the **current local Monday–Sunday**; label/helper copy must not imply a rolling “last seven days” window unless product intentionally aligns copy with implementation.
-- **Bar tooltips:** structure as (1) day totals, (2) per-task XP spread, (3) weekday-historical comparison.
+- **Weekly Progress charts (two series):**
+  - **This week (completions)** — capsule bars via `--chart-activity*` (brand-red family).
+  - **XP this week** — capsule bars via `--chart-xp*` (teal family), heights from `last7Days[].points`.
+  - Both use the **current local Monday–Sunday** window; label/helper copy must not imply a rolling “last seven days” window unless product intentionally aligns copy with implementation.
+  - Fixed track/bar widths (`--weekly-track-w` / `--weekly-bar-w`) so day columns share one footprint.
+- **Today highlight (shared):** champagne-amber tokens `--chart-today*` (ink / mid / soft / deep). Today is detected by **calendar date match** (`d.date === todayDateIso`), not “last array index.” Visual language: soft ring breathe, live pulse dot, settle entrance, compact “Today” pill. Honor `prefers-reduced-motion`.
+- **Bar tooltips:** structure as (1) day totals, (2) per-task XP spread, (3) weekday-historical comparison. Shared exclusive weekly tooltip for both charts.
 - **Productivity Summary modal:** solid Analysis shell; sliding Overview / Ask control; meta chips; web-tips switch; timeline as unit chips + This/Next offset; Ready/Key status with live dot; metric cards + completion ring; brief bar with copy/time; Open/Overdue prose sections; refined Ask composer. No glass.
 - **AI keys modal:** solid shell with status pills, provider cards, inline show-hide, automatic format + live key validation, dirty-state Save. No glass.
 - Badge/milestone visuals reinforce progression without distracting from task execution.
@@ -160,6 +165,10 @@ Toasts use local CSS variables on `.toast` variants:
 | `:root` tokens | Global light theme | `--bg`, `--accent-red`, `--accent-gold`, etc. |
 | `--toast-*` | Toaster variants | Success emerald, error rose, info sky |
 | `--pa-chart-raw` / `--pa-chart-avg` | Analysis dual-series | Raw brand red `#ce1126`; Average blue `#2563eb` |
+| `--chart-activity` / `-soft` / `-mid` | Progress completions week | Brand-red capsule series |
+| `--chart-xp` / `-soft` / `-mid` | Progress XP week | Teal capsule series (`#0f766e` / `#ccfbf1` / `#2dd4bf`) |
+| `--chart-today` / `-mid` / `-soft` / `-ink` / `-deep` | Shared “today” accent | Champagne-amber highlight for both week charts |
+| `--weekly-track-w` / `--weekly-bar-w` / `--weekly-track-h` | Week chart geometry | Fixed day-column footprint (narrower on small screens) |
 | `aik-*` | AI Keys modal | Status pills `.is-ready` / `.is-needed` / `.is-checking`; solid shell |
 | `ps-*` | Productivity Summary modal | Tabs, period chips, metrics, completion ring `--ps-rate`, prose, Ask composer |
 | `header-action-*` | Header Import/Export/AI keys | Glyph + label buttons |
@@ -212,4 +221,4 @@ When the API host uses Neon Free (scale-to-zero), the first request after idle m
 - Variables: `VARIABLES.md`
 - Personas: `USER_PERSONAS.md`
 - Guardrails: `GUARDRAILS.md`
-- Stories: `USER_STORIES.md` (US-403–US-406, US-103)
+- Stories: `USER_STORIES.md` (US-403–US-406, US-103, US-202)

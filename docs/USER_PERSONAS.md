@@ -108,7 +108,7 @@ Recurrence engine, historical loading, completion robustness, day-agenda timelin
 **Typical workflows**
 
 1. Complete prioritized tasks during the day
-2. Review Progress panel: streak, XP, calendar-week chart
+2. Review Progress panel: streak, XP, calendar-week completions + XP charts
 3. Hover bars for weekday-historical context
 4. Open Analysis for longitudinal trends; open **Summary** for AI period overviews and task Q&A; export badges as PNG
 
@@ -204,7 +204,7 @@ Storage adapters, Neon transfer staging, auto sync/save, boot progress, `/health
 |---|---|
 | Multi-Context Professional | Profiles, project filters, bulk edit/move/delete, calendar planning, export Both, task search |
 | Routine Builder | Recurrence engine, historical loading, completion robustness |
-| Progress-Motivated Planner | Stats, insights, badges, streaks, weekly chart, PNG export, AI Productivity Summary / Ask |
+| Progress-Motivated Planner | Stats, insights, badges, streaks, weekly completions + XP charts, PNG export, AI Productivity Summary / Ask |
 | Showcase Presenter | Read-only `Test` profile, friendly blocked-action messaging |
 | Reliability-Conscious Operator | Neon persistence/transfer, parts export fallback, per-row import, auto sync/save, boot progress, health, AI keys |
 

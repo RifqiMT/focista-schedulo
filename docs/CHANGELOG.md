@@ -7,6 +7,24 @@
 
 ## 2026-07-19
 
+### Changed — Selective Neon task upsert on mutations
+
+- Create / update / batch-update persist only **touched task ids** (`persistTasks({ ids })`), including series members and parent siblings after deterministic parent/child rebuild — avoiding a full-table rewrite on every edit.
+
+### Changed — Task editor awaits save with progress affordance
+
+- `TaskEditorDrawer` shows save progress (`saveStage` / `saveProgress`), disables Close/Prev/Next while saving, and `TaskBoard` **awaits** `onSave` so the drawer stays open until persist finishes.
+
+### Changed — Progress weekly charts: unified “today”
+
+- Activity and XP week charts highlight **today** with a shared champagne-amber accent (`--chart-today*`), live pulse dot, soft ring breathe, settle entrance, and a compact “Today” pill — with `prefers-reduced-motion` respected.
+- Weekly day pills use fixed track/bar widths (`--weekly-track-w` / `--weekly-bar-w`) so every day column matches; today highlight no longer expands the capsule footprint.
+- Today is detected by **calendar date match** (`d.date === todayDateIso`), not last array index.
+
+### Added — Progress XP week chart
+
+- Progress panel: **XP this week** bar chart (Mon–Sun) using `last7Days[].points`, styled as capsule teal bars with today’s highlight; sits under the existing completions **This week** chart.
+
 ### Changed — Production persistence (Neon Postgres)
 
 - **Prod durable storage:** **Neon Postgres Free** (row-per-task + `payload jsonb`) is the production durable store for runtime persistence and large import/export staging. Local development remains `STORAGE_BACKEND=fs` (`backend/data/*.runtime.json`).
@@ -48,6 +66,7 @@
 - Task search indexes all task attributes with AND token match.
 - Dead-code cleanup: unused exports/types, superseded CSS/keyframes; corrected variable naming (`droppedRows`, `export.delivery` includes `auto` / `staging`).
 - Follow-up dead-code pass: removed deprecated Blob import aliases, unused `isTransferChunkPathname` / `resetNeonSqlCache`, unused Neon `timeoutMs` stub, file-private type exports, orphan PA keyframes; renamed docs `toast.singleSlot` → `enqueueToast` (single-slot).
+- CSS token cleanup: removed unread custom properties (`--ach-accent`, `--pa-accent-hover`, `--pa-chart-secondary`, `--pa-teal*`, `--pa-up`/`--pa-down`) and unused `@keyframes pa-scrubber-pop`.
 
 ### Added (tests)
 

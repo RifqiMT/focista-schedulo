@@ -55,6 +55,7 @@ Define the technical and business limitations that bound safe product developmen
 - Use moderate persistence debounce on Neon (~200ms) vs local fs (~40ms) on long-running hosts; protect Neon Free CU-hours (no keep-alive pinging).
 - On **Vercel serverless**, Neon `persistDebounceMs` must be **`0`**, and durability-critical mutations (especially task complete) must **await** persist before returning success—never rely on fire-and-forget timers after the response.
 - Prefer Neon multi-isolate freshness checks (`tasks_revision`) before task list/complete so in-memory state does not overwrite newer Neon writes from another isolate.
+- Prefer **selective** `persistTasks({ ids })` on create/update/batch so Neon Free write volume stays proportional to the touched set; reserve full-table persist for import and other bulk rebuilds.
 - Any potentially degrading change must include before/after measurement evidence (see Performance Guardrail rule).
 - Profile-gated performance diagnostics may exist for specific profile names; do not expose noisy logging to all users by default.
 

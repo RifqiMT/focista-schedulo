@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import type { Dispatch, SetStateAction } from "react";
+import type { Dispatch, PointerEvent as ReactPointerEvent, SetStateAction } from "react";
 import { createPortal } from "react-dom";
 import { toastBadgesFullWindowLayout } from "../badgeFullscreen";
 import { BadgesModalDialogBody } from "./BadgesModalDialogBody";
@@ -167,6 +167,9 @@ export function GamificationPanel({ activeProfileId }: { activeProfileId: string
   const [weeklyTooltipPos, setWeeklyTooltipPos] = useState<{ left: number; top: number } | null>(
     null
   );
+  const [weeklyTipVisible, setWeeklyTipVisible] = useState(false);
+  const weeklyPointerRafRef = useRef<number | null>(null);
+  const weeklyPointerPosRef = useRef<{ x: number; y: number; date: string } | null>(null);
   const [expandedBadgeSections, setExpandedBadgeSections] = useState<Record<string, boolean>>({});
   const badgePanelRef = useRef<HTMLDivElement | null>(null);
   const badgesLayoutToastSentRef = useRef(false);
@@ -316,6 +319,14 @@ export function GamificationPanel({ activeProfileId }: { activeProfileId: string
   const xpBarPercent = Math.min(100, (pointsIntoLevel / 50) * 100);
   const last7 = useMemo(() => stats?.last7Days ?? [], [stats?.last7Days]);
   const maxDaily = Math.max(1, ...last7.map((d) => d.completed));
+  const maxDailyXp = Math.max(1, ...last7.map((d) => d.points));
+  const todayDateIso = useMemo(() => {
+    const now = new Date();
+    const y = now.getFullYear();
+    const m = String(now.getMonth() + 1).padStart(2, "0");
+    const day = String(now.getDate()).padStart(2, "0");
+    return `${y}-${m}-${day}`;
+  }, [stats?.last7Days]);
   const achievements = stats?.achievements ?? [];
   const milestones = stats?.milestoneAchievements ?? null;
   const activeProfileNameOnly = activeProfileId
@@ -507,9 +518,11 @@ export function GamificationPanel({ activeProfileId }: { activeProfileId: string
 
   useEffect(() => {
     if (!weeklyBarHover) return;
+    // Do not use capture:true — nested panel scrolls / trackpad jitter would
+    // immediately dismiss the day tip while hovering.
     const onScroll = () => setWeeklyBarHover(null);
-    window.addEventListener("scroll", onScroll, { passive: true, capture: true });
-    return () => window.removeEventListener("scroll", onScroll, { capture: true } as any);
+    window.addEventListener("scroll", onScroll, { passive: true });
+    return () => window.removeEventListener("scroll", onScroll);
   }, [weeklyBarHover]);
 
   const weeklyTipActive = weeklyBarHover != null;
@@ -545,8 +558,75 @@ export function GamificationPanel({ activeProfileId }: { activeProfileId: string
       setWeeklyBarHover(next);
     }, []);
 
+  const openWeeklyDayTip = useCallback(
+    (
+      d: {
+        date: string;
+        completed: number;
+        points: number;
+        taskXpMin?: number | null;
+        taskXpMax?: number | null;
+        taskXpAvg?: number | null;
+        weekdayTaskMin?: number;
+        weekdayTaskMax?: number;
+        weekdayTaskAvg?: number;
+      },
+      clientX: number,
+      clientY: number
+    ) => {
+      setExclusiveWeeklyBarHover({
+        date: d.date,
+        completed: d.completed,
+        points: d.points,
+        taskXpMin: d.taskXpMin ?? null,
+        taskXpMax: d.taskXpMax ?? null,
+        taskXpAvg: d.taskXpAvg ?? null,
+        weekdayTaskMin: d.weekdayTaskMin ?? 0,
+        weekdayTaskMax: d.weekdayTaskMax ?? 0,
+        weekdayTaskAvg: d.weekdayTaskAvg ?? 0,
+        mouseX: clientX,
+        mouseY: clientY
+      });
+    },
+    [setExclusiveWeeklyBarHover]
+  );
+
+  const moveWeeklyDayTip = useCallback((date: string, clientX: number, clientY: number) => {
+    weeklyPointerPosRef.current = { x: clientX, y: clientY, date };
+    if (weeklyPointerRafRef.current != null) return;
+    weeklyPointerRafRef.current = window.requestAnimationFrame(() => {
+      weeklyPointerRafRef.current = null;
+      const next = weeklyPointerPosRef.current;
+      if (!next) return;
+      setExclusiveWeeklyBarHover((h) =>
+        h && h.date === next.date ? { ...h, mouseX: next.x, mouseY: next.y } : h
+      );
+    });
+  }, [setExclusiveWeeklyBarHover]);
+
+  const clearWeeklyDayTip = useCallback(() => {
+    if (weeklyPointerRafRef.current != null) {
+      window.cancelAnimationFrame(weeklyPointerRafRef.current);
+      weeklyPointerRafRef.current = null;
+    }
+    weeklyPointerPosRef.current = null;
+    setWeeklyTipVisible(false);
+    setExclusiveWeeklyBarHover(null);
+    setWeeklyTooltipPos(null);
+  }, [setExclusiveWeeklyBarHover]);
+
+  const onWeeklyBarsPointerLeave = useCallback(
+    (e: ReactPointerEvent<HTMLDivElement>) => {
+      const next = e.relatedTarget;
+      if (next instanceof Node && e.currentTarget.contains(next)) return;
+      clearWeeklyDayTip();
+    },
+    [clearWeeklyDayTip]
+  );
+
   useLayoutEffect(() => {
     if (!weeklyBarHover) {
+      setWeeklyTipVisible(false);
       setWeeklyTooltipPos(null);
       return;
     }
@@ -558,8 +638,8 @@ export function GamificationPanel({ activeProfileId }: { activeProfileId: string
       const vw = window.innerWidth;
       const vh = window.innerHeight;
       const pad = 12;
-      const ox = 10;
-      const oy = 10;
+      const ox = 14;
+      const oy = 14;
       const { mouseX, mouseY } = weeklyBarHover;
       let left = mouseX + ox;
       let top = mouseY + oy;
@@ -572,6 +652,7 @@ export function GamificationPanel({ activeProfileId }: { activeProfileId: string
       left = Math.max(pad, Math.min(vw - rect.width - pad, left));
       top = Math.max(pad, Math.min(vh - rect.height - pad, top));
       setWeeklyTooltipPos({ left, top });
+      setWeeklyTipVisible(true);
     };
 
     const raf = window.requestAnimationFrame(place);
@@ -689,6 +770,7 @@ export function GamificationPanel({ activeProfileId }: { activeProfileId: string
     Number.isInteger(n) ? String(n) : n.toFixed(1);
 
   const weekCompleted = last7.reduce((s, d) => s + d.completed, 0);
+  const weekXp = last7.reduce((s, d) => s + d.points, 0);
 
   return (
     <section className="gamification-panel">
@@ -800,71 +882,148 @@ export function GamificationPanel({ activeProfileId }: { activeProfileId: string
         </div>
 
         {last7.length > 0 && (
-          <div className="weekly-section progress-section">
+          <div className="weekly-section weekly-section--activity progress-section">
             <div className="weekly-header progress-section-head">
               <div className="progress-section-copy">
-                <div className="progress-section-eyebrow">Activity</div>
+                <div className="progress-section-eyebrow">
+                  <span className="progress-section-swatch" aria-hidden="true" />
+                  Activity
+                </div>
                 <div className="progress-section-title">This week</div>
               </div>
-              <div className="progress-section-meta">
+              <div className="progress-section-meta progress-section-meta--chip">
                 <span className="progress-section-meta-strong">{weekCompleted}</span>
                 completed
               </div>
             </div>
             <div
-              className="weekly-bars"
+              className="weekly-bars weekly-bars--activity"
               aria-label="Weekly completion chart"
-              onMouseLeave={() => {
-                setExclusiveWeeklyBarHover(null);
-                setWeeklyTooltipPos(null);
-              }}
+              onPointerLeave={onWeeklyBarsPointerLeave}
             >
               {last7.map((d, i) => {
-                const height = Math.max(10, Math.round((d.completed / maxDaily) * 48));
+                const height = Math.max(
+                  d.completed > 0 ? 14 : 8,
+                  Math.round((d.completed / maxDaily) * 56)
+                );
                 const label = new Date(d.date + "T12:00:00").toLocaleDateString(undefined, {
                   weekday: "short"
                 });
-                const taskXpMin = d.taskXpMin ?? null;
-                const taskXpMax = d.taskXpMax ?? null;
-                const taskXpAvg = d.taskXpAvg ?? null;
-                const weekdayTaskMin = d.weekdayTaskMin ?? 0;
-                const weekdayTaskMax = d.weekdayTaskMax ?? 0;
-                const weekdayTaskAvg = d.weekdayTaskAvg ?? 0;
-                const isToday = i === last7.length - 1;
+                const isToday = d.date === todayDateIso;
+                const isActive = weeklyBarHover?.date === d.date;
                 return (
                   <div
                     key={d.date}
-                    className={`weekly-bar-col${isToday ? " weekly-bar-col--today" : ""}`}
-                    aria-label={formatWeeklyBarAccessibilityTitle(d)}
-                    onMouseEnter={(e) => {
-                      setWeeklyTooltipPos(null);
-                      setExclusiveWeeklyBarHover({
-                        date: d.date,
-                        completed: d.completed,
-                        points: d.points,
-                        taskXpMin,
-                        taskXpMax,
-                        taskXpAvg,
-                        weekdayTaskMin,
-                        weekdayTaskMax,
-                        weekdayTaskAvg,
-                        mouseX: e.clientX,
-                        mouseY: e.clientY
-                      });
+                    className={`weekly-bar-col${isToday ? " weekly-bar-col--today" : ""}${
+                      isActive ? " weekly-bar-col--active" : ""
+                    }`}
+                    style={{ ["--bar-i" as string]: i }}
+                    role="button"
+                    tabIndex={0}
+                    aria-label={
+                      isToday
+                        ? `${formatWeeklyBarAccessibilityTitle(d)} (today)`
+                        : formatWeeklyBarAccessibilityTitle(d)
+                    }
+                    onPointerEnter={(e) => openWeeklyDayTip(d, e.clientX, e.clientY)}
+                    onPointerMove={(e) => moveWeeklyDayTip(d.date, e.clientX, e.clientY)}
+                    onFocus={(e) => {
+                      const rect = e.currentTarget.getBoundingClientRect();
+                      openWeeklyDayTip(d, rect.left + rect.width / 2, rect.top);
                     }}
-                    onMouseMove={(e) => {
-                      setExclusiveWeeklyBarHover((h) =>
-                        h && h.date === d.date
-                          ? { ...h, mouseX: e.clientX, mouseY: e.clientY }
-                          : h
-                      );
-                    }}
+                    onBlur={clearWeeklyDayTip}
                   >
                     <div className="weekly-bar-value" aria-hidden="true">
+                      {isToday ? (
+                        <span className="weekly-bar-today-live" />
+                      ) : null}
                       {d.completed > 0 ? d.completed : "·"}
                     </div>
-                    <div className="weekly-bar" style={{ height }} aria-hidden="true" />
-                    <div className="weekly-bar-label">{label}</div>
+                    <div className="weekly-bar-track" aria-hidden="true">
+                      <div className="weekly-bar-rise">
+                        <div className="weekly-bar" style={{ height }} />
+                      </div>
+                    </div>
+                    <div className="weekly-bar-label">
+                      <span className="weekly-bar-day">{label}</span>
+                      {isToday ? (
+                        <span className="weekly-bar-today-mark">Today</span>
+                      ) : null}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        )}
+
+        {last7.length > 0 && (
+          <div className="weekly-section weekly-section--xp progress-section">
+            <div className="weekly-header progress-section-head">
+              <div className="progress-section-copy">
+                <div className="progress-section-eyebrow">
+                  <span className="progress-section-swatch" aria-hidden="true" />
+                  XP
+                </div>
+                <div className="progress-section-title">XP this week</div>
+              </div>
+              <div className="progress-section-meta progress-section-meta--chip">
+                <span className="progress-section-meta-strong">{weekXp}</span>
+                XP gained
+              </div>
+            </div>
+            <div
+              className="weekly-bars weekly-bars--xp"
+              aria-label="Weekly XP gained chart"
+              onPointerLeave={onWeeklyBarsPointerLeave}
+            >
+              {last7.map((d, i) => {
+                const height = Math.max(
+                  d.points > 0 ? 14 : 8,
+                  Math.round((d.points / maxDailyXp) * 56)
+                );
+                const label = new Date(d.date + "T12:00:00").toLocaleDateString(undefined, {
+                  weekday: "short"
+                });
+                const isToday = d.date === todayDateIso;
+                const isActive = weeklyBarHover?.date === d.date;
+                return (
+                  <div
+                    key={`xp-${d.date}`}
+                    className={`weekly-bar-col${isToday ? " weekly-bar-col--today" : ""}${
+                      isActive ? " weekly-bar-col--active" : ""
+                    }`}
+                    style={{ ["--bar-i" as string]: i }}
+                    role="button"
+                    tabIndex={0}
+                    aria-label={`${label}: ${d.points} XP gained${
+                      d.completed > 0 ? `, ${d.completed} task(s) completed` : ""
+                    }${isToday ? " (today)" : ""}`}
+                    onPointerEnter={(e) => openWeeklyDayTip(d, e.clientX, e.clientY)}
+                    onPointerMove={(e) => moveWeeklyDayTip(d.date, e.clientX, e.clientY)}
+                    onFocus={(e) => {
+                      const rect = e.currentTarget.getBoundingClientRect();
+                      openWeeklyDayTip(d, rect.left + rect.width / 2, rect.top);
+                    }}
+                    onBlur={clearWeeklyDayTip}
+                  >
+                    <div className="weekly-bar-value" aria-hidden="true">
+                      {isToday ? (
+                        <span className="weekly-bar-today-live" />
+                      ) : null}
+                      {d.points > 0 ? d.points : "·"}
+                    </div>
+                    <div className="weekly-bar-track" aria-hidden="true">
+                      <div className="weekly-bar-rise">
+                        <div className="weekly-bar" style={{ height }} />
+                      </div>
+                    </div>
+                    <div className="weekly-bar-label">
+                      <span className="weekly-bar-day">{label}</span>
+                      {isToday ? (
+                        <span className="weekly-bar-today-mark">Today</span>
+                      ) : null}
+                    </div>
                   </div>
                 );
               })}
@@ -1089,11 +1248,13 @@ export function GamificationPanel({ activeProfileId }: { activeProfileId: string
         ? createPortal(
             <div
               ref={weeklyTooltipRef}
-              className="weekly-bar-tooltip weekly-day-tip"
+              className={`weekly-bar-tooltip weekly-day-tip${
+                weeklyTipVisible ? " weekly-day-tip--visible" : ""
+              }`}
               style={{
                 position: "fixed",
-                left: weeklyTooltipPos?.left ?? weeklyBarHover.mouseX + 10,
-                top: weeklyTooltipPos?.top ?? weeklyBarHover.mouseY + 10,
+                left: weeklyTooltipPos?.left ?? weeklyBarHover.mouseX + 14,
+                top: weeklyTooltipPos?.top ?? weeklyBarHover.mouseY + 14,
                 zIndex: 10050,
                 pointerEvents: "none"
               }}

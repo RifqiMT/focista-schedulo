@@ -109,7 +109,7 @@ When Productivity Summary, Ask, or AI key flows change:
 1. Update `API_CONTRACTS.md`, `VARIABLES.md` (periods, digests, `degraded`, `pst.aiKeys`), and deployment env tables.
 2. Document never-log key policy and client vs server key precedence in Guardrails.
 3. Keep degraded local-brief behavior explicit in PRD NFRs and Test Strategy.
-4. Add/adjust stories (US-409–US-413) and FR-21/FR-24 as needed.
+4. Add/adjust stories (US-409–US-413) and FR-21/FR-24–FR-26 as needed.
 
 ---
 

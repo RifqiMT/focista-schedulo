@@ -64,6 +64,7 @@ As a user, I want to edit and toggle completion quickly so that execution remain
 - Failure paths recover gracefully without data corruption.
 - On Vercel Prod, completion is only confirmed after durable persist succeeds; persist failures show a friendly error toast and refresh from server.
 - Virtual recurring occurrences are not auto-marked complete by temporary date backfills.
+- Task editor **awaits** save completion before closing; while saving, Close/Prev/Next are disabled and a progress affordance (`saveStage` / `saveProgress`) remains visible until persist finishes.
 
 ### US-203 Bulk task operations
 
@@ -120,12 +121,14 @@ As a user, I want historical productivity analysis so that I can improve plannin
 
 ### US-403 Interpret the current week at a glance
 
-As a progress-motivated user, I want a **calendar-week** completion chart so that I can compare Monday–Sunday execution in my local week.
+As a progress-motivated user, I want **calendar-week** completion and XP charts so that I can compare Monday–Sunday execution and rewards in my local week.
 
 **Acceptance criteria**
 
-- Chart renders seven bars aligned to the **current** local Monday–Sunday window for the active profile scope.
+- Two charts render seven bars aligned to the **current** local Monday–Sunday window for the active profile scope: **This week** (completions) and **XP this week** (`last7Days[].points`).
 - Data source documents the legacy `last7Days` key while behaving as a calendar-week series (see `API_CONTRACTS.md`).
+- **Today** is highlighted via calendar-date match (not last index), with shared champagne-amber accent, live pulse, and a compact “Today” pill; `prefers-reduced-motion` is honored.
+- Day columns use fixed track/bar widths so the today highlight does not expand the capsule footprint.
 
 ### US-404 Understand a day in historical weekday context
 
@@ -324,7 +327,7 @@ As a privacy-conscious user, I want password confirmation before deleting a prot
 | US-302 | 3 | Historical task visibility |
 | US-401 | 4 | View progress summary |
 | US-402 | 4 | Analyze productivity trends |
-| US-403 | 4 | Interpret the current week at a glance |
+| US-403 | 4 | Interpret the current week at a glance (completions + XP) |
 | US-404 | 4 | Understand a day in historical weekday context |
 | US-405 | 4 | Export and share badges |
 | US-406 | 4 | See locked profiles in the selector |

@@ -95,7 +95,7 @@ Detailed profiles: `USER_PERSONAS.md`.
 
 ### 6.5 Progress and Insights
 
-- `/api/stats` for streak, XP, level, milestones, grinding, and the **current calendar week** completion series (local Monday–Sunday; legacy key `last7Days`)
+- `/api/stats` for streak, XP, level, milestones, grinding, and the **current calendar week** series (local Monday–Sunday; legacy key `last7Days`) powering **This week** (completions) and **XP this week** charts with a shared calendar-date “today” highlight
 - Per-day bar tooltips: completions, XP, per-task XP min/max/average, weekday-historical completion min/max/average
 - `/api/productivity-insights` for trend visualization
 - **Productivity Summary** (`/api/productivity-summary`, `/api/productivity-summary/ask`): Groq LLM narratives and task Q&A with optional Tavily web enrich; timelines include day, week, sprint, month, bi-month, quarter, semester, year, matching next-* forward ranges, and custom ranges
@@ -143,7 +143,9 @@ Detailed profiles: `USER_PERSONAS.md`.
 | FR-12 | Showcase read-only profile policy enforcement (`Test`) |
 | FR-13 | Vercel Prod split hosting with Neon durable store |
 | FR-14 | Large-payload import/export via Neon transfer staging (export parts fallback when staging unavailable) |
-| FR-15 | Calendar-week progress chart with rich weekday tooltips |
+| FR-15 | Calendar-week progress charts (completions + XP) with rich weekday tooltips and shared “today” highlight |
+| FR-25 | Selective Neon task upsert on create/update/batch (persist only touched task ids) |
+| FR-26 | Task editor save progress affordance (await persist; disable dismiss while saving) |
 | FR-16 | Badge PNG export and consistent modal naming |
 | FR-17 | Lock affordance for password-protected profiles |
 | FR-18 | Staged profile boot progress and production fast-path loading |
@@ -191,6 +193,7 @@ Detailed profiles: `USER_PERSONAS.md`.
 - Validate all inbound mutation payloads (Zod-backed contracts).
 - Use batch endpoints for high-frequency multi-item operations.
 - Coalesce persistence writes where safe; use Neon debounce ~200ms off-Vercel; on Vercel debounce is `0` and critical writes are awaited.
+- Prefer selective `persistTasks({ ids })` on create/update/batch so Neon write volume tracks the touched set.
 - Keep recurrence identity deterministic across startup/reload/mutation paths.
 - Enforce read-only profile safeguards at API level (never UI-only).
 - Prefer Neon staging over raising serverless body limits for large transfers; fall back to export **parts** paging when staging is unavailable.

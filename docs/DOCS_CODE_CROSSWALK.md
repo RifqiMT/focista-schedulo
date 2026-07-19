@@ -15,7 +15,9 @@ This file maps documentation artifacts to the primary implementation locations.
 | Task CRUD and list/calendar UX | `frontend/src/components/TaskBoard.tsx`, task routes in `backend/src/index.ts` |
 | Task editor and parsing | `frontend/src/components/TaskEditorDrawer.tsx` |
 | Project management | `frontend/src/components/ProjectSidebar.tsx`, project routes in `backend/src/index.ts` |
-| Progress panel, weekly chart, tooltips, badges | `GamificationPanel.tsx`, `BadgesModalDialogBody.tsx`, `badgePngExport.ts`; `/api/stats` (incl. calendar-week `last7Days`) in `backend/src/index.ts` |
+| Progress panel, weekly completions + XP charts, today highlight, tooltips, badges | `GamificationPanel.tsx`, `BadgesModalDialogBody.tsx`, `badgePngExport.ts`; `/api/stats` (incl. calendar-week `last7Days`) in `backend/src/index.ts`; `--chart-*` / `--weekly-*` in `styles.css` |
+| Task editor save progress + await persist | `TaskEditorDrawer.tsx` (`saveStage`/`saveProgress`); `TaskBoard.tsx` async `onSave` |
+| Selective Neon task upsert | `persistTasks({ ids })` on create/update/batch + `rebuildParentAndChildIdsDeterministic` in `backend/src/index.ts`; `neonStorage.ts` |
 | Grinding and badge milestones | `monthlyGrinding.ts`, `yearlyGrinding.ts`, `badgesEarnedMilestone.ts`, `capMilestoneBadges.ts` |
 | Productivity analysis | `ProductivityAnalysisModal.tsx`, `/api/productivity-insights` |
 | Productivity Summary (AI) | `ProductivitySummaryModal.tsx`, `productivitySummaryService.ts`, `/api/productivity-summary`, `/api/productivity-summary/ask` |

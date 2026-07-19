@@ -4,7 +4,7 @@ import { useEffect, useRef, useState } from "react";
 interface TaskEditorDrawerProps {
   task: Task | Task[] | null;
   onClose: () => void;
-  onSave: (task: Task | Task[]) => void;
+  onSave: (task: Task | Task[]) => void | Promise<void>;
   // Emits live label tokens while user edits, so the board/hovercard can update
   // before "Save task" is pressed.
   onLabelsDraftChange?: (labels: string[]) => void;
@@ -34,7 +34,11 @@ export function TaskEditorDrawer({
   const [draft, setDraft] = useState<Task | null>(Array.isArray(task) ? task[0] ?? null : task);
   const [createMode, setCreateMode] = useState<"single" | "multiple">("single");
   const [copiedIdKey, setCopiedIdKey] = useState<string | null>(null);
+  const [saving, setSaving] = useState(false);
+  const [saveProgress, setSaveProgress] = useState(0);
+  const [saveStage, setSaveStage] = useState("Saving…");
   const copiedIdTimerRef = useRef<number | null>(null);
+  const saveProgressTimerRef = useRef<number | null>(null);
 
   const copyIdValue = (key: string, value: string) => {
     void (async () => {
@@ -1113,6 +1117,13 @@ export function TaskEditorDrawer({
   };
 
   useEffect(() => {
+    setSaving(false);
+    setSaveProgress(0);
+    setSaveStage("Saving…");
+    if (saveProgressTimerRef.current != null) {
+      window.clearInterval(saveProgressTimerRef.current);
+      saveProgressTimerRef.current = null;
+    }
     if (Array.isArray(task)) {
       const compareDueDateDesc = (a: Task, b: Task) => {
         // Match list/table sorting: missing dueDate goes last, otherwise ISO desc.
@@ -1237,12 +1248,22 @@ export function TaskEditorDrawer({
     if (!draft) return;
     const onKeyDown = (e: KeyboardEvent) => {
       if (e.key !== "Escape") return;
+      if (saving) return;
       e.preventDefault();
       onClose();
     };
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [draft, onClose]);
+  }, [draft, onClose, saving]);
+
+  useEffect(() => {
+    return () => {
+      if (saveProgressTimerRef.current != null) {
+        window.clearInterval(saveProgressTimerRef.current);
+        saveProgressTimerRef.current = null;
+      }
+    };
+  }, []);
 
   useEffect(() => {
     if (!draft) return;
@@ -2022,7 +2043,13 @@ export function TaskEditorDrawer({
   };
 
   return (
-    <div className="drawer-backdrop" onClick={onClose}>
+    <div
+      className="drawer-backdrop"
+      onClick={() => {
+        if (saving) return;
+        onClose();
+      }}
+    >
       <aside
         className="drawer"
         role="dialog"
@@ -2635,6 +2662,29 @@ export function TaskEditorDrawer({
           )}
         </div>
         <footer className="drawer-footer">
+          {saving ? (
+            <div
+              className="drawer-save-progress profile-loading"
+              role="status"
+              aria-live="polite"
+              aria-busy="true"
+            >
+              <div className="profile-loading-stage">{saveStage}</div>
+              <div
+                className="profile-loading-track"
+                role="progressbar"
+                aria-valuemin={0}
+                aria-valuemax={100}
+                aria-valuenow={Math.round(saveProgress)}
+              >
+                <div className="profile-loading-fill" style={{ width: `${saveProgress}%` }} />
+              </div>
+              <div className="profile-loading-meta">
+                <span>{Math.round(saveProgress)}%</span>
+                <span className="profile-loading-hint">Please wait — keeping the drawer open until save finishes.</span>
+              </div>
+            </div>
+          ) : null}
           <div className="drawer-footer-left">
             {multipleFlow && batchItems.length > 0 ? (
               <span className="pill subtle drawer-footer-progress" aria-live="polite">
@@ -2651,7 +2701,7 @@ export function TaskEditorDrawer({
                   type="button"
                   className="ghost-button"
                   onClick={() => setBatchActiveIdx((i) => Math.max(0, i - 1))}
-                  disabled={batchActiveIdx <= 0}
+                  disabled={saving || batchActiveIdx <= 0}
                   title="Previous task"
                 >
                   Prev
@@ -2662,7 +2712,7 @@ export function TaskEditorDrawer({
                   onClick={() =>
                     setBatchActiveIdx((i) => Math.min(Math.max(0, batchItems.length - 1), i + 1))
                   }
-                  disabled={batchActiveIdx >= batchItems.length - 1}
+                  disabled={saving || batchActiveIdx >= batchItems.length - 1}
                   title="Next task"
                 >
                   Next
@@ -2672,13 +2722,14 @@ export function TaskEditorDrawer({
           </div>
 
           <div className="drawer-footer-right">
-          <button className="ghost-button" onClick={onClose}>
+          <button className="ghost-button" onClick={onClose} disabled={saving}>
             Cancel
           </button>
           <button
             className="primary-button"
             onClick={() => {
-              if (!draft) return;
+              if (!draft || saving) return;
+                let payload: Task | Task[] | null = null;
                 if (multipleFlow) {
                   const out = batchItems
                     .slice(0, 50)
@@ -2709,18 +2760,68 @@ export function TaskEditorDrawer({
                     .filter((x): x is Task => x !== null && x.title.trim().length > 0);
 
                   if (out.length === 0) return;
-                  onSave(out);
-                  return;
+                  payload = out;
+                } else {
+                  payload = normalizeDraft(draft);
                 }
-                onSave(normalizeDraft(draft));
+                if (!payload) return;
+
+                const isCreate = Array.isArray(payload)
+                  ? payload.every((t) => t.id === "new")
+                  : payload.id === "new";
+                setSaving(true);
+                setSaveProgress(8);
+                setSaveStage(isCreate ? "Creating task…" : "Saving changes…");
+                if (saveProgressTimerRef.current != null) {
+                  window.clearInterval(saveProgressTimerRef.current);
+                }
+                saveProgressTimerRef.current = window.setInterval(() => {
+                  setSaveProgress((p) => {
+                    if (p >= 88) return p;
+                    const next = p + (p < 40 ? 7 : p < 70 ? 4 : 1.5);
+                    return Math.min(88, next);
+                  });
+                  setSaveStage((prev) => {
+                    if (prev.includes("Confirming")) return prev;
+                    return isCreate ? "Writing to storage…" : "Confirming changes…";
+                  });
+                }, 220);
+
+                void (async () => {
+                  try {
+                    await Promise.resolve(onSave(payload!));
+                    setSaveProgress(100);
+                    setSaveStage(isCreate ? "Created" : "Saved");
+                  } catch (err) {
+                    console.error("[TaskEditorDrawer] save failed", err);
+                    setSaveStage("Save failed — try again");
+                  } finally {
+                    if (saveProgressTimerRef.current != null) {
+                      window.clearInterval(saveProgressTimerRef.current);
+                      saveProgressTimerRef.current = null;
+                    }
+                    // Brief settle so the bar can reach 100% before parent closes the drawer.
+                    window.setTimeout(() => {
+                      setSaving(false);
+                      setSaveProgress(0);
+                    }, 180);
+                  }
+                })();
               }}
               disabled={
-                multipleFlow
+                saving ||
+                (multipleFlow
                   ? batchItems.every((x) => !x.title.trim())
-                  : !draft.title.trim()
+                  : !draft.title.trim())
               }
             >
-              {multipleFlow ? (isMultiEdit ? "Save changes" : "Create tasks") : "Save task"}
+              {saving
+                ? "Saving…"
+                : multipleFlow
+                  ? isMultiEdit
+                    ? "Save changes"
+                    : "Create tasks"
+                  : "Save task"}
           </button>
           </div>
         </footer>

@@ -25,10 +25,10 @@ Focista Schedulo helps users:
 |---|---|
 | **Control** | Profile-scoped tasks, projects, and progress prevent cross-context leakage. Optional password locks protect sensitive scopes. |
 | **Reliability** | Recurring series use deterministic parent/child identity; merge/dedupe and per-row import guards protect data; Vercel completions await durable Neon persist. |
-| **Speed** | Neon row upserts (or local split-file) runtime persistence avoids monolith write bottlenecks; batch APIs reduce round-trips. |
+| **Speed** | Neon selective row upserts (or local split-file) runtime persistence avoids monolith write bottlenecks; batch APIs reduce round-trips. |
 | **Ownership** | Import/export (JSON, CSV, or Both) keeps datasets portable; locked-profile export requires credentials. |
 | **Clarity** | Friendly error messages explain root cause and next steps; showcase profile `Test` is read-only for demos. |
-| **Motivation** | XP, levels, streaks, calendar-week charts, grinding milestones, badge PNG export, and AI Productivity Summary reinforce completion. |
+| **Motivation** | XP, levels, streaks, calendar-week completions + XP charts, grinding milestones, badge PNG export, and AI Productivity Summary reinforce completion. |
 | **Insight** | Period summaries and natural-language Ask over profile-scoped tasks (Groq + optional Tavily). |
 
 ---
@@ -48,7 +48,8 @@ Focista Schedulo helps users:
 
 ### Progress surface (calendar week and tooltips)
 
-- The **Progress** panel includes a **current calendar week** completion chart (local **Monday–Sunday**), scoped to the active profile (or all profiles when unscoped).
+- The **Progress** panel includes two **current calendar week** charts (local **Monday–Sunday**), scoped to the active profile (or all profiles when unscoped): **This week** (completions) and **XP this week** (`last7Days[].points`).
+- **Today** uses a shared champagne-amber accent (pulse + “Today” pill); day columns keep fixed bar footprints.
 - Hovering a day shows a **rich tooltip**: tasks completed and XP for that day, **per-task XP (priority) min/max/average**, and **weekday-historical** completion min/max/average.
 - Badges export as high-resolution PNG; cards show the **profile name**; modal headers use **`Profile: Name - Title`**.
 - Achievement and milestone cards show short **plain-English descriptions** from `/api/stats`.

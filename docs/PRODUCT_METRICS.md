@@ -53,7 +53,7 @@ Formula authority for domain variables: `VARIABLES.md`.
 | EM-02 | XP Gain Momentum | Weekly change in XP | `Δ totalPoints` week-over-week; include `pointsToday` | `+55 XP / week` |
 | EM-03 | Productivity Insight Usage | Frequency of Analysis feature use | Opens of Productivity Analysis modal (instrument when available) | `3 opens / user / week` |
 | EM-04 | Bulk Action Adoption | Share of task maintenance via batch operations | `batch mutations / (batch + single mutations)` | `0.35` |
-| EM-05 | Progress Chart Engagement | Sessions with weekly chart hover/open | Instrumentation proxy when enabled | Qualitative until instrumented |
+| EM-05 | Progress Chart Engagement | Sessions with weekly completions/XP chart hover or today highlight interaction | Instrumentation proxy when enabled | Qualitative until instrumented |
 | EM-06 | Badge Export Adoption | Share of badge-modal sessions that export PNG | `png exports / badge modal opens` | `0.20` |
 | EM-07 | Monthly Grinding Attainment | Share of active months with `weeksCompleted >= 4` | From yearly/monthly grinding formulas | `2 / 7 months YTD` |
 | EM-08 | Achievement Clarity | Share of achievement/milestone cards showing non-empty plain-English `description` | `cards with description / total cards` | `1.00` |

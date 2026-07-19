@@ -95,6 +95,10 @@ Write debounce:
 | `neon` on long-running Node | ~200ms |
 | `neon` when `VERCEL` is set | **`0`** — serverless freezes timers after the HTTP response; mutations that must survive (especially complete) **await** flush before responding |
 
+### Selective Neon task upsert
+
+Create, update, and batch-update paths call `persistTasks({ ids: touchedIds })` so Neon writes only the tasks that changed (the mutated row, series members, duration/project siblings after rebuild). Parent/child id rebuild returns the mutated id list and upserts those rows instead of rewriting the full tasks table on every edit. Full-table persist remains available for import/complete-all and other bulk rebuilds.
+
 ### Multi-isolate Neon freshness (Vercel)
 
 Each serverless isolate keeps its own in-memory `tasks`. Before `GET /api/tasks` and `PATCH /api/tasks/:id/complete`, the API calls `ensureTasksMemoryFresh()`:

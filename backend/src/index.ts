@@ -1103,7 +1103,7 @@ function allocateNextChildId(seriesKey: string): string {
   return String(max + 1);
 }
 
-async function rebuildParentAndChildIdsDeterministic(): Promise<void> {
+async function rebuildParentAndChildIdsDeterministic(): Promise<string[]> {
   // Rebuild parentId and childId for all tasks so that:
   // - The date prefix always comes from the earliest occurrence (for series) or the task's own dueDate (one‑time).
   // - The numeric suffix is small and sequential per date.
@@ -1151,7 +1151,7 @@ async function rebuildParentAndChildIdsDeterministic(): Promise<void> {
     newChild.set(t.id, undefined);
   }
 
-  let mutated = false;
+  const mutatedIds: string[] = [];
   tasks = tasks.map((t) => {
     const np = newParent.get(t.id);
     const hasChildOverride = newChild.has(t.id);
@@ -1162,14 +1162,21 @@ async function rebuildParentAndChildIdsDeterministic(): Promise<void> {
       next.childId = newChild.get(t.id);
     }
     if (next.parentId !== t.parentId || next.childId !== t.childId) {
-      mutated = true;
+      mutatedIds.push(t.id);
     }
     return next;
   });
 
-  if (mutated) {
-    await persistTasks();
+  if (mutatedIds.length > 0) {
+    // Selective upsert — avoid full-table rewrite on every create/update.
+    await persistTasks({ ids: mutatedIds });
   }
+  return mutatedIds;
+}
+
+function taskIdsSharingParent(parentId: string | null | undefined): string[] {
+  if (!parentId) return [];
+  return tasks.filter((t) => t.parentId === parentId).map((t) => t.id);
 }
 
 async function enforceSequentialCompletionForRepeatingSeries(): Promise<boolean> {
@@ -2683,15 +2690,21 @@ app.post("/api/tasks", async (req, res) => {
     syncDurationMinutesForParent(parentId, durationMinutes);
     // Parent/child identity (and childId sequencing) is rebuilt deterministically below.
   }
-  await persistTasks();
+  const touchedIds = new Set<string>([
+    task.id,
+    ...seriesMembersToPropagate.map((t) => t.id),
+    ...taskIdsSharingParent(parentId)
+  ]);
+  await persistTasks({ ids: [...touchedIds] });
   // Ensure parentId prefix always matches the earliest dueDate in the series.
   await rebuildParentAndChildIdsDeterministic();
-  if (task.parentId) {
-    syncProjectIdForParent(task.parentId);
-    await persistTasks();
-  }
   const saved = tasks.find((t) => t.id === task.id) ?? task;
-  res.status(201).json(saved);
+  if (saved.parentId) {
+    syncProjectIdForParent(saved.parentId);
+    await persistTasks({ ids: taskIdsSharingParent(saved.parentId) });
+  }
+  const finalSaved = tasks.find((t) => t.id === task.id) ?? saved;
+  res.status(201).json(finalSaved);
   } catch (err) {
     console.error("[tasks] create failed", err);
     return res.status(500).json({
@@ -2708,6 +2721,7 @@ function applyTaskUpdateInMemory(
       ok: true;
       updatedId: string;
       projectChanged: boolean;
+      touchedIds: string[];
     }
   | {
       ok: false;
@@ -2778,6 +2792,7 @@ function applyTaskUpdateInMemory(
   }
   tasks[index] = next;
 
+  const touched = new Set<string>([id]);
   if (repeating && parentIdBefore) {
     const seriesMetadata: Partial<Task> = {
       title: next.title,
@@ -2797,15 +2812,17 @@ function applyTaskUpdateInMemory(
 
     tasks = tasks.map((t) => {
       if (t.parentId !== parentIdBefore) return t;
+      touched.add(t.id);
       return { ...t, ...seriesMetadata };
     });
   }
 
   if (tasks[index].parentId && tasks[index].durationMinutes !== undefined) {
     syncDurationMinutesForParent(tasks[index].parentId!, tasks[index].durationMinutes!);
+    for (const sid of taskIdsSharingParent(tasks[index].parentId)) touched.add(sid);
   }
   const projectChanged = (existing.projectId ?? null) !== (next.projectId ?? null);
-  return { ok: true, updatedId: id, projectChanged };
+  return { ok: true, updatedId: id, projectChanged, touchedIds: [...touched] };
 }
 
 app.put("/api/tasks/:id", async (req, res) => {
@@ -2816,7 +2833,7 @@ app.put("/api/tasks/:id", async (req, res) => {
     if (out.status === 404) return res.sendStatus(404);
     return res.status(out.status).json({ error: out.error ?? "Update failed" });
   }
-  await persistTasks();
+  await persistTasks({ ids: out.touchedIds });
   // Ensure parentId/childId determinism even when dueDate changes series prefix.
   await rebuildParentAndChildIdsDeterministic();
 
@@ -2833,7 +2850,7 @@ app.put("/api/tasks/:id", async (req, res) => {
     } else {
       syncProjectIdForParent(parentIdAfter);
     }
-    await persistTasks();
+    await persistTasks({ ids: taskIdsSharingParent(parentIdAfter) });
   }
   const updated = tasks.find((t) => t.id === id) ?? updatedAfterRebuild;
   res.json(updated);
@@ -2862,6 +2879,7 @@ app.post("/api/tasks/batch-update", async (req, res) => {
   }
 
   const updatedIds: string[] = [];
+  const touchedIds = new Set<string>();
   const projectChangedById = new Map<string, boolean>();
   const failed: Array<{ id: string; status: number; error?: unknown }> = [];
 
@@ -2872,11 +2890,12 @@ app.post("/api/tasks/batch-update", async (req, res) => {
       continue;
     }
     updatedIds.push(out.updatedId);
+    for (const tid of out.touchedIds) touchedIds.add(tid);
     projectChangedById.set(out.updatedId, out.projectChanged);
   }
 
   if (updatedIds.length > 0) {
-    await persistTasks();
+    await persistTasks({ ids: [...touchedIds] });
     await rebuildParentAndChildIdsDeterministic();
 
     const parentAction = new Map<string, "force" | "sync">();
@@ -2887,14 +2906,16 @@ app.post("/api/tasks/batch-update", async (req, res) => {
       const prev = parentAction.get(row.parentId);
       if (!prev || mode === "force") parentAction.set(row.parentId, mode);
     }
+    const siblingIds = new Set<string>();
     for (const [parentId, mode] of parentAction.entries()) {
       const row = tasks.find((t) => t.parentId === parentId);
       if (!row) continue;
       if (mode === "force") forceProjectIdForParent(parentId, row.projectId ?? null);
       else syncProjectIdForParent(parentId);
+      for (const sid of taskIdsSharingParent(parentId)) siblingIds.add(sid);
     }
-    if (parentAction.size > 0) {
-      await persistTasks();
+    if (siblingIds.size > 0) {
+      await persistTasks({ ids: [...siblingIds] });
     }
   }
 
