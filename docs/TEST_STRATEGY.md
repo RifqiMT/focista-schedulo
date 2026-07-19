@@ -1,6 +1,6 @@
 # Test Strategy
 
-**Last updated:** 2026-07-18  
+**Last updated:** 2026-07-19  
 **Owner:** Engineering + QA
 
 ---
@@ -16,6 +16,7 @@ Provide a practical and auditable testing strategy that validates functional cor
 | Layer | Scope | Current Mechanism |
 |---|---|---|
 | Unit tests | Isolated logic (profile security/service, badge rules, grinding, Blob helpers, storage selection) | Backend `vitest` |
+| Unit tests | Task free-text search haystack / token matching | Frontend `vitest` (`src/utils/taskSearch.test.ts`) |
 | Integration tests | Route behavior and persistence invariants | Backend route-level verification (manual + scripted) |
 | UI regression checks | Task/project/profile flows, filters, calendar/day agenda, Progress | Frontend manual smoke suite |
 | Documentation verification | Requirement-to-code consistency | Traceability + crosswalk audit |
@@ -32,10 +33,21 @@ Provide a practical and auditable testing strategy that validates functional cor
 | `profileSecurity.test.ts` | Password hashing/verification |
 | `blobTransfer.test.ts` | Blob transfer utilities |
 | `storage/storage.test.ts` | Storage kind resolution / adapters |
+| `productivitySummaryService.test.ts` | Period ranges, digests, progress-date semantics, degraded local brief |
+| `importParse.test.ts` | Per-row import validation and soft coercion |
 
-**Commands:** `npm run test` (root) or `npm --workspace backend run test`
+### Current frontend unit test inventory
 
-**Gap (documented):** Automated frontend component/E2E suite is not yet established; UI coverage is manual smoke until added.
+| Test file | Coverage |
+|---|---|
+| `utils/taskSearch.test.ts` | Haystack indexing; AND token match |
+| `utils/chartYAxis.test.ts` | `niceYDomain` / `buildYTicks` spacing and label dedupe |
+
+**Commands:**
+- Backend: `npm run test` (root) or `npm --workspace backend run test`
+- Frontend utils: `npm --workspace frontend run test`
+
+**Gap (documented):** Automated frontend component/E2E suite is not yet established; UI coverage is mostly manual smoke. Pure utils (task search, chart Y-axis) use frontend `vitest`.
 
 ---
 
@@ -74,6 +86,11 @@ Provide a practical and auditable testing strategy that validates functional cor
 9. **Feedback layering**
    - Exclusive tooltip slot: opening a new tooltip dismisses the previous; toasts dismiss tooltips.
    - Single toast queue (no multi-toast stack).
+10. **Productivity Summary (AI)**
+   - Period resolution covers day/week/sprint/month/bimonth/quarter/semester/year, next_* forward ranges, and custom (unit-tested).
+   - Missing `GROQ_API_KEY` → `503` with clear message; UI surfaces friendly guidance.
+   - Generate summary and Ask stay profile-scoped; empty digests do not invent completions.
+   - Optional Tavily enrich fails soft (summary/ask still returns from task data).
 
 ---
 

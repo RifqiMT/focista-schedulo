@@ -1,6 +1,6 @@
 # User Personas
 
-**Last updated:** 2026-07-18  
+**Last updated:** 2026-07-19  
 **Owner:** Product
 
 ---
@@ -110,11 +110,11 @@ Recurrence engine, historical loading, completion robustness, day-agenda timelin
 1. Complete prioritized tasks during the day
 2. Review Progress panel: streak, XP, calendar-week chart
 3. Hover bars for weekday-historical context
-4. Open Analysis for longitudinal trends; export badges as PNG
+4. Open Analysis for longitudinal trends; open **Summary** for AI period overviews and task Q&A; export badges as PNG
 
 **Success criteria**
 
-- Stats and productivity analysis remain reliable and profile-aware
+- Stats, productivity analysis, and AI summaries remain reliable and profile-aware
 - Milestone feedback is timely and understandable
 - Achievement and milestone cards use short plain-English descriptions that match shipped formulas
 - The **current-week** completion chart and **weekday-context** tooltips make daily performance interpretable without exporting data
@@ -123,7 +123,7 @@ Recurrence engine, historical loading, completion robustness, day-agenda timelin
 
 **Highest-value features**
 
-Stats, productivity insights, badges, streaks, weekly progress chart, PNG badge export, grinding milestones
+Stats, productivity insights, AI Productivity Summary (Groq/Tavily), badges, streaks, weekly progress chart, PNG badge export, grinding milestones
 
 ---
 
@@ -202,11 +202,11 @@ Storage adapters, Blob transfer, auto sync/save, boot progress, `/health`, deplo
 
 | Persona | Highest Value Features |
 |---|---|
-| Multi-Context Professional | Profiles, project filters, bulk edit/move/delete, calendar planning, export Both |
+| Multi-Context Professional | Profiles, project filters, bulk edit/move/delete, calendar planning, export Both, task search |
 | Routine Builder | Recurrence engine, historical loading, completion robustness |
-| Progress-Motivated Planner | Stats, insights, badges, streaks, weekly chart, PNG export |
+| Progress-Motivated Planner | Stats, insights, badges, streaks, weekly chart, PNG export, AI Productivity Summary / Ask |
 | Showcase Presenter | Read-only `Test` profile, friendly blocked-action messaging |
-| Reliability-Conscious Operator | Blob persistence/transfer, auto sync/save, boot progress, health |
+| Reliability-Conscious Operator | Blob persistence/transfer, parts export fallback, per-row import, auto sync/save, boot progress, health, AI keys |
 
 ---
 

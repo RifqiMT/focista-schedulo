@@ -18,14 +18,31 @@ import {
 import { createDataStorage } from "./storage";
 import {
   INLINE_TRANSFER_MAX_BYTES,
+  EXPORT_TASKS_PAGE_SIZE,
   canUseBlobTransfer,
   createPresignedGetUrl,
   deleteBlobQuietly,
   handleBlobClientUpload,
+  inlineExportMaxBytes,
   putJsonBlob,
   readBlobText
 } from "./blobTransfer";
 import type { HandleUploadBody } from "@vercel/blob/client";
+import {
+  PeriodRangeError,
+  ProviderConfigError,
+  ProviderRequestError,
+  askProductivityQuestion,
+  generateProductivitySummary,
+  validateAiApiKey,
+  type SummaryPeriod
+} from "./productivitySummaryService";
+import {
+  coerceProfileImportRow,
+  coerceProjectImportRow,
+  coerceTaskImportRow,
+  parseImportArrayPerRow
+} from "./importParse";
 
 const app = express();
 const isVercel = Boolean(process.env.VERCEL);
@@ -48,7 +65,7 @@ if (FRONTEND_ORIGIN) {
 }
 app.use(compression());
 // Accept larger JSON bodies for import workflows.
-app.use(express.json({ limit: "10mb" }));
+app.use(express.json({ limit: isVercel ? "4mb" : "25mb" }));
 app.use((req, res, next) => {
   if (!req.path.startsWith("/api/")) return next();
   const started = performance.now();
@@ -3747,6 +3764,156 @@ app.get("/api/productivity-insights", (req, res) => {
   res.json(payload);
 });
 
+const SummaryPeriodSchema = z.enum([
+  "day",
+  "week",
+  "sprint",
+  "month",
+  "bimonth",
+  "quarter",
+  "semester",
+  "year",
+  "next_day",
+  "next_week",
+  "next_sprint",
+  "next_month",
+  "next_quarter",
+  "next_semester",
+  "next_year",
+  "custom"
+]);
+
+app.post("/api/ai-keys/validate", async (req, res) => {
+  res.setHeader("Cache-Control", "no-store");
+  const body = z
+    .object({
+      provider: z.enum(["groq", "tavily"]),
+      apiKey: z.string().max(512)
+    })
+    .safeParse(req.body ?? {});
+  if (!body.success) {
+    return res.status(400).json({ ok: false, error: "Invalid validation request." });
+  }
+  try {
+    const result = await validateAiApiKey(body.data.provider, body.data.apiKey);
+    return res.json({ ok: true, ...result });
+  } catch (error) {
+    console.error("[ai-keys/validate]", error instanceof Error ? error.message : error);
+    return res.status(500).json({
+      ok: false,
+      provider: body.data.provider,
+      valid: false,
+      reason: "Validation failed unexpectedly. Please try again."
+    });
+  }
+});
+
+app.post("/api/productivity-summary", async (req, res) => {
+  res.setHeader("Cache-Control", "no-store");
+  const body = z
+    .object({
+      profileId: z.string().nullable().optional(),
+      period: SummaryPeriodSchema,
+      startDate: z.string().optional(),
+      endDate: z.string().optional(),
+      enrichWithWeb: z.boolean().optional(),
+      groqApiKey: z.string().max(512).optional(),
+      tavilyApiKey: z.string().max(512).optional()
+    })
+    .safeParse(req.body ?? {});
+  if (!body.success) {
+    return res.status(400).json({ ok: false, error: body.error.flatten() });
+  }
+
+  const { scopedTasks, scopedProjects } = scopedDataForProfile(body.data.profileId);
+  try {
+    const result = await generateProductivitySummary({
+      tasks: scopedTasks,
+      projects: scopedProjects.map((p) => ({ id: p.id, name: p.name })),
+      period: body.data.period as SummaryPeriod,
+      startDate: body.data.startDate,
+      endDate: body.data.endDate,
+      enrichWithWeb: body.data.enrichWithWeb,
+      groqApiKey: body.data.groqApiKey,
+      tavilyApiKey: body.data.tavilyApiKey
+    });
+    return res.json({ ok: true, ...result });
+  } catch (error) {
+    if (error instanceof PeriodRangeError) {
+      return res.status(400).json({ ok: false, error: error.message });
+    }
+    if (error instanceof ProviderConfigError) {
+      return res.status(503).json({ ok: false, error: error.message });
+    }
+    if (error instanceof ProviderRequestError) {
+      console.error("[productivity-summary]", error.message);
+      return res.status(502).json({
+        ok: false,
+        error: "Something went wrong generating the summary. Please try again."
+      });
+    }
+    console.error("[productivity-summary]", error);
+    return res.status(500).json({
+      ok: false,
+      error: "Something went wrong generating the summary. Please try again."
+    });
+  }
+});
+
+app.post("/api/productivity-summary/ask", async (req, res) => {
+  res.setHeader("Cache-Control", "no-store");
+  const body = z
+    .object({
+      profileId: z.string().nullable().optional(),
+      question: z.string().min(1).max(2000),
+      period: SummaryPeriodSchema.optional(),
+      startDate: z.string().optional(),
+      endDate: z.string().optional(),
+      enrichWithWeb: z.boolean().optional(),
+      groqApiKey: z.string().max(512).optional(),
+      tavilyApiKey: z.string().max(512).optional()
+    })
+    .safeParse(req.body ?? {});
+  if (!body.success) {
+    return res.status(400).json({ ok: false, error: body.error.flatten() });
+  }
+
+  const { scopedTasks, scopedProjects } = scopedDataForProfile(body.data.profileId);
+  try {
+    const result = await askProductivityQuestion({
+      tasks: scopedTasks,
+      projects: scopedProjects.map((p) => ({ id: p.id, name: p.name })),
+      question: body.data.question,
+      period: body.data.period as SummaryPeriod | undefined,
+      startDate: body.data.startDate,
+      endDate: body.data.endDate,
+      enrichWithWeb: body.data.enrichWithWeb,
+      groqApiKey: body.data.groqApiKey,
+      tavilyApiKey: body.data.tavilyApiKey
+    });
+    return res.json({ ok: true, ...result });
+  } catch (error) {
+    if (error instanceof PeriodRangeError) {
+      return res.status(400).json({ ok: false, error: error.message });
+    }
+    if (error instanceof ProviderConfigError) {
+      return res.status(503).json({ ok: false, error: error.message });
+    }
+    if (error instanceof ProviderRequestError) {
+      console.error("[productivity-summary/ask]", error.message);
+      return res.status(502).json({
+        ok: false,
+        error: "Something went wrong answering your question. Please try again."
+      });
+    }
+    console.error("[productivity-summary/ask]", error);
+    return res.status(500).json({
+      ok: false,
+      error: "Something went wrong answering your question. Please try again."
+    });
+  }
+});
+
 app.post("/api/admin/reload-data", async (_req, res) => {
   try {
     await loadData();
@@ -3814,11 +3981,71 @@ app.post("/api/admin/blob-upload", async (req, res) => {
   }
 });
 
+
+async function prepareExportEntities(profilePasswords: Record<string, string>): Promise<{
+  exportProfiles: Profile[];
+  exportProjects: Project[];
+  exportTasks: Task[];
+  deniedProfileNames: string[];
+}> {
+  const mergedProjects = mergeProjects([], projects);
+  const mergedTasks = mergeTasksPreferLatest([], tasks);
+  const mergedProfiles = mergeProfiles([], profiles);
+  const profileIdSet = new Set(mergedProfiles.map((p) => p.id));
+  const liveProjects = mergedProjects.filter(
+    (p) => !p.profileId || profileIdSet.has(p.profileId)
+  );
+  const liveProjectIdSet = new Set(liveProjects.map((p) => p.id));
+  const liveTasks = mergedTasks.filter((t) => {
+    if (t.cancelled) return false;
+    if (t.profileId && !profileIdSet.has(t.profileId)) return false;
+    if (t.projectId && !liveProjectIdSet.has(t.projectId)) return false;
+    return true;
+  });
+  const liveProfileIds = new Set<string>();
+  for (const p of liveProjects) {
+    if (p.profileId) liveProfileIds.add(p.profileId);
+  }
+  for (const t of liveTasks) {
+    if (t.profileId) liveProfileIds.add(t.profileId);
+  }
+  const liveProfiles = mergedProfiles.filter((p) => liveProfileIds.has(p.id));
+
+  const lockedProfiles = liveProfiles.filter((p) => !!p.passwordHash);
+  const deniedProfileIds = new Set<string>();
+  const deniedProfileNames: string[] = [];
+
+  for (const p of lockedProfiles) {
+    const password = profilePasswords[p.id];
+    if (!password) {
+      deniedProfileIds.add(p.id);
+      deniedProfileNames.push(p.name);
+      continue;
+    }
+    const valid = await verifyPassword(password, p.passwordHash!);
+    if (!valid) {
+      deniedProfileIds.add(p.id);
+      deniedProfileNames.push(p.name);
+    }
+  }
+
+  const exportProfiles = liveProfiles.filter((p) => !deniedProfileIds.has(p.id));
+  const exportProjects = liveProjects.filter((p) => !deniedProfileIds.has(p.profileId ?? ""));
+  const allowedProjectIds = new Set(exportProjects.map((p) => p.id));
+  const exportTasks = liveTasks.filter((t) => {
+    const profileAllowed = !deniedProfileIds.has(t.profileId ?? "");
+    const projectAllowed = !t.projectId || allowedProjectIds.has(t.projectId);
+    return profileAllowed && projectAllowed;
+  });
+
+  return { exportProfiles, exportProjects, exportTasks, deniedProfileNames };
+}
+
 app.post("/api/admin/export-data", async (req, res) => {
   const body = z
     .object({
       profilePasswords: z.record(z.string(), z.string()).optional(),
-      delivery: z.enum(["auto", "inline", "blob"]).optional()
+      delivery: z.enum(["auto", "inline", "blob", "parts"]).optional()
     })
     .safeParse(req.body ?? {});
   if (!body.success) {
@@ -3826,59 +4053,9 @@ app.post("/api/admin/export-data", async (req, res) => {
   }
 
   try {
-    // Always export from a merged, deduped snapshot.
-    const mergedProjects = mergeProjects([], projects);
-    const mergedTasks = mergeTasksPreferLatest([], tasks);
-    const mergedProfiles = mergeProfiles([], profiles);
-    const profileIdSet = new Set(mergedProfiles.map((p) => p.id));
-    const liveProjects = mergedProjects.filter(
-      (p) => !p.profileId || profileIdSet.has(p.profileId)
-    );
-    const liveProjectIdSet = new Set(liveProjects.map((p) => p.id));
-    const liveTasks = mergedTasks.filter((t) => {
-      // Deleted-like tasks (cancelled) should never be exported.
-      if (t.cancelled) return false;
-      // Keep profile/project linkage consistent in export payload.
-      if (t.profileId && !profileIdSet.has(t.profileId)) return false;
-      if (t.projectId && !liveProjectIdSet.has(t.projectId)) return false;
-      return true;
-    });
-    const liveProfileIds = new Set<string>();
-    for (const p of liveProjects) {
-      if (p.profileId) liveProfileIds.add(p.profileId);
-    }
-    for (const t of liveTasks) {
-      if (t.profileId) liveProfileIds.add(t.profileId);
-    }
-    const liveProfiles = mergedProfiles.filter((p) => liveProfileIds.has(p.id));
-
     const profilePasswords = body.data.profilePasswords ?? {};
-    const lockedProfiles = liveProfiles.filter((p) => !!p.passwordHash);
-    const deniedProfileIds = new Set<string>();
-    const deniedProfileNames: string[] = [];
-
-    for (const p of lockedProfiles) {
-      const password = profilePasswords[p.id];
-      if (!password) {
-        deniedProfileIds.add(p.id);
-        deniedProfileNames.push(p.name);
-        continue;
-      }
-      const valid = await verifyPassword(password, p.passwordHash!);
-      if (!valid) {
-        deniedProfileIds.add(p.id);
-        deniedProfileNames.push(p.name);
-      }
-    }
-
-    const exportProfiles = liveProfiles.filter((p) => !deniedProfileIds.has(p.id));
-    const exportProjects = liveProjects.filter((p) => !deniedProfileIds.has(p.profileId ?? ""));
-    const allowedProjectIds = new Set(exportProjects.map((p) => p.id));
-    const exportTasks = liveTasks.filter((t) => {
-      const profileAllowed = !deniedProfileIds.has(t.profileId ?? "");
-      const projectAllowed = !t.projectId || allowedProjectIds.has(t.projectId);
-      return profileAllowed && projectAllowed;
-    });
+    const { exportProfiles, exportProjects, exportTasks, deniedProfileNames } =
+      await prepareExportEntities(profilePasswords);
 
     const data = {
       app: "focista-schedulo",
@@ -3890,40 +4067,97 @@ app.post("/api/admin/export-data", async (req, res) => {
     const deliveryPref = body.data.delivery ?? "auto";
     const json = JSON.stringify(data);
     const bytes = Buffer.byteLength(json, "utf8");
+    const maxInline = inlineExportMaxBytes(isVercel);
     const preferBlob =
       deliveryPref === "blob" ||
       (deliveryPref === "auto" &&
         (isVercel || bytes > INLINE_TRANSFER_MAX_BYTES) &&
         canUseBlobTransfer());
+    const forceParts = deliveryPref === "parts";
 
-    if (preferBlob) {
-      const blob = await putJsonBlob(
-        `focista-schedulo/exports/export-${Date.now()}.json`,
-        json
-      );
-      const downloadUrl = await createPresignedGetUrl(blob.pathname);
+    if (preferBlob && !forceParts) {
+      try {
+        const blob = await putJsonBlob(
+          `focista-schedulo/exports/export-${Date.now()}.json`,
+          json
+        );
+        const downloadUrl = await createPresignedGetUrl(blob.pathname);
+        return res.json({
+          ok: true,
+          delivery: "blob",
+          pathname: blob.pathname,
+          downloadUrl,
+          byteLength: bytes,
+          excludedLockedProfiles: deniedProfileNames
+        });
+      } catch (blobErr) {
+        console.warn(
+          "[admin/export-data] Blob staging failed; falling back",
+          blobErr instanceof Error ? blobErr.message : blobErr
+        );
+        // Fall through to inline / parts.
+      }
+    }
+
+    if (!forceParts && bytes <= maxInline) {
       return res.json({
         ok: true,
-        delivery: "blob",
-        pathname: blob.pathname,
-        downloadUrl,
-        byteLength: bytes,
+        delivery: "inline",
+        data,
         excludedLockedProfiles: deniedProfileNames
       });
     }
 
-    if (bytes > INLINE_TRANSFER_MAX_BYTES) {
-      return res.status(413).json({
-        ok: false,
-        error:
-          "Export payload exceeds inline size limits and Blob transfer is unavailable. Configure BLOB_READ_WRITE_TOKEN."
-      });
-    }
-
+    // Large payload without usable Blob (or explicit parts): ship profiles/projects
+    // inline and let the client page tasks via /api/admin/export-tasks-page.
     return res.json({
       ok: true,
-      delivery: "inline",
-      data,
+      delivery: "parts",
+      data: {
+        app: data.app,
+        exportedAt: data.exportedAt,
+        profiles: exportProfiles,
+        projects: exportProjects,
+        tasks: [] as Task[]
+      },
+      tasksTotal: exportTasks.length,
+      tasksPageSize: EXPORT_TASKS_PAGE_SIZE,
+      byteLength: bytes,
+      excludedLockedProfiles: deniedProfileNames
+    });
+  } catch (error) {
+    return res.status(500).json({
+      ok: false,
+      error: error instanceof Error ? error.message : String(error)
+    });
+  }
+});
+
+app.post("/api/admin/export-tasks-page", async (req, res) => {
+  const body = z
+    .object({
+      profilePasswords: z.record(z.string(), z.string()).optional(),
+      offset: z.number().int().nonnegative().default(0),
+      limit: z.number().int().positive().max(1000).default(EXPORT_TASKS_PAGE_SIZE)
+    })
+    .safeParse(req.body ?? {});
+  if (!body.success) {
+    return res.status(400).json({ ok: false, error: body.error.flatten() });
+  }
+
+  try {
+    const { exportTasks, deniedProfileNames } = await prepareExportEntities(
+      body.data.profilePasswords ?? {}
+    );
+    const offset = body.data.offset;
+    const limit = body.data.limit;
+    const slice = exportTasks.slice(offset, offset + limit);
+    return res.json({
+      ok: true,
+      offset,
+      limit,
+      total: exportTasks.length,
+      tasks: slice,
       excludedLockedProfiles: deniedProfileNames
     });
   } catch (error) {
@@ -4034,30 +4268,48 @@ app.post("/api/admin/import", async (req, res) => {
           ? raw
           : [];
 
-      const pSafe = z.array(ProjectSchema).safeParse(projectsRaw);
-      const tSafe = z.array(TaskSchema).safeParse(tasksRaw);
-      const profileSafe = z.array(ProfileSchema).safeParse(profilesRaw);
-      const looseProfiles = parseProfilesLoose(Array.isArray(profilesRaw) ? profilesRaw : []);
-      if (!pSafe.success && !tSafe.success && !profileSafe.success && looseProfiles.length === 0) {
+      const pParsed = parseImportArrayPerRow(projectsRaw, ProjectSchema, coerceProjectImportRow);
+      const tParsed = parseImportArrayPerRow(tasksRaw, TaskSchema, coerceTaskImportRow);
+      const profileParsed = parseImportArrayPerRow(
+        profilesRaw,
+        ProfileSchema,
+        coerceProfileImportRow
+      );
+      const looseProfiles =
+        profileParsed.ok.length === 0
+          ? parseProfilesLoose(Array.isArray(profilesRaw) ? profilesRaw : [])
+          : [];
+      incomingProjects = pParsed.ok;
+      incomingTasks = tParsed.ok;
+      incomingProfiles = profileParsed.ok.length > 0 ? profileParsed.ok : looseProfiles;
+      droppedRows = {
+        projects: pParsed.dropped,
+        tasks: tParsed.dropped,
+        profiles:
+          profileParsed.ok.length > 0
+            ? profileParsed.dropped
+            : Math.max(0, profilesRaw.length - incomingProfiles.length)
+      };
+      if (
+        incomingProjects.length === 0 &&
+        incomingTasks.length === 0 &&
+        incomingProfiles.length === 0
+      ) {
         return res.status(400).json({
           ok: false,
           error:
             "Invalid JSON import payload: expected export object or loose array of projects/tasks/profiles"
         });
       }
-      incomingProjects = pSafe.success ? pSafe.data : [];
-      incomingTasks = tSafe.success ? tSafe.data : [];
-      incomingProfiles = profileSafe.success ? profileSafe.data : looseProfiles;
-      droppedRows = {
-        projects: pSafe.success ? Math.max(0, projectsRaw.length - incomingProjects.length) : projectsRaw.length,
-        tasks: tSafe.success ? Math.max(0, tasksRaw.length - incomingTasks.length) : tasksRaw.length,
-        profiles: Math.max(0, profilesRaw.length - incomingProfiles.length)
-      };
+      if (droppedRows.projects || droppedRows.tasks || droppedRows.profiles) {
+        console.warn("[admin/import] dropped invalid JSON rows", droppedRows);
+      }
     } else {
       const parsedCsv = parseCsv(content);
       if (parsedCsv.headers.length === 0) {
         return res.status(400).json({ ok: false, error: "CSV import failed: empty file" });
       }
+      let csvSkipped = { projects: 0, tasks: 0, profiles: 0 };
       const projectProfileHints = new Map<string, { name?: string; title?: string }>();
       const taskProfileHints = new Map<string, { name?: string; title?: string }>();
       for (const r of parsedCsv.rows) {
@@ -4065,7 +4317,10 @@ app.post("/api/admin/import", async (req, res) => {
         if (recordType === "project") {
           const id = (r["id"] ?? r["projectId"] ?? "").trim();
           const name = (r["projectNameOnly"] ?? r["projectName"] ?? r["name"] ?? "").trim();
-          if (!id || !name) continue;
+          if (!id || !name) {
+            csvSkipped.projects += 1;
+            continue;
+          }
           incomingProjects.push({
             id,
             name,
@@ -4088,7 +4343,10 @@ app.post("/api/admin/import", async (req, res) => {
           const id = (r["id"] ?? "").trim();
           const name = (r["profileName"] ?? r["name"] ?? "").trim();
           const title = (r["profileTitle"] ?? r["title"] ?? "").trim();
-          if (!id || !name || !title) continue;
+          if (!id || !name || !title) {
+            csvSkipped.profiles += 1;
+            continue;
+          }
           const nowIso = new Date().toISOString();
           incomingProfiles.push({
             id,
@@ -4104,7 +4362,10 @@ app.post("/api/admin/import", async (req, res) => {
           const id = (r["id"] ?? "").trim();
           const title = (r["title"] ?? "").trim();
           const priority = (r["priority"] ?? "medium").trim() as Task["priority"];
-          if (!id || !title) continue;
+          if (!id || !title) {
+            csvSkipped.tasks += 1;
+            continue;
+          }
           incomingTasks.push({
             id,
             title,
@@ -4112,11 +4373,17 @@ app.post("/api/admin/import", async (req, res) => {
             priority: ["low", "medium", "high", "urgent"].includes(priority) ? priority : "medium",
             dueDate: (r["dueDate"] ?? "").trim() || undefined,
             dueTime: (r["dueTime"] ?? "").trim() || undefined,
-            durationMinutes: parseIntOpt(r["durationMinutes"]),
+            durationMinutes: (() => {
+              const n = parseIntOpt(r["durationMinutes"]);
+              return n != null && n > 0 ? n : undefined;
+            })(),
             deadlineDate: (r["deadlineDate"] ?? "").trim() || undefined,
             deadlineTime: (r["deadlineTime"] ?? "").trim() || undefined,
             repeat: parseCsvRepeat(r["repeat"]),
-            repeatEvery: parseIntOpt(r["repeatEvery"]),
+            repeatEvery: (() => {
+              const n = parseIntOpt(r["repeatEvery"]);
+              return n != null && n > 0 ? n : undefined;
+            })(),
             repeatUnit: parseCsvRepeatUnit(r["repeatUnit"]),
             labels: parsePipeArray(r["labels"]),
             location: (r["location"] ?? "").trim() || undefined,
@@ -4227,18 +4494,36 @@ app.post("/api/admin/import", async (req, res) => {
         });
       }
 
-      // Validate what we built (drop invalid rows)
-      const safeProjects = z.array(ProjectSchema).safeParse(incomingProjects);
-      incomingProjects = safeProjects.success ? safeProjects.data : [];
-      const safeTasks = z.array(TaskSchema).safeParse(incomingTasks);
-      incomingTasks = safeTasks.success ? safeTasks.data : [];
-      const safeProfiles = z.array(ProfileSchema).safeParse(incomingProfiles);
-      incomingProfiles = safeProfiles.success ? safeProfiles.data : parseProfilesLoose(incomingProfiles);
+      // Per-row validate (never wipe a whole CSV entity array for one bad row).
+      const builtProfiles = incomingProfiles;
+      const safeProjects = parseImportArrayPerRow(
+        incomingProjects,
+        ProjectSchema,
+        coerceProjectImportRow
+      );
+      const safeTasks = parseImportArrayPerRow(incomingTasks, TaskSchema, coerceTaskImportRow);
+      const safeProfiles = parseImportArrayPerRow(
+        builtProfiles,
+        ProfileSchema,
+        coerceProfileImportRow
+      );
+      incomingProjects = safeProjects.ok;
+      incomingTasks = safeTasks.ok;
+      let profileValidateDropped = safeProfiles.dropped;
+      if (safeProfiles.ok.length > 0) {
+        incomingProfiles = safeProfiles.ok;
+      } else {
+        incomingProfiles = parseProfilesLoose(builtProfiles as unknown[]);
+        profileValidateDropped = Math.max(0, builtProfiles.length - incomingProfiles.length);
+      }
       droppedRows = {
-        projects: safeProjects.success ? 0 : 1,
-        tasks: safeTasks.success ? 0 : 1,
-        profiles: safeProfiles.success ? 0 : 0
+        projects: csvSkipped.projects + safeProjects.dropped,
+        tasks: csvSkipped.tasks + safeTasks.dropped,
+        profiles: csvSkipped.profiles + profileValidateDropped
       };
+      if (droppedRows.projects || droppedRows.tasks || droppedRows.profiles) {
+        console.warn("[admin/import] dropped invalid CSV rows", droppedRows);
+      }
     }
 
     // Guarantee profile records exist for any referenced non-null profileId in imported data.

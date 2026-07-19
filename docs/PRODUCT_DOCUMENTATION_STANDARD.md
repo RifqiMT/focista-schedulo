@@ -1,6 +1,6 @@
 # Product Documentation Standard
 
-**Last updated:** 2026-07-18  
+**Last updated:** 2026-07-19  
 **Owner:** Product (with Design + Engineering)
 
 This standard defines how product documentation is authored, reviewed, versioned, and maintained for Focista Schedulo.
@@ -100,6 +100,15 @@ When toast or tooltip behavior changes:
 
 1. Document exclusive-overlay and single-toast invariants in Design Guidelines, Guardrails, Architecture, and Stories.
 2. Keep `uiExclusiveOverlay.ts` as the single source of exclusivity unless an approved redesign replaces it.
+
+### 4.4 AI and secrets discipline
+
+When Productivity Summary, Ask, or AI key flows change:
+
+1. Update `API_CONTRACTS.md`, `VARIABLES.md` (periods, digests, `degraded`, `pst.aiKeys`), and deployment env tables.
+2. Document never-log key policy and client vs server key precedence in Guardrails.
+3. Keep degraded local-brief behavior explicit in PRD NFRs and Test Strategy.
+4. Add/adjust stories (US-409–US-413) and FR-21/FR-24 as needed.
 
 ---
 

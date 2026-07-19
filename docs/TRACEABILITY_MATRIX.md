@@ -1,6 +1,6 @@
 # Enterprise Traceability Matrix
 
-**Last updated:** 2026-07-18  
+**Last updated:** 2026-07-19  
 **Owner:** Product Operations
 
 ---
@@ -22,19 +22,23 @@ Map functional and non-functional requirements to personas, user stories, primar
 | FR-05 | Calendar/day-agenda planning | A, C | US-302 | `TaskBoard.tsx` calendar/day-agenda | UI functional verification | PM-01 |
 | FR-06 | Batch operations performance | A | US-203 | `/api/tasks/batch-update`, `/api/tasks/batch-delete`, TaskBoard bulk flows | Latency + correctness checks | PM-04, EM-04 |
 | FR-07 | Progress and insights analytics | C | US-401, US-402, US-403, US-404, US-405 | `/api/stats`, `/api/productivity-insights`, `GamificationPanel.tsx`, `ProductivityAnalysisModal.tsx`, `badgePngExport.ts`, `BadgesModalDialogBody.tsx`, grinding/milestone modules | Endpoint + UI parity; tooltip/PNG smoke | NSM-01, EM-01–EM-07 |
+| FR-21 | AI Productivity Summary + task Q&A | C | US-409, US-410 | `/api/productivity-summary`, `/api/productivity-summary/ask`, `productivitySummaryService.ts`, `ProductivitySummaryModal.tsx`, Tasks toolbar Summary | Period digest + missing-key 503; ask grounded answers; degraded local brief | EM-03, EM-09 |
 | FR-08 | Data import/export + automated save/sync | A, C, E | US-501, US-502, US-503 | Admin routes; Import/Export in `App.tsx` / `TaskBoard.tsx`; `autoSyncAndSave` | Data operation smoke tests | PM-05, PM-06, QM-01 |
 | FR-09 | Historical task navigation | B, C | US-302 | Paginated `/api/tasks` + history controls in `TaskBoard.tsx` | History loading/jump checks | PM-01 |
 | FR-10 | Non-monolith runtime persistence | A, B, C, E | US-503 | `backend/src/storage/*`, load/persist in `index.ts` | Persistence audit + storage unit tests | QM-03 |
 | FR-11 | Friendly root-cause error feedback | A–E | US-601 | `frontend/src/utils/friendlyError.ts`; toast usages | Error-path validation | PM-07 |
 | FR-12 | Showcase read-only profile enforcement | D | US-602 | Read-only guards in `backend/src/index.ts`; UI disable gates | Blocked mutation regression | PM-08 |
 | FR-13 | Vercel Prod split hosting + Blob store | A, E | US-503 | `frontend/vercel.json`, `vite.config.ts`, env wiring, `DEPLOYMENT_VERCEL.md` | Vercel build guard + `/health` storage check | QM-02 |
-| FR-14 | Large-payload import/export via Blob staging | A, E | US-504 | `blobTransfer.ts`, `blobImport.ts`, `/api/admin/blob-upload`, import/export admin routes | Large payload smoke; `413` messaging | PM-09 |
+| FR-14 | Large-payload import/export via Blob staging | A, E | US-504 | `blobTransfer.ts`, `blobImport.ts`, `/api/admin/blob-upload`, import/export admin routes, `/api/admin/export-tasks-page` | Large payload smoke; parts fallback; `413` messaging | PM-09 |
 | FR-15 | Calendar-week progress chart + rich tooltips | C | US-403, US-404 | `/api/stats` `last7Days` builder; `GamificationPanel.tsx` | Weekly bar/tooltip review | EM-05 |
 | FR-16 | Badge PNG export + modal naming | C | US-405 | `badgePngExport.ts`, `BadgesModalDialogBody.tsx` | PNG export smoke | EM-06 |
 | FR-17 | Lock affordance for protected profiles | A | US-406 | `ProfileManagement.tsx` | Visual lock review | PM-02 |
 | FR-18 | Staged profile boot progress + fast-path load | E | US-103 | `App.tsx` / `ProfileManagement.tsx` load orchestration; profiles runtime fast path | Boot UX validation | PM-10 |
 | FR-19 | Plain-English achievement/milestone descriptions | C | US-407 | `/api/stats` achievement + milestone `description` fields; `badgesEarnedMilestone.ts`; `GamificationPanel.tsx` | Copy/UI parity vs `VARIABLES.md` | EM-05 |
 | FR-20 | Exclusive tooltip + single-toast feedback | A–E | US-408 | `uiExclusiveOverlay.ts`; `App.tsx` `enqueueToast`; TaskBoard / GamificationPanel / ProductivityAnalysisModal | Overlay exclusivity smoke | PM-07 |
+| FR-22 | Per-row import validation + soft coercion | A, E | US-412, US-501 | `backend/src/importParse.ts`; admin import in `index.ts` | importParse unit tests + import toast skip counts | PM-06, QM-01 |
+| FR-23 | Comprehensive task search (AND tokens) | A | US-411 | `frontend/src/utils/taskSearch.ts`; TaskBoard search input | taskSearch unit tests + UI smoke | PM-01 |
+| FR-24 | Browser-local AI keys + live validation | C, E | US-413 | `aiKeys.ts`, `AiKeysModal.tsx`, `POST /api/ai-keys/validate` | Format + live validate smoke; never-log check | EM-09 |
 
 ---
 
@@ -66,7 +70,8 @@ Map functional and non-functional requirements to personas, user stories, primar
 | PM-09 | Large transfer success | Blob transfer admin flows | FR-14 |
 | PM-10 | Boot progress completeness | Boot UX path | FR-18 |
 | PM-03 | Recurrence integrity rate | Backend recurrence rules | FR-04 |
-| PM-05 / PM-06 | Export/import reliability | Admin route outcomes | FR-08, FR-14 |
+| EM-09 | Productivity Summary usage | Summary/Ask actions | FR-21, FR-24 |
+| PM-05 / PM-06 | Export/import reliability | Admin route outcomes + importParse skip accounting | FR-08, FR-14, FR-22 |
 
 ---
 

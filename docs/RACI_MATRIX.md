@@ -1,6 +1,6 @@
 # RACI Matrix
 
-**Last updated:** 2026-07-18  
+**Last updated:** 2026-07-19  
 **Owner:** Product Operations
 
 ---
@@ -43,6 +43,8 @@ Legend:
 | Recurrence integrity and data safeguards | I | A | C | R | I | C | I |
 | Friendly error-message UX quality | C | A | R | R | C | I | I |
 | Exclusive tooltip + single-toast layering | C | A | R | I | C | I | I |
+| AI Productivity Summary / Ask | C | A | R | R | C | C | I |
+| AI keys modal + never-log secrets | C | A | R | R | C | I | I |
 | Progress chart / tooltip / badge export UX | C | A | R | C | C | C | I |
 | Blob persistence and large transfer paths | C | A | C | R | I | I | I |
 | Automated sync/save and boot progress UX | C | A | R | C | C | I | I |

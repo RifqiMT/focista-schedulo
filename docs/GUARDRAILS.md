@@ -1,6 +1,6 @@
 # Product and Engineering Guardrails
 
-**Last updated:** 2026-07-18  
+**Last updated:** 2026-07-19  
 **Owner:** Product + Engineering
 
 ---
@@ -36,8 +36,12 @@ Define the technical and business limitations that bound safe product developmen
 - Maintain graceful recovery on API mutation failures.
 - Any read-only business policy must be enforced server-side, not UI-only.
 - Centralize user-facing error interpretation to ensure clear root-cause messaging.
-- Large import/export on constrained serverless body limits must use **Blob staging** (`blobPathname` / presigned download); do not rely on raising Hobby body limits as the primary strategy.
+- Large import/export on constrained serverless body limits must use **Blob staging** when available (`blobPathname` / presigned download). When Blob is unavailable, large **exports** must fall back to **parts** paging (`/api/admin/export-tasks-page`) rather than failing with `413`.
+- Import must never fail an entire entity array because of one malformed row; coerce common quirks and drop invalid rows individually (`droppedRows` in the response).
 - Do not force expensive full sync/save on every application boot in production; prefer post-import automation and quiet reload patterns.
+- **LLM secrets are server-only by default:** `GROQ_API_KEY` and `TAVILY_API_KEY` must never be exposed as `VITE_*`. Users may optionally store keys in **browser localStorage** (`pst.aiKeys`) via the **AI keys** header and send them only to `/api/productivity-summary*` and `/api/ai-keys/validate`. Never log client or server API keys.
+- AI summaries must be grounded in profile-scoped task digests; do not invent completed work. Cap highlight lists to bound latency/cost.
+- Missing Groq configuration must fail closed with `503` and a clear operator message — not a silent empty hallucination.
 - Long-running Node API process is required for in-memory working set and SSE; do not assume purely stateless per-request diskless compute without redesign.
 
 ---
@@ -62,14 +66,17 @@ Define the technical and business limitations that bound safe product developmen
 - Require password confirmation for deleting password-protected profiles.
 - Require `FRONTEND_ORIGIN` in production API environments.
 - Exclude tokens, hashes, and stack traces from user-facing error toasts.
+- Never log Groq/Tavily API keys (server env or client-supplied `groqApiKey` / `tavilyApiKey`).
+- Format-validate AI keys before live provider pings (`POST /api/ai-keys/validate`).
 
 ---
 
 ## Data and Transfer Guardrails
 
 - Import must merge/dedupe rather than blindly overwrite without safeguards.
+- Import must validate **per row** (`importParse.ts`) so one malformed row cannot discard an entire array; report skip counts accurately.
 - Export modes: JSON, CSV, Both — document and test each.
-- When Blob transfer is not configured and payloads exceed inline limits, return clear `413` with actionable guidance.
+- When Blob transfer is not configured and **import** payloads exceed limits, return clear `413` with actionable guidance. Large **exports** must use parts paging instead of failing.
 - Import body must provide **exactly one** of `content` or `blobPathname`.
 - Treat presigned export URLs as short-lived; do not log them in durable public logs.
 
@@ -87,6 +94,8 @@ Before release:
 6. Verify friendly errors on top failure paths (including `413`).
 7. Update docs + traceability + changelog in the same release cycle.
 8. Confirm deployment env vars for the target topology (`DEPLOYMENT_VERCEL.md`).
+9. Verify Productivity Summary / Ask (including missing-key and degraded paths) when AI is in scope.
+10. Verify task search AND matching and per-row import skip accounting.
 
 ---
 

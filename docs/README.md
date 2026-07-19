@@ -1,6 +1,6 @@
 # Focista Schedulo Documentation Index
 
-**Last updated:** 2026-07-18  
+**Last updated:** 2026-07-19  
 **Owner:** Product Operations
 
 This index provides a complete map of product, engineering, design, analytics, and governance documentation for Focista Schedulo.
@@ -92,11 +92,15 @@ The documentation suite covers:
 
 ## Currency Note
 
-Baseline aligned to shipped behavior as of **2026-07-18**, including:
+Baseline aligned to shipped behavior as of **2026-07-19**, including:
 
 - Automated sync/save (no manual Sync/Save header buttons)
-- Blob-staged large import/export
+- Blob-staged large import/export and export **parts** paging fallback
+- Per-row import validation with soft coercion
 - Staged profile boot progress and production fast-path profile loading
 - Calendar-week progress series under legacy key `last7Days`
 - Pluggable `fs` / `vercel-blob` storage without Redis/MongoDB
 - Plain-English achievement/milestone descriptions; exclusive tooltip + single-toast feedback
+- AI Productivity Summary / Ask (Groq + optional Tavily) with degraded local brief and browser AI keys
+- Comprehensive free-text task search (AND tokens)
+- Analysis chart nice Y-axis ticks and Raw/Average dual-series palette

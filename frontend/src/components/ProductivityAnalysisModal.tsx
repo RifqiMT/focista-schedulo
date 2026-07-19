@@ -20,6 +20,11 @@ import {
 } from "../productivityAnalysisFullscreen";
 import { apiFetch, apiUrl } from "../apiClient";
 import { claimExclusiveTooltip } from "../uiExclusiveOverlay";
+import {
+  buildYTicks,
+  formatYTickLabel,
+  niceYDomain
+} from "../utils/chartYAxis";
 
 type Timeframe = "daily" | "weekly" | "monthly" | "quarterly" | "annually";
 
@@ -669,101 +674,6 @@ function xSvgToLeftPercent(xSvg: number): number {
   return (xSvg / VB_W) * 100;
 }
 
-/** Nice round step for axis scales (Wilkinson-style). */
-function niceNumber(range: number, round: boolean): number {
-  if (!(range > 0) || !Number.isFinite(range)) return 1;
-  const exponent = Math.floor(Math.log10(range));
-  const fraction = range / 10 ** exponent;
-  let niceFraction: number;
-  if (round) {
-    if (fraction < 1.5) niceFraction = 1;
-    else if (fraction < 3) niceFraction = 2;
-    else if (fraction < 7) niceFraction = 5;
-    else niceFraction = 10;
-  } else {
-    if (fraction <= 1) niceFraction = 1;
-    else if (fraction <= 2) niceFraction = 2;
-    else if (fraction <= 5) niceFraction = 5;
-    else niceFraction = 10;
-  }
-  return niceFraction * 10 ** exponent;
-}
-
-/**
- * Snap a raw [yMin, yMax] domain to a clean axis scale shared by all PA charts.
- * Prefer integer-friendly steps when values look like counts.
- *
- * `tight: true` only floor/ceils to integers and never expands past the padded
- * extent (avoids 7 → 8.4 pad → 10 “nice” overshoot).
- */
-function niceYDomain(
-  rawMin: number,
-  rawMax: number,
-  opts?: { preferInteger?: boolean; maxTicks?: number; tight?: boolean }
-): { yMin: number; yMax: number } {
-  const maxTicks = opts?.maxTicks ?? 4;
-  let lo = Number.isFinite(rawMin) ? rawMin : 0;
-  let hi = Number.isFinite(rawMax) ? rawMax : 1;
-  if (hi <= lo) hi = lo + 1;
-
-  const preferInteger =
-    opts?.preferInteger === true ||
-    (Math.abs(lo - Math.round(lo)) < 1e-6 &&
-      Math.abs(hi - Math.round(hi)) < 1e-6 &&
-      hi - lo <= 1000);
-
-  if (opts?.tight) {
-    if (preferInteger) {
-      lo = Math.floor(lo);
-      hi = Math.ceil(hi);
-      if (hi <= lo) hi = lo + 1;
-      return { yMin: lo, yMax: hi };
-    }
-    return { yMin: lo, yMax: hi };
-  }
-
-  if (preferInteger) {
-    lo = Math.floor(lo);
-    hi = Math.ceil(hi);
-    const span = Math.max(1, hi - lo);
-    let step = Math.max(1, Math.round(niceNumber(span / maxTicks, true)));
-    if (step < 1) step = 1;
-    lo = Math.floor(lo / step) * step;
-    if (lo > 0 && rawMin === 0) lo = 0;
-    hi = lo + step * Math.max(1, Math.ceil((hi - lo) / step));
-    // Ensure headroom above the data when we snapped tightly to max
-    if (hi < rawMax) hi += step;
-    return { yMin: lo, yMax: hi };
-  }
-
-  const span = niceNumber(hi - lo, false);
-  const step = niceNumber(span / maxTicks, true);
-  lo = Math.floor(lo / step) * step;
-  hi = Math.ceil(hi / step) * step;
-  if (hi <= lo) hi = lo + step;
-  return { yMin: lo, yMax: hi };
-}
-
-/** Evenly spaced tick values on a (preferably nice) domain. */
-function buildYTicks(yMin: number, yMax: number, preferredCount = 4): number[] {
-  const span = yMax - yMin;
-  if (!(span > 0) || !Number.isFinite(span)) return [yMin];
-  const step = niceNumber(span / preferredCount, true);
-  const start = Math.ceil((yMin - step * 1e-9) / step) * step;
-  const ticks: number[] = [];
-  const guard = preferredCount + 8;
-  for (let i = 0, v = start; v <= yMax + step * 1e-6 && i < guard; i++, v = start + i * step) {
-    const snapped = Math.abs(v) < 1e-9 ? 0 : Number(v.toPrecision(12));
-    if (snapped + step * 1e-6 >= yMin && snapped - step * 1e-6 <= yMax) {
-      ticks.push(snapped);
-    }
-  }
-  if (ticks.length === 0) return [yMin, yMax];
-  if (Math.abs(ticks[0]! - yMin) > step * 0.01) ticks.unshift(yMin);
-  if (Math.abs(ticks[ticks.length - 1]! - yMax) > step * 0.01) ticks.push(yMax);
-  return ticks;
-}
-
 /** Value-axis padding: min = dataMin − 20%·|dataMin|, max = dataMax + 20%·|dataMax|. */
 const Y_AXIS_PAD_RATIO = 0.2;
 
@@ -802,7 +712,7 @@ function paddedYExtent(
 
 function chartYDomain(
   points: { value: number }[],
-  cumulative: boolean,
+  _cumulative: boolean,
   extraPoints?: { value: number }[] | null
 ): { yMin: number; yMax: number } {
   const vals = [
@@ -812,44 +722,18 @@ function chartYDomain(
   if (vals.length === 0) return { yMin: 0, yMax: 1 };
   const { rawMin, rawMax, looksInteger } = paddedYExtent(vals, { clampMinZero: true });
   const span = rawMax - rawMin;
+  // Tight only for small count charts; large XP ranges need a nice tick grid
+  // so labels stay evenly spaced (no stacked "14k" / uneven 20k→21k gaps).
+  const useTight = looksInteger && rawMax <= 24 && span <= 24;
   return niceYDomain(rawMin, rawMax, {
-    preferInteger: looksInteger && (!cumulative || span < 50),
-    tight: true
+    preferInteger: looksInteger,
+    tight: useTight,
+    maxTicks: 4
   });
 }
 
 function formatYTick(v: number): string {
-  if (!Number.isFinite(v)) return "—";
-  const abs = Math.abs(v);
-  // Prefer clean integers on chart rails (avoids 1.1 / 2.3 noise).
-  if (Math.abs(v - Math.round(v)) < 1e-6) {
-    const rounded = Math.round(v);
-    if (Math.abs(rounded) >= 1_000_000) {
-      const n = rounded / 1_000_000;
-      return `${Number.isInteger(n) ? n : n.toFixed(1)}M`;
-    }
-    if (Math.abs(rounded) >= 10_000) {
-      return `${Math.round(rounded / 1000).toLocaleString()}k`;
-    }
-    if (Math.abs(rounded) >= 1000) {
-      const n = rounded / 1000;
-      return `${Math.abs(n - Math.round(n)) < 0.05 ? Math.round(n) : n.toFixed(1)}k`;
-    }
-    return rounded.toLocaleString();
-  }
-  if (abs >= 1_000_000) {
-    const n = v / 1_000_000;
-    return `${n >= 10 || Number.isInteger(n) ? Math.round(n) : n.toFixed(1)}M`;
-  }
-  if (abs >= 10_000) {
-    return `${Math.round(v / 1000).toLocaleString()}k`;
-  }
-  if (abs >= 1000) {
-    const n = v / 1000;
-    return `${n >= 10 || Math.abs(n - Math.round(n)) < 0.05 ? Math.round(n) : n.toFixed(1)}k`;
-  }
-  if (abs >= 10) return Math.round(v).toLocaleString();
-  return (+v.toFixed(1)).toLocaleString();
+  return formatYTickLabel(v);
 }
 
 /** Compact labels for the chart x-axis (tooltips keep the fuller format). */
@@ -985,8 +869,10 @@ const PA_EXPORT_X_ROT_DEG = -38;
 const PA_EXPORT_X_AXIS_DEPTH = 15.2;
 const PA_EXPORT_X_LEGEND_GAP = 3.35;
 const PA_EXPORT_BOTTOM_PAD = 3.6;
-const PA_EXPORT_COLOR_PRIMARY = "rgb(206, 17, 38)";
-const PA_EXPORT_COLOR_OVERLAY = "rgb(37, 99, 235)";
+const PA_EXPORT_COLOR_PRIMARY = "rgb(206, 17, 38)"; // Raw — brand red
+const PA_EXPORT_COLOR_OVERLAY = "rgb(37, 99, 235)"; // Average — blue (matches legend)
+const PA_CHART_COLOR_RAW = "#ce1126";
+const PA_CHART_COLOR_AVG = "#2563eb";
 
 type PaChartSvgRegistry = Map<string, SVGSVGElement>;
 
@@ -2288,12 +2174,13 @@ function InsightChart({
                 className={`pa-chart-line pa-chart-line-primary${
                   overlayVisible ? " pa-chart-line-primary--muted" : ""
                 }`}
-                stroke="currentColor"
-                strokeWidth={overlayVisible ? Math.max(1.15, strokeW * 0.85) : strokeW}
+                stroke={PA_CHART_COLOR_RAW}
+                strokeWidth={overlayVisible ? Math.max(1.25, strokeW * 0.9) : strokeW}
                 strokeLinejoin="round"
                 strokeLinecap="round"
+                strokeDasharray={overlayVisible ? "5 4" : undefined}
                 vectorEffect="non-scaling-stroke"
-                opacity={overlayVisible ? 0.55 : 1}
+                opacity={overlayVisible ? 0.78 : 1}
               />
             )}
             {showAvg && overlayLineD && (
@@ -2301,12 +2188,12 @@ function InsightChart({
                 d={overlayLineD}
                 fill="none"
                 className="pa-chart-line pa-chart-line-overlay"
-                stroke="currentColor"
-                strokeWidth={Math.max(1.7, strokeW * 1.25)}
+                stroke={PA_CHART_COLOR_AVG}
+                strokeWidth={Math.max(1.85, strokeW * 1.3)}
                 strokeLinejoin="round"
                 strokeLinecap="round"
                 vectorEffect="non-scaling-stroke"
-                opacity={0.98}
+                opacity={1}
               />
             )}
           </g>
@@ -4061,7 +3948,12 @@ export function ProductivityAnalysisModal({
     }
     if (vals.length === 0) return { yMin: 0, yMax: 1 };
     const { rawMin, rawMax, looksInteger } = paddedYExtent(vals, { clampMinZero: true });
-    return niceYDomain(rawMin, rawMax, { preferInteger: looksInteger, tight: true });
+    const span = rawMax - rawMin;
+    return niceYDomain(rawMin, rawMax, {
+      preferInteger: looksInteger,
+      tight: looksInteger && rawMax <= 24 && span <= 24,
+      maxTicks: 4
+    });
   }, [projectTasksSeries, visibleProjectTaskSeriesIds]);
 
   const projectXpYDomain = useMemo(() => {
@@ -4073,7 +3965,12 @@ export function ProductivityAnalysisModal({
     }
     if (vals.length === 0) return { yMin: 0, yMax: 1 };
     const { rawMin, rawMax, looksInteger } = paddedYExtent(vals, { clampMinZero: true });
-    return niceYDomain(rawMin, rawMax, { preferInteger: looksInteger, tight: true });
+    const span = rawMax - rawMin;
+    return niceYDomain(rawMin, rawMax, {
+      preferInteger: looksInteger,
+      tight: looksInteger && rawMax <= 24 && span <= 24,
+      maxTicks: 4
+    });
   }, [projectXpSeries, visibleProjectXpSeriesIds]);
 
   const toggleProjectSeries = (id: string) => {

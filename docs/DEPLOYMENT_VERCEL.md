@@ -1,6 +1,6 @@
 # Production deployment on Vercel (full-stack guidance)
 
-**Last updated:** 2026-07-18  
+**Last updated:** 2026-07-19  
 **Owner:** Engineering
 
 ---
@@ -118,6 +118,16 @@ Local `fs` remains the default when no Blob credentials are present (`STORAGE_BA
 
 **Required in production** (`NODE_ENV=production` or `FOCISTA_ENV=production`). If unset in production, the API process exits on startup.
 
+### Productivity Summary (optional AI)
+
+| Name | Example | Purpose |
+|---|---|---|
+| `GROQ_API_KEY` | `gsk_…` | Required for AI Summary / Ask routes |
+| `GROQ_MODEL` | `llama-3.3-70b-versatile` | Optional model override |
+| `TAVILY_API_KEY` | `tvly-…` | Optional web enrich for tips / Ask |
+
+These are **API-host secrets only** — never set `VITE_` prefixes for LLM keys.
+
 ---
 
 ## 5) Operational limitations to plan for
@@ -125,7 +135,7 @@ Local `fs` remains the default when no Blob credentials are present (`STORAGE_BA
 | Topic | Guidance |
 |---|---|
 | **SSE** (`/api/events`) | Works when UI and API share an origin **or** when API CORS allows the UI origin. Validate cross-origin EventSource from the Vercel domain. |
-| **Large imports / exports** | Vercel Hobby caps serverless request/response bodies (~4.5MB). Large transfers use **Vercel Blob staging**: client upload → `/api/admin/import` with `blobPathname`; export returns a short-lived presigned Blob URL. |
+| **Large imports / exports** | Vercel Hobby caps serverless request/response bodies (~4.5MB). Large **imports** use **Vercel Blob staging** when `BLOB_READ_WRITE_TOKEN` is set. Large **exports** prefer Blob; if Blob is unavailable they fall back to **parts** paging so export still succeeds. |
 | **Blob size / ops** | Full-file rewrites of large `tasks.runtime.json` count as uploads; monitor Hobby quotas. |
 | **Hot reload** | `fs.watch` is **disabled** on Blob; use admin reload/sync or process restart after external Blob edits. |
 | **Secrets** | Never commit tokens or `.env` files. Configure secrets in Vercel/API host dashboards only. |
@@ -145,9 +155,11 @@ Local `fs` remains the default when no Blob credentials are present (`STORAGE_BA
 - [ ] Boot shows staged profile loading progress; profiles can load before large tasks blob
 - [ ] Progress panel (`/api/stats`) matches active profile scope (calendar-week chart)
 - [ ] Productivity insights (`/api/productivity-insights`) loads for the active profile
+- [ ] Productivity Summary opens from Tasks toolbar; returns 503-friendly UI when `GROQ_API_KEY` unset; succeeds when configured
 - [ ] SSE / Progress panel live updates work from the Vercel origin
 - [ ] Runtime objects appear under the Blob store prefix in the Vercel dashboard
 - [ ] `FRONTEND_ORIGIN` set; `VITE_API_BASE_URL` set if split-hosted Production
+- [ ] Optional: `GROQ_API_KEY` (+ `TAVILY_API_KEY`) configured for AI Summary in the API environment
 
 ---
 

@@ -1,6 +1,6 @@
 # API Contracts
 
-**Last updated:** 2026-07-18  
+**Last updated:** 2026-07-19  
 **Owner:** Engineering
 
 Base local backend URL: `http://localhost:4000`
@@ -71,7 +71,37 @@ In production, the browser resolves the API origin via `frontend/src/apiClient.t
 |---|---|---|
 | `GET` | `/api/stats` | Progress, XP, streaks, milestones, weekly series |
 | `GET` | `/api/productivity-insights` | Historical productivity aggregates |
+| `POST` | `/api/productivity-summary` | AI period summary (Groq; optional Tavily) |
+| `POST` | `/api/productivity-summary/ask` | AI Q&A over profile-scoped tasks |
+| `POST` | `/api/ai-keys/validate` | Live Groq/Tavily key validation (never logged) |
 | `GET` | `/api/events` | SSE version/event updates |
+
+### `POST /api/productivity-summary`
+
+- **Body:** `{ profileId?, period, startDate?, endDate?, enrichWithWeb? }`
+- **`period`:** `day` \| `week` \| `sprint` \| `month` \| `bimonth` \| `quarter` \| `semester` \| `year` \| `next_day` \| `next_week` \| `next_sprint` \| `next_month` \| `next_quarter` \| `next_semester` \| `next_year` \| `custom`
+- **Custom:** requires `startDate` and `endDate` (`YYYY-MM-DD`, inclusive, start ≤ end).
+- **Body (optional):** `groqApiKey`, `tavilyApiKey` — browser-local keys from **AI keys** header; preferred over server env when present. Never logged.
+- **Secrets:** client keys or `GROQ_API_KEY` required; `TAVILY_API_KEY` / client Tavily optional for web enrich.
+- **Response:** `{ ok, summary, range, stats, sources, model, enriched, degraded? }`
+- **`degraded: true`:** local digest brief returned because Groq failed (rate limit / outage); still `200`.
+- **Errors:** `400` invalid range; `503` missing Groq key; rare `502`/`500` only if the request fails before a local brief can be built.
+
+### `POST /api/ai-keys/validate`
+
+- **Body:** `{ provider: "groq" | "tavily", apiKey }` (`apiKey` max 512 chars).
+- **Behavior:** format check, then a lightweight live provider request. Keys are never logged or stored.
+- **Response:** `{ ok, provider, valid, reason? }`
+- Rate-limit responses from the provider may return `valid: true` with an explanatory `reason`.
+
+### `POST /api/productivity-summary/ask`
+
+- **Body:** `{ profileId?, question, period?, startDate?, endDate?, enrichWithWeb? }`
+- **`question`:** 1–2000 characters.
+- **Default scope:** current sprint window when `period` omitted.
+- **Web enrich:** only when `enrichWithWeb: true`.
+- **Response:** `{ ok, answer, range, stats, sources, model, enriched, degraded? }`
+- **`degraded: true`:** local digest answer when Groq is unavailable.
 
 ### `GET /api/stats`
 
@@ -113,7 +143,8 @@ Other top-level fields (illustrative): `totalPoints`, `level`, `xpToNext`, `comp
 | `POST` | `/api/admin/save-data` | Persist in-memory state to storage |
 | `POST` | `/api/admin/sync-from-data` | Sync from interchange/data sources |
 | `POST` | `/api/admin/blob-upload` | Client upload handoff for large transfers |
-| `POST` | `/api/admin/export-data` | Export JSON/CSV/Both; may return presigned Blob URL for large payloads |
+| `POST` | `/api/admin/export-data` | Export JSON snapshot; may return inline, Blob URL, or parts manifest |
+| `POST` | `/api/admin/export-tasks-page` | Page of export tasks (used when `delivery: "parts"`) |
 | `POST` | `/api/admin/import` | Import JSON/CSV; body must include exactly one of `content` or `blobPathname` |
 
 ### Import body shape (conceptual)
@@ -128,10 +159,17 @@ Other top-level fields (illustrative): `totalPoints`, `level`, `xpToNext`, `comp
 
 Validation rule: **exactly one** of `content` or `blobPathname`.
 
-### Export / transfer errors
+Import parsing validates **per row** (with soft coercion for common quirks such as missing `labels`, string `link`, `durationMinutes: 0`). Invalid rows are skipped and reported in `droppedRows`; a single bad row must not discard the rest of that entity array.
 
-- If payload exceeds inline limits and Blob transfer is unavailable → **`413`** with actionable message.
-- Frontend maps `413` via `friendlyError.ts`.
+### Export delivery
+
+`POST /api/admin/export-data` returns one of:
+
+- **`inline`** — full `{ profiles, projects, tasks }` in the JSON body (local Dev allows up to ~24MB; Vercel ~3MB).
+- **`blob`** — short-lived `downloadUrl` when `BLOB_READ_WRITE_TOKEN` (or OIDC) is configured.
+- **`parts`** — profiles/projects inline; client pages tasks via `POST /api/admin/export-tasks-page` (no Blob required).
+
+Blob staging is preferred when available; if Blob fails or is unset, export falls back to inline or parts instead of hard-failing with `413`.
 
 ### Client automation note
 

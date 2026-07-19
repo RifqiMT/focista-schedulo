@@ -1,6 +1,6 @@
 # Release Checklist Template
 
-**Last updated:** 2026-07-18  
+**Last updated:** 2026-07-19  
 **Owner:** Product Operations + Engineering
 
 ---
@@ -39,6 +39,11 @@ Copy this template for each release (for example, `docs/releases/2026-07-18_docs
 - [ ] Progress weekly chart + tooltips + badge PNG export validated
 - [ ] Achievement/milestone plain-English descriptions validated against `VARIABLES.md`
 - [ ] Exclusive tooltip + single-toast layering validated (tooltip dismisses on toast)
+- [ ] Task free-text search AND matching validated across key attributes
+- [ ] Per-row import: invalid rows skipped; toast skip counts accurate
+- [ ] Export parts paging validated when Blob unavailable (or documented N/A for Blob-only targets)
+- [ ] Productivity Summary generate + Ask validated (key present / missing / degraded)
+- [ ] AI keys modal format + live validation; keys not logged
 
 Notes:
 

@@ -1,6 +1,6 @@
 # Docs-Code Crosswalk
 
-**Last updated:** 2026-07-18  
+**Last updated:** 2026-07-19  
 **Owner:** Engineering + Product Operations
 
 This file maps documentation artifacts to the primary implementation locations.
@@ -18,6 +18,12 @@ This file maps documentation artifacts to the primary implementation locations.
 | Progress panel, weekly chart, tooltips, badges | `GamificationPanel.tsx`, `BadgesModalDialogBody.tsx`, `badgePngExport.ts`; `/api/stats` (incl. calendar-week `last7Days`) in `backend/src/index.ts` |
 | Grinding and badge milestones | `monthlyGrinding.ts`, `yearlyGrinding.ts`, `badgesEarnedMilestone.ts`, `capMilestoneBadges.ts` |
 | Productivity analysis | `ProductivityAnalysisModal.tsx`, `/api/productivity-insights` |
+| Productivity Summary (AI) | `ProductivitySummaryModal.tsx`, `productivitySummaryService.ts`, `/api/productivity-summary`, `/api/productivity-summary/ask` |
+| Local AI keys | `aiKeys.ts`, `AiKeysModal.tsx`, header **AI keys** in `App.tsx`; `POST /api/ai-keys/validate` |
+| Per-row import validation | `backend/src/importParse.ts` (+ `importParse.test.ts`); admin import in `index.ts` |
+| Task free-text search | `frontend/src/utils/taskSearch.ts` (+ test); TaskBoard search |
+| Analysis chart Y-axis | `frontend/src/utils/chartYAxis.ts` (`niceYDomain`, `buildYTicks`); `ProductivityAnalysisModal.tsx` |
+| Export parts paging | `POST /api/admin/export-tasks-page`; export `delivery: "parts"` in `index.ts` / App export flow |
 | Fullscreen helpers | `fullscreenApi.ts`, `badgeFullscreen.ts`, `productivityAnalysisFullscreen.ts` |
 | Runtime persistence model | `backend/src/storage/*`, persistence helpers in `backend/src/index.ts`, local `backend/data/*.runtime.json` or Vercel Blob prefix |
 | Automated sync/save (no header buttons) | `autoSyncAndSave` in `frontend/src/App.tsx` (post-import; quiet reload-data on tab return) |
@@ -49,7 +55,9 @@ This file maps documentation artifacts to the primary implementation locations.
 - [ ] Weekly progress: `last7Days` in `/api/stats` is documented as a **calendar-week** (Mon–Sun) series, not a rolling seven-day window
 - [ ] Achievement/milestone `description` fields and canonical copy table are documented in `VARIABLES.md` / `API_CONTRACTS.md`
 - [ ] Exclusive tooltip + single-toast behavior is documented in Design, Architecture, Guardrails, and Stories (US-408)
-- [ ] Traceability matrix includes FR-13–FR-20 and US-103 / US-504 / US-407 / US-408
+- [ ] Productivity Summary + AI keys + degraded mode documented (FR-21/FR-24, US-409/410/413)
+- [ ] Per-row import + task search + chart Y-axis + export parts documented (FR-22/23, US-411/412)
+- [ ] Traceability matrix includes FR-13–FR-24 and related US IDs
 
 ---
 

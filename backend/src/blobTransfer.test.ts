@@ -1,10 +1,22 @@
 import { describe, expect, it } from "vitest";
-import { INLINE_TRANSFER_MAX_BYTES, blobAccess, canUseBlobTransfer } from "./blobTransfer";
+import {
+  INLINE_TRANSFER_MAX_BYTES,
+  LOCAL_INLINE_TRANSFER_MAX_BYTES,
+  blobAccess,
+  canUseBlobTransfer,
+  inlineExportMaxBytes
+} from "./blobTransfer";
 
 describe("blobTransfer", () => {
   it("keeps inline transfer under Vercel Hobby body limits", () => {
     expect(INLINE_TRANSFER_MAX_BYTES).toBeLessThan(4.5 * 1024 * 1024);
     expect(INLINE_TRANSFER_MAX_BYTES).toBeGreaterThan(1024 * 1024);
+  });
+
+  it("allows a larger inline export ceiling off Vercel", () => {
+    expect(LOCAL_INLINE_TRANSFER_MAX_BYTES).toBeGreaterThan(INLINE_TRANSFER_MAX_BYTES);
+    expect(inlineExportMaxBytes(true)).toBe(INLINE_TRANSFER_MAX_BYTES);
+    expect(inlineExportMaxBytes(false)).toBe(LOCAL_INLINE_TRANSFER_MAX_BYTES);
   });
 
   it("defaults blob access to private", () => {

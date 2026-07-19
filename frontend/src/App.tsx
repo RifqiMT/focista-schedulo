@@ -14,6 +14,8 @@ import { dismissExclusiveTooltip } from "./uiExclusiveOverlay";
 import { getFriendlyErrorMessage } from "./utils/friendlyError";
 import { apiFetch, apiUrl } from "./apiClient";
 import { shouldStageImportViaBlob, uploadImportFileToBlob } from "./blobImport";
+import { AiKeysModal } from "./components/AiKeysModal";
+import { AI_KEYS_CHANGED_EVENT, hasAnyAiKey, hasGroqKey, loadAiKeys } from "./aiKeys";
 
 type TimeScope =
   | "all"
@@ -38,6 +40,8 @@ export function App() {
   const [timeScope, setTimeScope] = useState<TimeScope>("today");
   const [importingData, setImportingData] = useState(false);
   const [importError, setImportError] = useState<string | null>(null);
+  const [aiKeysOpen, setAiKeysOpen] = useState(false);
+  const [aiKeysConfigured, setAiKeysConfigured] = useState(() => hasAnyAiKey());
   const [activeProfileId, setActiveProfileId] = useState<string | null>(null);
   const [toasts, setToasts] = useState<Toast[]>([]);
   /** Bumps when native fullscreen or overlay DOM may have changed (re-run {@link isAppTrueFullscreenActive}). */
@@ -133,6 +137,13 @@ export function App() {
     }
     prevTrueFsRef.current = trueFullscreenActive;
   }, [trueFullscreenActive]);
+
+  useEffect(() => {
+    const sync = () => setAiKeysConfigured(hasAnyAiKey(loadAiKeys()));
+    sync();
+    window.addEventListener(AI_KEYS_CHANGED_EVENT, sync);
+    return () => window.removeEventListener(AI_KEYS_CHANGED_EVENT, sync);
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -366,19 +377,30 @@ export function App() {
       }
       window.dispatchEvent(new Event("pst:projects-changed"));
       window.dispatchEvent(new Event("pst:tasks-changed"));
+      const droppedTotal = droppedProjects + droppedTasks + droppedProfiles;
+      const importedTotal = importedProfiles + importedProjects + importedTasks;
+      pushToast({
+        kind: droppedTotal > 0 && importedTotal === 0 ? "error" : droppedTotal > 0 ? "info" : "success",
+        title:
+          droppedTotal > 0 && importedTotal === 0
+            ? "Import dropped all rows"
+            : droppedTotal > 0
+              ? "Imported with some skipped rows"
+              : "Imported",
+        message:
+          `Imported ${importedProfiles} profile(s), ${importedProjects} project(s), and ${importedTasks} task(s). ` +
+          (droppedTotal > 0
+            ? `Skipped invalid rows: profiles=${droppedProfiles}, projects=${droppedProjects}, tasks=${droppedTasks}. `
+            : "") +
+          (inferredProjectProfiles || inferredTaskProfiles
+            ? `Inferred profile links: projects=${inferredProjectProfiles}, tasks=${inferredTaskProfiles}. `
+            : "") +
+          (backfilledTotal ? `Profile backfill: ${backfilledTotal}.` : ""),
+        durationMs: Math.max(3200, performance.now() - started)
+      });
       await ensureVisibleProfileAfterDataOps();
       // Normalize + flush after import (replaces manual Save).
       await autoSyncAndSave({ quiet: true });
-      pushToast({
-        kind: "success",
-        title: "Imported",
-        message:
-          `Imported ${importedProfiles} profile(s), ${importedProjects} project(s), and ${importedTasks} task(s). ` +
-          `Inferred profile links: projects=${inferredProjectProfiles}, tasks=${inferredTaskProfiles}. ` +
-          `Dropped invalid rows: profiles=${droppedProfiles}, projects=${droppedProjects}, tasks=${droppedTasks}. ` +
-          `Profile backfill: ${backfilledTotal}.`,
-        durationMs: performance.now() - started
-      });
       if (activeProfileId) {
         const activeImported = Number(importedTasksByProfileId?.[activeProfileId] ?? 0);
         if (importedTasks > 0 && activeImported === 0) {
@@ -425,6 +447,25 @@ export function App() {
 
         <div className="header-right" aria-label="Data actions">
           <div className="header-group" role="group" aria-label="Data actions">
+            <button
+              type="button"
+              className={`ghost-button header-action-btn${aiKeysConfigured ? " is-configured" : ""}`}
+              onClick={() => setAiKeysOpen(true)}
+              title={
+                hasGroqKey()
+                  ? "Manage local Groq / Tavily keys for Productivity Summary"
+                  : "Add local Groq / Tavily keys for Productivity Summary"
+              }
+              aria-label="AI keys"
+            >
+              <span className="btn-glyph" aria-hidden="true">
+                <svg viewBox="0 0 24 24" focusable="false">
+                  <path d="M7 8h10M7 12h7M6 5h12a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V7a2 2 0 0 1 2-2z" />
+                </svg>
+              </span>
+              <span className="header-action-label">AI keys</span>
+              {aiKeysConfigured ? <span className="header-action-dot" aria-hidden="true" /> : null}
+            </button>
             <label
               className="ghost-button header-action-btn"
               title="Import tasks and projects from JSON or CSV"
@@ -492,6 +533,7 @@ export function App() {
         />
         <GamificationPanel activeProfileId={activeProfileId} />
       </main>
+      <AiKeysModal open={aiKeysOpen} onClose={() => setAiKeysOpen(false)} />
       <AppFooter />
     </div>
   );

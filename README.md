@@ -1,11 +1,11 @@
 # Focista Schedulo
 
-**Last updated:** 2026-07-18  
+**Last updated:** 2026-07-19  
 **Owner:** Product + Engineering  
 **Version:** 0.1.0  
 **Tagline:** Plan with clarity, focus without noise, and celebrate what you complete.
 
-Focista Schedulo is a local-first productivity platform for structured planning and reliable execution. It combines profile-aware task management, deterministic recurrence, calendar and day-agenda planning, bulk operations, productivity analytics, and gamification in one cohesive experience.
+Focista Schedulo is a local-first productivity platform for structured planning and reliable execution. It combines profile-aware task management, deterministic recurrence, calendar and day-agenda planning, bulk operations, productivity analytics, AI productivity summaries, and gamification in one cohesive experience.
 
 ---
 
@@ -28,7 +28,8 @@ Focista Schedulo helps users:
 | **Speed** | Split-file (or Blob-object) runtime persistence avoids monolith write bottlenecks; batch APIs reduce round-trips. |
 | **Ownership** | Import/export (JSON, CSV, or Both) keeps datasets portable; locked-profile export requires credentials. |
 | **Clarity** | Friendly error messages explain root cause and next steps; showcase profile `Test` is read-only for demos. |
-| **Motivation** | XP, levels, streaks, calendar-week charts, grinding milestones, and badge PNG export reinforce completion. |
+| **Motivation** | XP, levels, streaks, calendar-week charts, grinding milestones, badge PNG export, and AI Productivity Summary reinforce completion. |
+| **Insight** | Period summaries and natural-language Ask over profile-scoped tasks (Groq + optional Tavily). |
 
 ---
 
@@ -40,10 +41,10 @@ Focista Schedulo helps users:
 | Tasks | Rich metadata (title, description, priority, due schedule, duration, repeat, reminder, labels, location, links); bulk update/move/delete; optimistic completion. |
 | Projects | Stable project IDs, CRUD, profile-scoped listing, project-based filtering. |
 | Recurrence | Daily/weekly/monthly/quarterly/yearly/custom intervals with deterministic normalization and occurrence handling. |
-| Planning UI | List + calendar month + day-agenda timeline with timeframe filters and historical loading controls. |
-| Productivity | `/api/stats` and `/api/productivity-insights` power progress, milestones, badges, and trend charts. |
+| Planning UI | List + calendar month + day-agenda timeline with timeframe filters; free-text search across all task attributes (AND tokens). |
+| Productivity | `/api/stats` and `/api/productivity-insights` power progress, milestones, badges, and trend charts. **Productivity Summary** (`/api/productivity-summary*`) adds Groq + optional Tavily AI overviews and task Q&A (degrades to local brief when needed). |
 | Gamification | Streaks, XP/levels, Consistency Builder, Monthly/Yearly Grinding, badges-earned milestones, badge PNG export. |
-| Data Ops | Import/export with Blob staging for large payloads; **automated** sync + save after import (no manual Sync/Save header buttons); quiet reload on tab return. |
+| Data Ops | Import/export with Blob staging or export **parts** paging; **per-row** import validation; **automated** sync + save after import; **AI keys** header for optional browser-local secrets. |
 
 ### Progress surface (calendar week and tooltips)
 
@@ -52,6 +53,7 @@ Focista Schedulo helps users:
 - Badges export as high-resolution PNG; cards show the **profile name**; modal headers use **`Profile: Name - Title`**.
 - Achievement and milestone cards show short **plain-English descriptions** from `/api/stats`.
 - Progress uses an **exclusive tooltip** slot; toasts are **one at a time** and dismiss open tooltips.
+- **Productivity Summary** (Tasks toolbar): AI period summaries and task Q&A via Groq + optional Tavily. Configure keys via header **AI keys** (saved in this browser) or server env.
 
 ### Profile selector and boot UX
 
@@ -66,7 +68,7 @@ Focista Schedulo helps users:
 - **Security-sensitive deletion:** Deleting a password-protected profile requires password confirmation and backend verification.
 - **Friendly error standard:** Toasts resolve backend root-cause messages and provide guidance by HTTP status class (`400`, `401`, `403`, `413`, `5xx`, etc.).
 - **Export flexibility:** `JSON`, `CSV`, and `Both`; locked-profile inclusion requires password validation.
-- **Large transfer path:** Production import/export stages through **Vercel Blob** (`blobPathname` import; short-lived presigned download on export) to avoid Hobby ~4.5MB serverless body limits (HTTP 413).
+- **Large transfer path:** Production imports stage through **Vercel Blob** when configured. Large exports prefer Blob, otherwise page tasks (`parts`) so export still works without `BLOB_READ_WRITE_TOKEN`.
 - **Automated persistence ops:** Sync/save run automatically after import (not on every boot for expensive paths); manual Sync/Save header buttons are removed.
 - **Profile-first integrity:** Tasks, projects, progress, and insights remain scoped by active profile with resilient fallback visibility.
 

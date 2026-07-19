@@ -1,6 +1,6 @@
 # Variables Documentation
 
-**Last updated:** 2026-07-18  
+**Last updated:** 2026-07-19  
 **Owner:** Product Analytics + Engineering
 
 This catalog defines core application variables with professional, implementation-aligned descriptions. Each entry includes the variable name, friendly name, definition, formula, location in the apps, and an example value.
@@ -40,10 +40,17 @@ flowchart TB
   subgraph APIs and UI
     Stats[GET /api/stats]
     Insights[GET /api/productivity-insights]
+    Summary[POST /api/productivity-summary]
+    Ask[POST /api/productivity-summary/ask]
     Desc[Achievement and milestone descriptions]
     UI[Gamification and analysis UI]
     Overlay[uiExclusiveOverlay]
     Toast[Single toast queue]
+  end
+
+  subgraph AI providers
+    Groq[GROQ_API_KEY]
+    Tavily[TAVILY_API_KEY]
   end
 
   subgraph Persistence and transfer
@@ -78,6 +85,14 @@ flowchart TB
   Stats --> UI
   Task --> Insights
   Insights --> UI
+  Task --> Summary
+  Task --> Ask
+  Groq --> Summary
+  Groq --> Ask
+  Tavily --> Summary
+  Tavily --> Ask
+  Summary --> UI
+  Ask --> UI
   Overlay --> UI
   Toast --> Overlay
   Profile --> Runtime
@@ -242,6 +257,10 @@ The JSON key `last7Days` is a **legacy name**. Shipped behavior: an ordered arra
 | `BLOB_RUNTIME_PREFIX` | Runtime Blob Prefix | Pathname prefix for runtime JSON objects. | Default `focista-schedulo/runtime/` | `backend/src/storage/createStorage.ts` | `focista-schedulo/runtime/` |
 | `BLOB_ACCESS` | Blob Access Mode | Public vs private Blob access mode. | Default `private` | Blob clients | `private` |
 | `FRONTEND_ORIGIN` | Allowed Frontend Origin | CORS lock for production API. | Required when `NODE_ENV`/`FOCISTA_ENV` is production | `backend/src/index.ts` | `https://app.vercel.app` |
+| `GROQ_API_KEY` | Groq API Key | Server-only key for Productivity Summary LLM completions. | Required unless client sends `groqApiKey` | `productivitySummaryService.ts`; backend `.env` | `gsk_...` |
+| `TAVILY_API_KEY` | Tavily API Key | Server-only key for optional web enrich in Productivity Summary. | Optional; client may send `tavilyApiKey` | `productivitySummaryService.ts`; backend `.env` | `tvly-...` |
+| `pst.aiKeys` | Local AI Keys | Browser localStorage JSON `{ groqApiKey, tavilyApiKey }` for Productivity Summary. | User-entered via **AI keys** header | `frontend/src/aiKeys.ts`; `AiKeysModal.tsx` | `{ "groqApiKey":"gsk_…" }` |
+| `GROQ_MODEL` | Groq Model Override | Chat model id for Groq completions. | Default `llama-3.3-70b-versatile` | `productivitySummaryService.ts` | `llama-3.3-70b-versatile` |
 | `VITE_API_BASE_URL` | Frontend API Base URL | API origin for split hosting. | Required on Vercel Production when split | `apiClient.ts`; frontend env | `https://api.example.com` |
 | `import.blobPathname` | Import Blob Path | Staged import object pathname instead of inline content. | Exactly one of `content` or `blobPathname` | `POST /api/admin/import`; `App.tsx` | `focista-schedulo/imports/...` |
 | `export.downloadUrl` | Export Presigned URL | Short-lived Blob URL for large export download. | Issued when inline body would exceed limits | `POST /api/admin/export-data`; `blobTransfer.ts` | `https://...blob.vercel-storage.com/...` |
@@ -250,6 +269,23 @@ The JSON key `last7Days` is a **legacy name**. Shipped behavior: an ordered arra
 | `claimExclusiveTooltip` | Exclusive Tooltip Claim | Registers the single active tooltip/hovercard closer; dismisses any previous owner. | Module singleton closer slot | `frontend/src/uiExclusiveOverlay.ts`; TaskBoard, GamificationPanel, ProductivityAnalysisModal | Release fn from claim |
 | `dismissExclusiveTooltip` | Exclusive Tooltip Dismiss | Closes the active exclusive tooltip (e.g. before showing a toast). | Invoke registered closer | `uiExclusiveOverlay.ts`; `App.tsx` `enqueueToast` | n/a |
 | `toast.singleSlot` | Single Toast Queue | Only one toast is retained in the queue (replace, do not stack). | `setToasts` keeps latest non-duplicate toast | `App.tsx` `enqueueToast` | One toast object |
+| `export.delivery` | Export Delivery Mode | How large exports are delivered to the client. | `inline` \| `blob` \| `parts` | `/api/admin/export-data` | `parts` |
+| `ImportDropCounts` | Import Skip Counts | Counts of projects/tasks/profiles skipped during per-row import validation. | `{ projects, tasks, profiles }` integers | `importParse.ts`; import toast | `{ tasks: 2, projects: 0, profiles: 0 }` |
+
+---
+
+## Productivity Summary and Search Variables
+
+| Variable Name | Friendly Name | Definition | Formula | App Location | Example |
+|---|---|---|---|---|---|
+| `SummaryPeriod` | Summary Timeline Period | Period selector for AI Summary / Ask. | Enum: `day`, `week`, `sprint`, `month`, `bimonth`, `quarter`, `semester`, `year`, `next_*` variants, `custom` | `productivitySummaryService.ts`; `ProductivitySummaryModal.tsx` | `next_sprint` |
+| `DateRange` | Resolved Period Range | Inclusive local date range for a summary period. | `{ startDate, endDate, period, label }` from `resolvePeriodRange()` | Summary service + API response | `{ startDate:"2026-07-13", endDate:"2026-07-26", period:"sprint", label:"This sprint" }` |
+| `TaskDigestStats.completionRate` | Period Completion Rate | Share of non-cancelled tasks completed in range. | `round((completed / (totalInRange - cancelled)) * 1000) / 10` | Digest stats / Summary metrics | `72.5` |
+| `summary.degraded` | Degraded Summary Flag | True when response used local digest brief because Groq failed. | Boolean on Summary/Ask response | API + Summary modal banner | `true` |
+| `taskSearch.tokens` | Search Tokens | Whitespace-split query tokens; all must match. | `query.trim().split(/\s+/)` AND semantics | `taskSearch.ts`; TaskBoard | `["sprint","urgent"]` |
+| `taskSearch.haystack` | Searchable Task Text | Concatenated searchable attributes for a task (incl. project/profile names). | Built per task from fields + context maps | `taskSearch.ts` | Includes title, labels, dates, ids… |
+| `niceYDomain(min,max)` | Nice Y Domain | Snaps raw chart extent onto a clean tick grid. | Nice-number snapping with optional tight integer mode | `chartYAxis.ts`; Analysis charts | `{ yMin:0, yMax:10 }` |
+| `buildYTicks(yMin,yMax)` | Y-Axis Ticks | Evenly spaced ticks with endpoints exact; no duplicate compact labels. | Step from nice domain; dedupe formatted labels | `chartYAxis.ts` | `[0, 2, 4, 6, 8, 10]` |
 
 ---
 

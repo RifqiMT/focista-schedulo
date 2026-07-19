@@ -1,6 +1,6 @@
 # Product Metrics
 
-**Last updated:** 2026-07-18  
+**Last updated:** 2026-07-19  
 **Owner:** Product Analytics
 
 ---
@@ -57,6 +57,8 @@ Formula authority for domain variables: `VARIABLES.md`.
 | EM-06 | Badge Export Adoption | Share of badge-modal sessions that export PNG | `png exports / badge modal opens` | `0.20` |
 | EM-07 | Monthly Grinding Attainment | Share of active months with `weeksCompleted >= 4` | From yearly/monthly grinding formulas | `2 / 7 months YTD` |
 | EM-08 | Achievement Clarity | Share of achievement/milestone cards showing non-empty plain-English `description` | `cards with description / total cards` | `1.00` |
+| EM-09 | Productivity Summary Usage | Frequency of AI Summary / Ask use | Opens of Productivity Summary modal + successful generate/ask | `2 opens / user / week` |
+| EM-10 | Task Search Adoption | Share of sessions using free-text task search | Search interactions / active sessions (when instrumented) | Qualitative until instrumented |
 
 ---
 

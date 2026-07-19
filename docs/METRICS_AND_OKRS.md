@@ -1,6 +1,6 @@
 # Metrics and OKRs
 
-**Last updated:** 2026-07-18  
+**Last updated:** 2026-07-19  
 **Owner:** Product
 
 ---
@@ -62,6 +62,7 @@ Define product-team Objectives and Key Results (OKRs) for Focista Schedulo, with
 | KR3.2 | Increase median streak length by 1 day | EM-01 | `streakDays` distribution |
 | KR3.3 | Increase productivity analysis feature adoption by 30% | EM-03, EM-05 | Modal open proxies |
 | KR3.4 | Increase badge PNG export adoption by 15% among Progress users | EM-06 | Export action counts when instrumented |
+| KR3.5 | Establish AI Productivity Summary adoption (≥2 opens / active user / week) | EM-09 | Summary modal + generate/ask proxies |
 
 ---
 

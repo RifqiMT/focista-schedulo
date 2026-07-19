@@ -1,9 +1,15 @@
 import React, { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { TaskEditorDrawer } from "./TaskEditorDrawer";
+import { ProductivitySummaryModal } from "./ProductivitySummaryModal";
 import { apiFetch, apiUrl } from "../apiClient";
 import { apiFetchWarming } from "../apiWarming";
 import { getFriendlyErrorMessage } from "../utils/friendlyError";
+import {
+  matchesTaskSearchTokens,
+  tokenizeTaskSearchQuery,
+  buildTaskSearchHaystack
+} from "../utils/taskSearch";
 import { claimExclusiveTooltip } from "../uiExclusiveOverlay";
 
 export interface Task {
@@ -802,6 +808,8 @@ export function TaskBoard({
   const [moveDialogProjectId, setMoveDialogProjectId] = useState<string | null>("same");
   const [expandedGroups, setExpandedGroups] = useState<Set<string>>(new Set());
   const [exportDialogOpen, setExportDialogOpen] = useState(false);
+  const [summaryOpen, setSummaryOpen] = useState(false);
+  const [summaryProfileName, setSummaryProfileName] = useState<string | null>(null);
   const [exportFormat, setExportFormat] = useState<"json" | "csv" | "both">("json");
   const [exportProfiles, setExportProfiles] = useState<
     Array<{ id: string; name: string; isPasswordProtected: boolean }>
@@ -1459,6 +1467,29 @@ export function TaskBoard({
   }, [activeProfileId, selectedProjectId, timeScope]);
 
   useEffect(() => {
+    if (!activeProfileId) {
+      setSummaryProfileName(null);
+      return;
+    }
+    let cancelled = false;
+    void (async () => {
+      try {
+        const res = await apiFetch("/api/profiles");
+        if (!res.ok) return;
+        const data = (await res.json()) as Array<{ id: string; name: string; title?: string }>;
+        if (cancelled) return;
+        const p = data.find((row) => row.id === activeProfileId);
+        setSummaryProfileName(p ? (p.title ? `${p.name} - ${p.title}` : p.name) : "Selected profile");
+      } catch {
+        if (!cancelled) setSummaryProfileName("Selected profile");
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [activeProfileId]);
+
+  useEffect(() => {
     const onTasksChanged = (e: Event) => {
       const ce = e as CustomEvent | null;
       const source = ce?.detail?.source;
@@ -1683,6 +1714,43 @@ export function TaskBoard({
           kind: "error",
           title: "Export failed",
           message: err instanceof Error ? err.message : "Could not download export from Blob.",
+          durationMs: performance.now() - started
+        });
+        return false;
+      }
+    } else if (snapshot?.delivery === "parts") {
+      try {
+        const pageSize = Math.max(50, Number(snapshot.tasksPageSize) || 300);
+        const total = Math.max(0, Number(snapshot.tasksTotal) || 0);
+        const tasks: Task[] = [];
+        for (let offset = 0; offset < total; offset += pageSize) {
+          const pageRes = await apiFetch("/api/admin/export-tasks-page", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              profilePasswords,
+              offset,
+              limit: pageSize
+            })
+          });
+          if (!pageRes.ok) {
+            throw new Error(await getFriendlyErrorMessage(pageRes));
+          }
+          const page = await pageRes.json();
+          const chunk = Array.isArray(page?.tasks) ? page.tasks : [];
+          tasks.push(...chunk);
+          if (chunk.length === 0) break;
+        }
+        exportPayload = {
+          ...(snapshot.data ?? {}),
+          tasks
+        };
+      } catch (err) {
+        toast({
+          kind: "error",
+          title: "Export failed",
+          message:
+            err instanceof Error ? err.message : "Could not download export in pages.",
           durationMs: performance.now() - started
         });
         return false;
@@ -2278,36 +2346,29 @@ export function TaskBoard({
 
   const listSource = tasksWithRepeats;
 
-  const searchTokens = taskSearchQuery
-    .trim()
-    .toLowerCase()
-    .split(/\s+/)
-    .filter(Boolean);
+  const projectNameById = useMemo(() => {
+    const map = new Map<string, string>();
+    for (const p of projects) map.set(p.id, p.name);
+    return map;
+  }, [projects]);
 
-  const matchesTaskSearch = (t: Task): boolean => {
-    if (searchTokens.length === 0) return true;
-    const locationSearchParts = parseLocationTokens(t.location).flatMap((token) => {
-      const parsed = parseLocationAliasToken(token);
-      return parsed ? [parsed.label ?? "", parsed.query] : [token];
-    });
+  const profileNameById = useMemo(() => {
+    const map = new Map<string, string>();
+    if (activeProfileId && activeProfileName) {
+      map.set(activeProfileId, activeProfileName);
+    }
+    return map;
+  }, [activeProfileId, activeProfileName]);
 
-    const linkSearchParts = (t.link ?? []).flatMap((token) => {
-      const parsed = parseLinkAliasToken(token);
-      return parsed ? [parsed.label ?? "", parsed.href] : [token];
-    });
+  const taskSearchCtx = useMemo(
+    () => ({ projectNameById, profileNameById }),
+    [projectNameById, profileNameById]
+  );
 
-    const haystack = [
-      t.title,
-      t.description,
-      ...locationSearchParts,
-      ...linkSearchParts,
-      (t.labels ?? []).join(" ")
-    ]
-      .filter(Boolean)
-      .join(" ")
-      .toLowerCase();
-    return searchTokens.every((tok) => haystack.includes(tok));
-  };
+  const searchTokens = tokenizeTaskSearchQuery(taskSearchQuery);
+
+  const matchesTaskSearch = (t: Task): boolean =>
+    matchesTaskSearchTokens(t, searchTokens, taskSearchCtx);
 
   const filteredTasksRaw = useMemo(() => {
     const startIso = listRangeStartIso;
@@ -2380,7 +2441,8 @@ export function TaskBoard({
     timeScope,
     listRangeStartIso,
     listRangeEndIso,
-    taskSearchQuery
+    taskSearchQuery,
+    taskSearchCtx
   ]);
 
   const filteredTasks = useMemo(() => {
@@ -2505,28 +2567,13 @@ export function TaskBoard({
         if (l.toLowerCase().includes(searchQuery)) add(l);
         if (out.length >= 10) return out;
       }
+      const projectName = t.projectId ? projectNameById.get(t.projectId) : undefined;
+      if (projectName?.toLowerCase().includes(searchQuery)) add(projectName);
+      if (out.length >= 10) return out;
     }
 
     for (const t of base) {
-      const locationSearchParts = parseLocationTokens(t.location).flatMap((token) => {
-        const parsed = parseLocationAliasToken(token);
-        return parsed ? [parsed.label ?? "", parsed.query] : [token];
-      });
-
-      const linkSearchParts = (t.link ?? []).flatMap((token) => {
-        const parsed = parseLinkAliasToken(token);
-        return parsed ? [parsed.label ?? "", parsed.href] : [token];
-      });
-
-      const hay = [
-        t.title,
-        t.description,
-        ...locationSearchParts,
-        ...linkSearchParts
-      ]
-        .filter(Boolean)
-        .join(" ")
-        .toLowerCase();
+      const hay = buildTaskSearchHaystack(t, taskSearchCtx);
       if (hay.includes(searchQuery)) add(t.title);
       if (out.length >= 10) return out;
     }
@@ -2562,7 +2609,9 @@ export function TaskBoard({
     nextQuarterStartIso,
     nextQuarterEndIso,
     customRangeStartNormalizedIso,
-    customRangeEndNormalizedIso
+    customRangeEndNormalizedIso,
+    taskSearchCtx,
+    projectNameById
   ]);
 
   const materializeVirtualTask = async (task: Task): Promise<Task | null> => {
@@ -4998,7 +5047,8 @@ export function TaskBoard({
                   setHoveredTask(null);
                   setExpandedGroups(new Set());
                 }}
-                placeholder="Search tasks…"
+                placeholder="Search any task field…"
+                title="Search title, description, labels, project, priority, dates, location, links, status, and more"
                 list="task-search-suggestions"
               />
               <datalist id="task-search-suggestions">
@@ -5020,6 +5070,20 @@ export function TaskBoard({
                 </button>
               ) : null}
             </div>
+            <button
+              className="ghost-button board-summary-btn"
+              type="button"
+              onClick={() => setSummaryOpen(true)}
+              title="Open productivity summary"
+              aria-label="Open productivity summary"
+            >
+              <span className="btn-glyph" aria-hidden="true">
+                <svg viewBox="0 0 24 24" focusable="false">
+                  <path d="M5 5h14v3H5V5zm0 5.5h10v3H5v-3zm0 5.5h14v3H5v-3z" />
+                </svg>
+              </span>
+              <span>Summary</span>
+            </button>
             <button
               className="primary-button board-add-task"
               type="button"
@@ -6215,6 +6279,13 @@ export function TaskBoard({
           </aside>
         </div>
       )}
+
+      <ProductivitySummaryModal
+        open={summaryOpen}
+        onClose={() => setSummaryOpen(false)}
+        activeProfileId={activeProfileId}
+        activeProfileName={summaryProfileName}
+      />
     </section>
   );
 }

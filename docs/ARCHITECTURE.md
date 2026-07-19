@@ -1,6 +1,6 @@
 # Architecture
 
-**Last updated:** 2026-07-18  
+**Last updated:** 2026-07-19  
 **Owner:** Engineering
 
 ---
@@ -21,6 +21,8 @@ Focista Schedulo is a TypeScript monorepo with:
 | `frontend` | React application for profile/task/project/progress workflows |
 | `backend/src/storage` | Pluggable persistence (`fs` for local dev, **Vercel Blob** for Prod) |
 | `backend/src/blobTransfer.ts` | Large import/export staging via Blob |
+| `backend/src/importParse.ts` | Per-row import validation and soft coercion |
+| `backend/src/productivitySummaryService.ts` | AI Summary/Ask digests, Groq/Tavily orchestration |
 | `docs/` | Professional product and engineering documentation suite |
 
 ---
@@ -44,6 +46,27 @@ flowchart LR
 ```
 
 **Production (Option A):** UI on Vercel; API on a Node host (or Vercel Services); primary durable store = **Vercel Blob** (no Redis, no MongoDB, no required disk volume).
+
+### External AI services (optional)
+
+```mermaid
+flowchart LR
+  UI[Frontend]
+  API[Backend API]
+  Groq[Groq LLM]
+  Tavily[Tavily Search]
+  Keys[(pst.aiKeys localStorage)]
+
+  UI -->|Summary / Ask + optional client keys| API
+  Keys --> UI
+  API -->|completions| Groq
+  API -->|optional enrich| Tavily
+  API -->|degraded local brief| UI
+```
+
+- Server env: `GROQ_API_KEY`, optional `GROQ_MODEL`, optional `TAVILY_API_KEY`.
+- Client may send `groqApiKey` / `tavilyApiKey` from **AI keys** modal; keys are never logged.
+- On Groq failure, Summary/Ask may return a **local digest** with `degraded: true`.
 
 ---
 
@@ -80,8 +103,8 @@ Selection: `STORAGE_BACKEND` or auto-detect Blob credentials (`backend/src/stora
 
 | Direction | Mechanism |
 |---|---|
-| Import | Client may upload to Blob, then `POST /api/admin/import` with `blobPathname` (xor `content`) |
-| Export | API may return short-lived presigned download URL when inline body would exceed limits |
+| Import | Client may upload to Blob, then `POST /api/admin/import` with `blobPathname` (xor `content`); rows validated via `importParse.ts` |
+| Export | API may return short-lived presigned download URL; or `delivery: "parts"` + `POST /api/admin/export-tasks-page` when Blob unavailable |
 | Upload helper | `POST /api/admin/blob-upload` |
 
 ---
@@ -99,7 +122,7 @@ Selection: `STORAGE_BACKEND` or auto-detect Blob credentials (`backend/src/stora
 
 Primary implementation: `backend/src/index.ts`  
 Storage adapters: `backend/src/storage/`  
-Domain modules: `monthlyGrinding.ts`, `yearlyGrinding.ts`, `badgesEarnedMilestone.ts`, `capMilestoneBadges.ts`, `profileService.ts`, `profileSecurity.ts`, `blobTransfer.ts`
+Domain modules: `monthlyGrinding.ts`, `yearlyGrinding.ts`, `badgesEarnedMilestone.ts`, `capMilestoneBadges.ts`, `profileService.ts`, `profileSecurity.ts`, `blobTransfer.ts`, `productivitySummaryService.ts`
 
 ---
 
@@ -110,6 +133,7 @@ Domain modules: `monthlyGrinding.ts`, `yearlyGrinding.ts`, `badgesEarnedMileston
 - Batch mutation orchestration
 - Calendar and historical task UX
 - Progress and productivity analysis presentation
+- AI Productivity Summary modal (period summaries + task Q&A)
 - Friendly error translation for toaster UX
 - **Single-toast** queue; toast enqueue dismisses exclusive tooltips
 - Exclusive tooltip/hovercard slot (`uiExclusiveOverlay.ts`) shared across TaskBoard, Progress, and Analysis
@@ -128,6 +152,7 @@ Primary implementation:
 - `frontend/src/components/ProfileManagement.tsx`
 - `frontend/src/components/GamificationPanel.tsx`
 - `frontend/src/components/ProductivityAnalysisModal.tsx`
+- `frontend/src/components/ProductivitySummaryModal.tsx`
 - `frontend/src/components/TaskEditorDrawer.tsx`
 - `frontend/src/components/ProjectSidebar.tsx`
 - `frontend/src/components/BadgesModalDialogBody.tsx`

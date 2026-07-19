@@ -1,6 +1,6 @@
 # Design Guidelines
 
-**Last updated:** 2026-07-18  
+**Last updated:** 2026-07-19  
 **Owner:** Design + Frontend Engineering
 
 ---
@@ -102,6 +102,7 @@ Toasts use local CSS variables on `.toast` variants:
 ### Task Board (`TaskBoard`)
 
 - Group controls by intent (search, timeframe, status, project association, bulk actions).
+- Free-text search uses AND token semantics across all task attributes (`taskSearch.ts`).
 - Avoid text clutter; preserve high scanability.
 - Keep interaction latency feedback immediate through subtle non-blocking toasts.
 - Do not expose manual Sync/Save header buttons; persistence ops are automated.
@@ -116,11 +117,14 @@ Toasts use local CSS variables on `.toast` variants:
 - Keep project list scannable; emphasize active project filter state.
 - Honor showcase read-only disablement for create/edit/delete.
 
-### Progress and Productivity (`GamificationPanel`, `ProductivityAnalysisModal`, badges)
+### Progress and Productivity (`GamificationPanel`, `ProductivityAnalysisModal`, `ProductivitySummaryModal`, badges)
 
-- Present summary KPIs first, deep analysis second.
+- Present summary KPIs first, deep analysis second. AI Productivity Summary lives in the **Tasks** toolbar (not Progress), so Progress actions stay Analysis · Badges.
+- **Analysis dual-series charts:** Raw = brand red (`#ce1126`, dashed when Average is also shown); Average = blue (`#2563eb`). Legend dots, tooltips, chart strokes, and PNG export must use the same tokens (`--pa-chart-raw` / `--pa-chart-avg`).
 - **Weekly chart:** seven bars for the **current local Monday–Sunday**; label/helper copy must not imply a rolling “last seven days” window unless product intentionally aligns copy with implementation.
 - **Bar tooltips:** structure as (1) day totals, (2) per-task XP spread, (3) weekday-historical comparison.
+- **Productivity Summary modal:** solid Analysis shell; sliding Overview / Ask control; meta chips; web-tips switch; timeline as unit chips + This/Next offset; Ready/Key status with live dot; metric cards + completion ring; brief bar with copy/time; Open/Overdue prose sections; refined Ask composer. No glass.
+- **AI keys modal:** solid shell with status pills, provider cards, inline show-hide, automatic format + live key validation, dirty-state Save. No glass.
 - Badge/milestone visuals reinforce progression without distracting from task execution.
 - **Badges modal:** header pattern `Profile: Name - Title`; exported PNG cards may use **name only**—keep this distinction intentional.
 - Support fullscreen chart/badge experiences via existing fullscreen helpers without covering critical chrome unexpectedly.
@@ -148,6 +152,17 @@ Toasts use local CSS variables on `.toast` variants:
 - Each achievement card shows **name + plain-English description** from `/api/stats`.
 - Each milestone card shows **name + optional `description` line** under the title (`.milestone-desc` / `.achievement-desc`).
 - Keep copy short, actionable, and aligned with formulas in `VARIABLES.md`.
+
+### CSS namespaces (component themes)
+
+| Prefix | Surface | Notes |
+|---|---|---|
+| `:root` tokens | Global light theme | `--bg`, `--accent-red`, `--accent-gold`, etc. |
+| `--toast-*` | Toaster variants | Success emerald, error rose, info sky |
+| `--pa-chart-raw` / `--pa-chart-avg` | Analysis dual-series | Raw brand red `#ce1126`; Average blue `#2563eb` |
+| `aik-*` | AI Keys modal | Status pills `.is-ready` / `.is-needed` / `.is-checking`; solid shell |
+| `ps-*` | Productivity Summary modal | Tabs, period chips, metrics, completion ring `--ps-rate`, prose, Ask composer |
+| `header-action-*` | Header Import/Export/AI keys | Glyph + label buttons |
 
 ---
 

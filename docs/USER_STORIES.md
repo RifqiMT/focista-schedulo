@@ -1,6 +1,6 @@
 # User Stories
 
-**Last updated:** 2026-07-18  
+**Last updated:** 2026-07-19  
 **Owner:** Product
 
 ---
@@ -172,6 +172,52 @@ As a user, I want tooltips and toasts not to stack confusingly so that I can rea
 - Enqueueing a toast dismisses any active exclusive tooltip.
 - The toast queue retains a single toast (replace, do not stack).
 
+### US-409 Generate an AI productivity summary
+
+As a progress-motivated user, I want an AI summary of my to-do list for a chosen timeline so that I can reflect on what I finished and what remains.
+
+**Acceptance criteria**
+
+- Tasks toolbar exposes **Summary** next to Add task.
+- User can select a timeline unit (day, week, sprint, month, bi-month, quarter, semester, year, custom) and a **This / Next** offset where supported.
+- `POST /api/productivity-summary` returns a professional, cohesive plain-English narrative grounded in profile-scoped task digests (Groq).
+- When open or overdue tasks exist in the digest, the summary includes dedicated **Open tasks** and/or **Overdue tasks** sections listing each task’s name and ID.
+- Optional Tavily web enrich can add cited tips without inventing task facts.
+- Missing `GROQ_API_KEY` returns a clear 503; UI shows a friendly message.
+
+### US-410 Ask questions about my tasks
+
+As a user, I want to ask natural-language questions about my to-do list so that I can find overdue, priority, or period-specific work without scanning manually.
+
+**Acceptance criteria**
+
+- Summary modal includes an Ask chat grounded in the selected timeline’s task digest.
+- `POST /api/productivity-summary/ask` answers in professional plain English from task data only; admits when data is missing.
+- When answers involve open or overdue work, responses list relevant tasks with name and ID.
+- Optional Tavily enrich applies only when the user enables web context.
+- When Groq is unavailable, a local digest answer may return with `degraded: true` instead of a hard failure.
+
+### US-411 Search tasks by any attribute
+
+As a multi-context professional, I want free-text search across all task attributes so that I can find work quickly without relying only on filters.
+
+**Acceptance criteria**
+
+- Search matches title, description, labels, project/profile names, priority, dates/times, duration, reminder, repeat, location, links, status, and ids.
+- Every whitespace token must match (AND semantics).
+- Search is scoped to the currently visible task set / active profile context in TaskBoard.
+
+### US-413 Manage AI keys in the browser
+
+As a user, I want to enter Groq and optional Tavily keys in the app so that Productivity Summary works without server-only secrets on every host.
+
+**Acceptance criteria**
+
+- Header **AI keys** opens a modal for Groq (required for Summary) and Tavily (optional).
+- Keys are stored in `pst.aiKeys` localStorage; never logged by the API.
+- Format checks run while typing; live validation uses `POST /api/ai-keys/validate`.
+- Status pills communicate ready / needed / checking states.
+
 ---
 
 ## Epic 5: Data Portability and Safety
@@ -185,6 +231,16 @@ As a user, I want to import JSON/CSV data so that I can restore/migrate datasets
 - Import validates input and merges without destructive overwrites.
 - Profiles/projects/tasks are persisted correctly after import.
 - After a successful import, sync and save run **automatically** (quiet path acceptable).
+
+### US-412 Import without losing valid rows
+
+As a reliability-conscious operator, I want import to skip only malformed rows so that minor data issues do not discard my entire dataset.
+
+**Acceptance criteria**
+
+- JSON/CSV import uses per-row validation (`importParse.ts`) with soft coercion for common quirks (labels, link, duration, priority).
+- Invalid rows are skipped and counted; valid rows still persist.
+- Import toast reports skipped-row counts accurately.
 
 ### US-502 Export data safely
 
@@ -214,7 +270,8 @@ As a production user, I want large import/export to succeed despite serverless b
 
 - Large imports may upload to Vercel Blob and call `/api/admin/import` with `blobPathname` (exactly one of `content` or `blobPathname`).
 - Large exports may return a short-lived presigned Blob download URL instead of an inline body.
-- When Blob transfer is unavailable and payload exceeds limits, API returns clear `413` guidance; UI surfaces friendly next steps.
+- When Blob transfer is unavailable and an **import** payload exceeds limits, API returns clear `413` guidance; UI surfaces friendly next steps.
+- Large **exports** without Blob use parts paging so download still completes.
 - `/api/admin/blob-upload` supports client upload handoff when configured.
 
 ---
@@ -271,7 +328,12 @@ As a privacy-conscious user, I want password confirmation before deleting a prot
 | US-406 | 4 | See locked profiles in the selector |
 | US-407 | 4 | Read plain-English achievement and milestone goals |
 | US-408 | 4 | Non-competing feedback overlays |
+| US-409 | 4 | Generate an AI productivity summary |
+| US-410 | 4 | Ask questions about my tasks |
+| US-411 | 4 | Search tasks by any attribute |
+| US-413 | 4 | Manage AI keys in the browser |
 | US-501 | 5 | Import data safely |
+| US-412 | 5 | Import without losing valid rows |
 | US-502 | 5 | Export data safely |
 | US-503 | 5 | Save and sync without monolith runtime coupling |
 | US-504 | 5 | Transfer large datasets via Blob staging |
