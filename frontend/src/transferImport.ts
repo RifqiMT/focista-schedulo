@@ -78,8 +78,3 @@ export function shouldStageImport(file: File): boolean {
   }
   return file.size > INLINE_IMPORT_MAX_BYTES;
 }
-
-/** @deprecated Use uploadImportFileToStaging */
-export const uploadImportFileToBlob = uploadImportFileToStaging;
-/** @deprecated Use shouldStageImport */
-export const shouldStageImportViaBlob = shouldStageImport;

@@ -24,16 +24,12 @@ export function getDatabaseUrl(env: NodeJS.ProcessEnv = process.env): string | n
   return null;
 }
 
-export function createNeonSql(databaseUrl: string, env: NodeJS.ProcessEnv = process.env): NeonSql {
-  const timeoutMs = Number(env.NEON_STATEMENT_TIMEOUT_MS ?? 15_000);
-  const sql = neon(databaseUrl, {
+function createNeonSql(databaseUrl: string): NeonSql {
+  return neon(databaseUrl, {
     fetchOptions: {
       // Neon serverless HTTP driver; keep requests bounded on Free cold starts.
     }
   });
-  // statement_timeout is set per-session via SET when running migrations / ensureReady.
-  void timeoutMs;
-  return sql;
 }
 
 export function getSharedNeonSql(env: NodeJS.ProcessEnv = process.env): NeonSql {
@@ -42,14 +38,8 @@ export function getSharedNeonSql(env: NodeJS.ProcessEnv = process.env): NeonSql 
   if (!url) {
     throw new Error("DATABASE_URL is required for Neon storage");
   }
-  cachedSql = createNeonSql(url, env);
+  cachedSql = createNeonSql(url);
   return cachedSql;
-}
-
-/** Reset cached client (tests). */
-export function resetNeonSqlCache(): void {
-  cachedSql = null;
-  migrationsApplied = false;
 }
 
 export async function ensureNeonMigrations(

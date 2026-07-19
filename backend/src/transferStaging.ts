@@ -40,10 +40,6 @@ export function transferChunkPathname(pathname: string, index: number): string {
   return `${pathname}__chunk__${index}`;
 }
 
-export function isTransferChunkPathname(pathname: string): boolean {
-  return pathname.includes("__chunk__");
-}
-
 /** Assemble ordered binary chunks into a UTF-8 string (import JSON/CSV). */
 export function assembleTransferChunks(chunks: Buffer[]): string {
   return Buffer.concat(chunks).toString("utf8");

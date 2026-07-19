@@ -29,7 +29,7 @@ export type SearchableTask = {
   childId?: string;
 };
 
-export type TaskSearchContext = {
+type TaskSearchContext = {
   projectNameById?: ReadonlyMap<string, string> | Record<string, string>;
   profileNameById?: ReadonlyMap<string, string> | Record<string, string>;
 };

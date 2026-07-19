@@ -47,6 +47,7 @@
 - Productivity Analysis: Raw/Average dual-series palette; nice Y-axis ticks without duplicate compact labels.
 - Task search indexes all task attributes with AND token match.
 - Dead-code cleanup: unused exports/types, superseded CSS/keyframes; corrected variable naming (`droppedRows`, `export.delivery` includes `auto` / `staging`).
+- Follow-up dead-code pass: removed deprecated Blob import aliases, unused `isTransferChunkPathname` / `resetNeonSqlCache`, unused Neon `timeoutMs` stub, file-private type exports, orphan PA keyframes; renamed docs `toast.singleSlot` → `enqueueToast` (single-slot).
 
 ### Added (tests)
 

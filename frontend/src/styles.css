@@ -290,8 +290,7 @@ to {
 }
 
 .header-left,
-.header-center,
-.header-right {
+.header-right{
   display: flex;
   align-items: center;
   min-width: 0;
@@ -460,12 +459,6 @@ to {
   color: rgba(255, 255, 255, 0.98);
   transform: none;
   box-shadow: none;
-}
-
-.app-header .ghost-button.sidebar-item-active {
-  background: rgba(255, 255, 255, 0.22);
-  border-color: rgba(255, 255, 255, 0.55);
-  color: #ffffff;
 }
 
 @media (max-width: 1024px) {
@@ -855,8 +848,7 @@ to {
   box-shadow: none;
 }
 
-.profile-active-strip,
-.profile-switcher {
+.profile-switcher{
   display: grid;
   gap: 0;
   padding: 0;
@@ -1281,9 +1273,6 @@ to {
   }
 .profile-header-actions .profile-icon-btn {
     flex: 0 0 auto;
-  }
-.profile-form .profile-actions .ghost-button {
-    flex: 1 1 auto;
   }
 }
 
@@ -1912,26 +1901,6 @@ to {
 .projects-picker-trigger:focus-within .projects-picker-chevron {
     transform: translateY(-50%);
   }
-}
-
-.projects-collection-mark.accent-0 {
-  background: linear-gradient(145deg, #ce1126, #9f1239);
-}
-
-.projects-collection-mark.accent-1 {
-  background: linear-gradient(145deg, #b45309, #92400e);
-}
-
-.projects-collection-mark.accent-2 {
-  background: linear-gradient(145deg, #0f766e, #115e59);
-}
-
-.projects-collection-mark.accent-3 {
-  background: linear-gradient(145deg, #334155, #1e293b);
-}
-
-.projects-collection-mark.accent-4 {
-  background: linear-gradient(145deg, #be123c, #9f1239);
 }
 
 /* Legacy sidebar item styles (kept for shared utility classes) */
@@ -4037,10 +4006,6 @@ to {
   color: rgba(51, 65, 85, 0.98);
 }
 
-.task-card-completed .task-description {
-  color: rgba(156, 163, 175, 1);
-}
-
 .task-group {
   display: grid;
   gap: 0.35rem;
@@ -5447,18 +5412,6 @@ to {
   margin-top: 0.65rem;
 }
 
-.drawer-card .field-grid {
-  margin-top: 0.6rem;
-}
-
-.drawer-card .field + .field-grid {
-  margin-top: 0.6rem;
-}
-
-.drawer-card .field-grid + .field {
-  margin-top: 0.7rem;
-}
-
 .drawer-token-preview {
   margin-top: 0;
 }
@@ -5483,8 +5436,7 @@ to {
   letter-spacing: -0.01em;
 }
 
-.drawer-organize-textarea,
-.drawer-organize-select {
+.drawer-organize-select{
   width: 100%;
   box-sizing: border-box;
   border-radius: 0.75rem;
@@ -5511,8 +5463,7 @@ to {
   cursor: pointer;
 }
 
-.drawer-organize-textarea:focus,
-.drawer-organize-select:focus {
+.drawer-organize-select:focus{
   outline: none;
   border-color: rgba(252, 165, 165, 0.7);
   box-shadow: 0 0 0 3px rgba(206, 17, 38, 0.1);
@@ -6138,10 +6089,6 @@ to {
 .drawer-card--organize > .drawer-organize-block,
 .drawer-card--organize > .drawer-pair-field {
   margin-top: 0;
-}
-
-.drawer-card--organize textarea.drawer-organize-textarea {
-  min-height: 4.25rem;
 }
 
 @media (max-width: 640px) {
@@ -7009,11 +6956,6 @@ to {
   }
 }
 
-.gamification-card .stat-row {
-  padding-bottom: 0.65rem;
-  border-bottom: 1px solid rgba(229, 231, 235, 1);
-}
-
 .progress-card .weekly-section {
   padding-bottom: 0;
   border-bottom: 0;
@@ -7685,12 +7627,6 @@ to {
  * can run in the same click stack as `flushSync` (Chromium user-activation requirement).
  */
 
-.badge-portal-root > .badge-modal-backdrop:not(.badge-modal-backdrop--dim-layer) {
-  position: absolute;
-  inset: 0;
-  box-sizing: border-box;
-}
-
 /*
  * Wraps panel + hovercard so the tooltip is never a flex sibling of `.badge-modal` (which caused a
  * shrunk “letterboxed” panel when the hovercard was open in expanded mode).
@@ -8238,31 +8174,7 @@ to {
 
 /* Dashed brand red — raw series (matches chart stroke) */
 
-.pa-legend-swatch.raw {
-  background: repeating-linear-gradient(
-    90deg,
-    var(--pa-chart-raw, var(--accent-red)) 0 7px,
-    transparent 7px 12px
-  );
-  box-shadow:
-    0 0 0 2px rgba(254, 226, 226, 0.95),
-    0 1px 0 0 rgba(206, 17, 38, 0.55);
-  filter: drop-shadow(0 1px 1px rgba(206, 17, 38, 0.25));
-}
-
 /* Solid blue — rolling average (matches chart stroke) */
-
-.pa-legend-swatch.avg {
-  background: linear-gradient(
-    90deg,
-    #1e3a8a 0%,
-    var(--pa-chart-avg, #2563eb) 42%,
-    #3b82f6 100%
-  );
-  box-shadow:
-    0 0 0 2px rgba(219, 234, 254, 0.95),
-    0 2px 4px rgba(37, 99, 235, 0.28);
-}
 
 .pa-no-data {
   padding: 1.1rem 0.5rem;
@@ -8395,17 +8307,6 @@ to {
 /* Matches primary (raw) series — red dashed + blue average. */
 
 /* Portaled to document.body so ancestors with overflow:hidden (chart scroll, modal) never clip it. */
-
-@keyframes pa-tooltip-in {
-from {
-    opacity: 0;
-    transform: translateY(5px) scale(0.98);
-  }
-to {
-    opacity: 1;
-    transform: translateY(0) scale(1);
-  }
-}
 
 .pa-chart-xaxis {
   display: flex;
@@ -9137,17 +9038,6 @@ to {
   align-items: stretch;
 }
 
-.pa-chart-main--fs .pa-chart-plot {
-  flex: 1 1 auto;
-  min-height: 0;
-  display: flex;
-  flex-direction: column;
-}
-
-.pa-chart-main--fs .pa-chart-plot .pa-chart-svg--fs {
-  flex: 1 1 auto;
-}
-
 .pa-chart-svg--fs {
   flex: 1 1 auto;
   width: 100%;
@@ -9219,10 +9109,6 @@ to {
 .productivity-modal-body .pa-error,
 .productivity-modal-body .pa-empty {
   flex-shrink: 0;
-}
-
-.productivity-chart-legend .muted {
-  font-size: 0.74rem;
 }
 
 .error-text {
@@ -11221,8 +11107,7 @@ to {
 }
 
 @media (prefers-reduced-motion: reduce) {
-.pa-summary,
-  .pa-card {
+.pa-summary{
     animation: none !important;
   }
 }
@@ -11268,58 +11153,6 @@ to {
 
 /* -------------------------------------------------------------------------- */
 
-.pa-graph-section .pa-chart-plot {
-  border-radius: 0.75rem;
-  background:
-    linear-gradient(180deg, rgba(255, 255, 255, 0.55) 0%, rgba(248, 250, 252, 0.35) 100%);
-  box-shadow:
-    inset 0 0 0 1px rgba(226, 232, 240, 0.45),
-    inset 0 1px 0 rgba(255, 255, 255, 0.8);
-  transition: box-shadow 0.2s ease;
-}
-
-.pa-graph-section .pa-chart-plot:hover {
-  box-shadow:
-    inset 0 0 0 1px rgba(252, 165, 165, 0.35),
-    inset 0 1px 0 rgba(255, 255, 255, 0.85);
-}
-
-.pa-graph-section .pa-chart-svg {
-  height: clamp(168px, 26vw, 220px);
-}
-
-.pa-graph-section .pa-chart-grid {
-  stroke: rgba(148, 163, 184, 0.2);
-}
-
-.pa-graph-section .pa-axis-legend {
-  border: none;
-  background: transparent;
-  box-shadow: none;
-  padding: 0.1rem 0;
-  font-size: 0.64rem;
-  font-weight: 700;
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
-  color: #94a3b8;
-  backdrop-filter: none;
-}
-
-.pa-graph-section .pa-chart-y-tick {
-  font-size: 0.68rem;
-  color: #64748b;
-}
-
-.pa-graph-section .pa-chart-y-rail,
-.pa-graph-section .pa-chart-y-rail-wrap {
-  background: linear-gradient(90deg, rgba(255, 255, 255, 0.96) 70%, rgba(255, 255, 255, 0) 100%);
-}
-
-.pa-graph-section .pa-chart-v-rule {
-  border-left: 1px dashed rgba(206, 17, 38, 0.28);
-  box-shadow: none;
-}
-
 @keyframes pa-scrubber-pop {
 from {
     transform: scale(0.55);
@@ -11328,33 +11161,6 @@ from {
 to {
     transform: scale(1);
     opacity: 1;
-  }
-}
-
-.pa-graph-section .pa-no-data {
-  padding: 2rem 0.75rem;
-  color: #94a3b8;
-  font-size: 0.84rem;
-  font-weight: 600;
-}
-
-.pa-graph-section .pa-chart-h-scroll {
-  border-radius: 0.65rem;
-}
-
-.pa-graph-section .pa-chart-xaxis {
-  margin-top: 0.35rem;
-}
-
-.pa-graph-section .pa-chart-xcell {
-  font-size: 0.66rem;
-  font-weight: 650;
-  color: #64748b;
-}
-
-@media (max-width: 640px) {
-.pa-graph-section .pa-chart-svg {
-    height: clamp(150px, 48vw, 190px);
   }
 }
 
@@ -11589,32 +11395,6 @@ to {
   box-shadow: none;
 }
 
-.pa-graph .pa-chart-scrubber {
-  width: 10px;
-  height: 10px;
-  margin-left: -5px;
-  margin-top: -5px;
-  animation: pa-scrubber-pop 160ms cubic-bezier(0.22, 1, 0.36, 1) both;
-}
-
-.pa-graph .pa-chart-scrubber--single {
-  box-shadow:
-    0 0 0 2px rgba(206, 17, 38, 0.92),
-    0 0 0 6px rgba(206, 17, 38, 0.12),
-    0 6px 14px rgba(15, 23, 42, 0.14);
-}
-
-.pa-graph .pa-chart-scrubber--dual {
-  box-shadow:
-    0 0 0 2px rgba(37, 99, 235, 0.92),
-    0 0 0 6px rgba(37, 99, 235, 0.12),
-    0 6px 14px rgba(15, 23, 42, 0.14);
-}
-
-.pa-graph .pa-legend--compact {
-  margin: 0 0 0.55rem;
-}
-
 .pa-graph .pa-expand-chart-btn--icon {
   border-radius: 0.6rem;
   background: #ffffff;
@@ -11637,8 +11417,7 @@ to {
 }
 
 @media (prefers-reduced-motion: reduce) {
-.pa-graph,
-  .pa-graph .pa-chart-scrubber {
+.pa-graph{
     animation: none !important;
   }
 }
@@ -11936,14 +11715,12 @@ to {
 
 /* Graphs — higher-specificity axis/label polish (beats earlier pill labels) */
 
-.pa-graph .pa-chart-xaxis--pos,
-.pa-graph-section .pa-chart-xaxis--pos {
+.pa-graph .pa-chart-xaxis--pos{
   min-height: 2.35rem;
   margin-top: 0.3rem;
 }
 
-.pa-graph .pa-chart-xaxis--pos .pa-chart-xcell,
-.pa-graph-section .pa-chart-xaxis--pos .pa-chart-xcell {
+.pa-graph .pa-chart-xaxis--pos .pa-chart-xcell{
   border: none;
   background: transparent;
   box-shadow: none;
@@ -11957,31 +11734,25 @@ to {
   transform: translateX(-50%) rotate(-28deg);
 }
 
-.pa-graph .pa-chart-xaxis--pos .pa-chart-xcell.is-first,
-.pa-graph-section .pa-chart-xaxis--pos .pa-chart-xcell.is-first {
+.pa-graph .pa-chart-xaxis--pos .pa-chart-xcell.is-first{
   transform: translateX(0) rotate(0);
 }
 
-.pa-graph .pa-chart-xaxis--pos .pa-chart-xcell.is-last,
-.pa-graph-section .pa-chart-xaxis--pos .pa-chart-xcell.is-last {
+.pa-graph .pa-chart-xaxis--pos .pa-chart-xcell.is-last{
   transform: translateX(-100%) rotate(0);
 }
 
-.pa-graph .pa-chart-xaxis--pos .pa-chart-xcell.is-singleton,
-.pa-graph-section .pa-chart-xaxis--pos .pa-chart-xcell.is-singleton {
+.pa-graph .pa-chart-xaxis--pos .pa-chart-xcell.is-singleton{
   transform: translateX(-50%) rotate(0);
 }
 
-.pa-graph .pa-chart-grid--base,
-.pa-graph-section .pa-chart-grid--base {
+.pa-graph .pa-chart-grid--base{
   stroke: rgba(100, 116, 139, 0.3);
   stroke-width: 0.55;
 }
 
 .pa-graph .pa-chart-axis-x,
-.pa-graph .pa-chart-axis-y,
-.pa-graph-section .pa-chart-axis-x,
-.pa-graph-section .pa-chart-axis-y {
+.pa-graph .pa-chart-axis-y{
   stroke: rgba(148, 163, 184, 0.5);
   stroke-width: 0.7;
 }
@@ -11990,8 +11761,7 @@ to {
   filter: drop-shadow(0 1px 0 rgba(255, 255, 255, 0.4));
 }
 
-.pa-graph .pa-chart-plot,
-.pa-graph-section .pa-chart-plot {
+.pa-graph .pa-chart-plot{
   background:
     linear-gradient(180deg, rgba(248, 250, 252, 0.9) 0%, rgba(255, 255, 255, 0.4) 75%);
   box-shadow:
@@ -11999,8 +11769,7 @@ to {
     inset 0 1px 0 rgba(255, 255, 255, 0.95);
 }
 
-.pa-graph .pa-table-scroll,
-.pa-graph-section .pa-table-scroll {
+.pa-graph .pa-table-scroll{
   max-height: min(42vh, 28rem);
 }
 
@@ -12018,12 +11787,6 @@ to {
   border-top: 1px dashed rgba(148, 163, 184, 0.45);
   pointer-events: none;
   transform: translateY(-0.5px);
-}
-
-@keyframes pa-line-draw {
-to {
-    stroke-dashoffset: 0;
-  }
 }
 
 .pa-table-toolbar-lead {
@@ -12133,9 +11896,7 @@ to {
 }
 
 @media (prefers-reduced-motion: reduce) {
-.pa-chart-line--reveal,
-  .pa-graph-canvas,
-  .pa-chart-scrubber--multi {
+.pa-graph-canvas{
     animation: none !important;
   }
 }
@@ -12202,11 +11963,6 @@ to {
   border-left: 1px solid var(--pa-line);
 }
 
-.pa-graph--pro .pa-graph-kpi--primary {
-  border-right: none;
-  padding-left: 0.7rem;
-}
-
 .pa-graph--pro .pa-graph-kpi:first-child {
   padding-left: 0;
 }
@@ -12226,10 +11982,6 @@ to {
   font-size: clamp(1.05rem, 2.3vw, 1.28rem);
   letter-spacing: -0.03em;
   font-feature-settings: "tnum" 1;
-}
-
-.pa-graph--pro .pa-graph-kpi-value--sm {
-  font-size: clamp(1.05rem, 2.3vw, 1.28rem);
 }
 
 .pa-graph--pro .pa-graph-kpi-delta {
@@ -12273,8 +12025,7 @@ to {
   height: clamp(190px, 30vw, 260px);
 }
 
-.pa-graph--pro .pa-chart-y-rail,
-.pa-graph--pro .pa-chart-y-rail-wrap {
+.pa-graph--pro .pa-chart-y-rail{
   background: linear-gradient(90deg, rgba(255, 255, 255, 0.98) 72%, rgba(255, 255, 255, 0) 100%);
 }
 
@@ -12321,13 +12072,6 @@ to {
   transform: translateX(-50%) rotate(0);
 }
 
-.pa-graph--pro .pa-graph-hint {
-  margin-top: 0.35rem;
-  font-size: 0.64rem;
-  color: var(--pa-faint);
-  opacity: 0.9;
-}
-
 .pa-chart-focus-band {
   position: absolute;
   top: 0;
@@ -12350,24 +12094,6 @@ to {
 
 .pa-graph--pro .pa-chart-h-rule {
   border-top: 1px dashed rgba(148, 163, 184, 0.4);
-}
-
-.pa-graph--pro .pa-chart-tooltip-card {
-  min-width: 11.5rem;
-  border-radius: 0.95rem;
-  border: 1px solid rgba(226, 232, 240, 0.98);
-  background: rgba(255, 255, 255, 0.97);
-  box-shadow:
-    0 22px 48px rgba(15, 23, 42, 0.14),
-    0 0 0 1px rgba(255, 255, 255, 0.8) inset;
-  backdrop-filter: blur(14px);
-  overflow: hidden;
-}
-
-.pa-graph--pro .pa-chart-tooltip-head {
-  padding: 0.55rem 0.75rem 0.45rem;
-  background: linear-gradient(180deg, #f8fafc 0%, #ffffff 100%);
-  border-bottom: 1px solid rgba(241, 245, 249, 0.98);
 }
 
 /* Series segment control */
@@ -12715,12 +12441,6 @@ to {
 .pa-graph--pro .pa-graph-kpis {
     grid-template-columns: repeat(3, minmax(0, 1fr));
   }
-.pa-graph--pro .pa-graph-kpi--primary {
-    grid-column: auto;
-    border-bottom: none;
-    padding-left: 0.45rem;
-    padding-right: 0.45rem;
-  }
 .pa-graph--pro .pa-graph-kpi {
     padding: 0.45rem 0.45rem;
   }
@@ -13058,10 +12778,6 @@ to {
   grid-row: 4;
   margin-top: 0.15rem;
   justify-self: center;
-}
-
-.pa-chart-shell--aligned .pa-chart-main {
-  display: contents;
 }
 
 .pa-graph--pro .pa-chart-shell--aligned .pa-chart-y-rail {
@@ -13575,10 +13291,6 @@ to {
   align-items: center;
   gap: 0.4rem;
   flex-shrink: 0;
-}
-
-.pa-fs-chrome--pro .pa-fs-pills-inner {
-  display: none;
 }
 
 .pa-fs-canvas {

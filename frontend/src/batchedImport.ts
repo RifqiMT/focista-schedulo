@@ -4,7 +4,7 @@ import { apiFetch } from "./apiClient";
 const TASK_BATCH_SIZE = 400;
 const PROJECT_BATCH_SIZE = 500;
 
-export type BatchedImportFormat = "json" | "csv";
+type BatchedImportFormat = "json" | "csv";
 
 type ImportProfile = {
   id: string;
