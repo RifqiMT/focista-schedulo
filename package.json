@@ -18,7 +18,8 @@
     "build:frontend": "npm --workspace frontend run build",
     "lint": "npm-run-all lint:backend lint:frontend",
     "lint:backend": "npm --workspace backend run lint",
-    "lint:frontend": "npm --workspace frontend run lint"
+    "lint:frontend": "npm --workspace frontend run lint",
+    "neon:link": "bash scripts/link-neon-vercel.sh"
   },
   "devDependencies": {
     "@types/compression": "^1.8.1",

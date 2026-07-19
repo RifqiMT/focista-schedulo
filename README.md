@@ -68,7 +68,7 @@ Focista Schedulo helps users:
 - **Security-sensitive deletion:** Deleting a password-protected profile requires password confirmation and backend verification.
 - **Friendly error standard:** Toasts resolve backend root-cause messages and provide guidance by HTTP status class (`400`, `401`, `403`, `413`, `5xx`, etc.).
 - **Export flexibility:** `JSON`, `CSV`, and `Both`; locked-profile inclusion requires password validation.
-- **Large transfer path:** Production imports stage through **Neon `transfer_staging`** when `DATABASE_URL` is configured. Large exports prefer staging download, otherwise page tasks (`parts`) so export still works without staging.
+- **Large transfer path:** When Neon is configured, production imports prefer **Neon `transfer_staging`** (chunked upload). Large exports use staging off-Vercel or **parts** paging on Vercel (response body limits). Without Neon, batched `import-merge` still works against ephemeral `/tmp` on Vercel.
 - **Automated persistence ops:** Sync/save run automatically after import (not on every boot for expensive paths); manual Sync/Save header buttons are removed.
 - **Profile-first integrity:** Tasks, projects, progress, and insights remain scoped by active profile with resilient fallback visibility.
 

@@ -1,6 +1,5 @@
-import { readFile } from "fs/promises";
-import path from "path";
 import { neon, type NeonQueryFunction } from "@neondatabase/serverless";
+import { NEON_CORE_MIGRATION_SQL } from "./neonMigrations";
 
 export type NeonSql = NeonQueryFunction<false, false>;
 
@@ -60,8 +59,8 @@ export async function ensureNeonMigrations(
   if (migrationsApplied) return;
   const timeoutMs = Math.max(1000, Number(env.NEON_STATEMENT_TIMEOUT_MS ?? 15_000));
   await sql.query(`SET statement_timeout = ${timeoutMs}`);
-  const migrationPath = path.join(__dirname, "migrations", "001_neon_core.sql");
-  const ddl = await readFile(migrationPath, "utf8");
+  // Embed DDL in the JS bundle so Vercel serverless does not need dist/migrations/*.sql.
+  const ddl = NEON_CORE_MIGRATION_SQL;
   // neon() HTTP driver does not run multi-statement scripts reliably; split on semicolons
   // outside of function bodies (our migration has none).
   const statements = ddl

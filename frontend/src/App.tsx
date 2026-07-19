@@ -114,6 +114,62 @@ export function App() {
   };
 
   useEffect(() => {
+    let cancelled = false;
+    const run = async () => {
+      try {
+        const res = await apiFetch("/health");
+        if (!res.ok || cancelled) return;
+        const health = (await res.json()) as {
+          storage?: string;
+          ephemeralStorage?: boolean;
+          setupHint?: string | null;
+          neon?: { ok?: boolean; capabilities?: { write?: boolean; import?: boolean; export?: boolean } };
+        };
+        if (cancelled) return;
+        const toastKey =
+          health.storage === "neon" && health.neon?.ok
+            ? "pst:storage-toast:neon"
+            : health.ephemeralStorage
+              ? "pst:storage-toast:ephemeral"
+              : null;
+        if (!toastKey) return;
+        try {
+          if (sessionStorage.getItem(toastKey) === "1") return;
+          sessionStorage.setItem(toastKey, "1");
+        } catch {
+          // ignore sessionStorage failures
+        }
+        if (health.storage === "neon" && health.neon?.ok) {
+          pushToast({
+            kind: "success",
+            title: "Neon storage ready",
+            message: "Writes, import, and export use Neon Postgres.",
+            durationMs: 4200
+          });
+          return;
+        }
+        if (health.ephemeralStorage) {
+          pushToast({
+            kind: "info",
+            title: "Ephemeral storage",
+            message:
+              health.setupHint ||
+              "Set DATABASE_URL (Neon) on Vercel for durable write/import/export, then redeploy.",
+            durationMs: 7000
+          });
+        }
+      } catch {
+        // ignore health probe failures
+      }
+    };
+    void run();
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- one-shot storage status toast on mount
+  }, []);
+
+  useEffect(() => {
     const bumpContext = () => setTrueFsContextEpoch((n) => n + 1);
     const fsEvents = [
       "fullscreenchange",
@@ -317,8 +373,89 @@ export function App() {
       let importBody: { format: "json" | "csv"; content?: string; stagingPathname?: string } | null =
         null;
 
-      // On Vercel, prefer client-parsed batch merge (no multi-MB body, no transfer_staging required).
-      if (shouldUseBatchedImport(file)) {
+      let neonTransferStaging = false;
+      let storageKind: string | undefined;
+      let ephemeralStorage = false;
+      try {
+        const healthRes = await apiFetch("/health");
+        const health = (await healthRes.json().catch(() => null)) as {
+          storage?: string;
+          ephemeralStorage?: boolean;
+          transferStaging?: boolean;
+          neon?: { ok?: boolean; capabilities?: { import?: boolean; transferStaging?: boolean } };
+        } | null;
+        storageKind = health?.storage;
+        ephemeralStorage = Boolean(health?.ephemeralStorage);
+        neonTransferStaging = Boolean(
+          health?.transferStaging ||
+            health?.neon?.capabilities?.transferStaging ||
+            (health?.storage === "neon" && health?.neon?.ok)
+        );
+      } catch {
+        // ignore — fall back to batched / inline paths
+      }
+
+      const storageNote =
+        storageKind === "neon"
+          ? " Saved to Neon."
+          : ephemeralStorage
+            ? " Warning: Vercel storage is still ephemeral until DATABASE_URL (Neon) is set."
+            : "";
+
+      // Prefer Neon chunked staging when available (durable write + large-file path).
+      if (neonTransferStaging && shouldStageImport(file)) {
+        try {
+          const stagingPathname = await uploadImportFileToStaging(file);
+          importBody = { format, stagingPathname };
+        } catch (stageErr) {
+          // Fall through to batched merge if staging fails (e.g. cold Neon).
+          console.warn("[import] Neon staging failed; trying batched merge", stageErr);
+          if (shouldUseBatchedImport(file, { neonTransferStaging: false })) {
+            try {
+              const result = await importFileInBatches(file, format);
+              window.dispatchEvent(new Event("pst:projects-changed"));
+              window.dispatchEvent(new Event("pst:tasks-changed"));
+              pushToast({
+                kind: "success",
+                title: "Imported",
+                message: `Imported ${result.imported.profiles} profile(s), ${result.imported.projects} project(s), and ${result.imported.tasks} task(s) via batched merge.${storageNote}`,
+                durationMs: Math.max(3200, performance.now() - started)
+              });
+              await ensureVisibleProfileAfterDataOps();
+              await autoSyncAndSave({ quiet: true });
+              return;
+            } catch (batchErr) {
+              const message =
+                batchErr instanceof Error
+                  ? batchErr.message
+                  : stageErr instanceof Error
+                    ? stageErr.message
+                    : "Import failed.";
+              setImportError(message);
+              pushToast({
+                kind: "error",
+                title: "Import failed",
+                message,
+                durationMs: performance.now() - started
+              });
+              return;
+            }
+          }
+          const message =
+            stageErr instanceof Error
+              ? stageErr.message
+              : "Could not stage the import file in Neon transfer staging.";
+          setImportError(message);
+          pushToast({
+            kind: "error",
+            title: "Import failed",
+            message,
+            durationMs: performance.now() - started
+          });
+          return;
+        }
+      } else if (shouldUseBatchedImport(file, { neonTransferStaging })) {
+        // No Neon staging: client-parsed batches (still persist to Neon when configured).
         try {
           const result = await importFileInBatches(file, format);
           window.dispatchEvent(new Event("pst:projects-changed"));
@@ -326,9 +463,11 @@ export function App() {
           pushToast({
             kind: "success",
             title: "Imported",
-            message: `Imported ${result.imported.profiles} profile(s), ${result.imported.projects} project(s), and ${result.imported.tasks} task(s) via batched merge.`,
+            message: `Imported ${result.imported.profiles} profile(s), ${result.imported.projects} project(s), and ${result.imported.tasks} task(s) via batched merge.${storageNote}`,
             durationMs: Math.max(3200, performance.now() - started)
           });
+          await ensureVisibleProfileAfterDataOps();
+          await autoSyncAndSave({ quiet: true });
           return;
         } catch (err) {
           const message =
@@ -344,9 +483,7 @@ export function App() {
           });
           return;
         }
-      }
-
-      if (shouldStageImport(file)) {
+      } else if (shouldStageImport(file)) {
         try {
           const stagingPathname = await uploadImportFileToStaging(file);
           importBody = { format, stagingPathname };
@@ -413,6 +550,7 @@ export function App() {
       window.dispatchEvent(new Event("pst:tasks-changed"));
       const droppedTotal = droppedProjects + droppedTasks + droppedProfiles;
       const importedTotal = importedProfiles + importedProjects + importedTasks;
+      const viaNeonStaging = Boolean(importBody.stagingPathname);
       pushToast({
         kind: droppedTotal > 0 && importedTotal === 0 ? "error" : droppedTotal > 0 ? "info" : "success",
         title:
@@ -422,14 +560,17 @@ export function App() {
               ? "Imported with some skipped rows"
               : "Imported",
         message:
-          `Imported ${importedProfiles} profile(s), ${importedProjects} project(s), and ${importedTasks} task(s). ` +
+          `Imported ${importedProfiles} profile(s), ${importedProjects} project(s), and ${importedTasks} task(s)` +
+          (viaNeonStaging ? " via Neon staging" : "") +
+          `. ` +
           (droppedTotal > 0
             ? `Skipped invalid rows: profiles=${droppedProfiles}, projects=${droppedProjects}, tasks=${droppedTasks}. `
             : "") +
           (inferredProjectProfiles || inferredTaskProfiles
             ? `Inferred profile links: projects=${inferredProjectProfiles}, tasks=${inferredTaskProfiles}. `
             : "") +
-          (backfilledTotal ? `Profile backfill: ${backfilledTotal}.` : ""),
+          (backfilledTotal ? `Profile backfill: ${backfilledTotal}. ` : "") +
+          storageNote.trim(),
         durationMs: Math.max(3200, performance.now() - started)
       });
       await ensureVisibleProfileAfterDataOps();

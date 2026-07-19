@@ -23,7 +23,8 @@ In production, the browser resolves the API origin via `frontend/src/apiClient.t
 
 | Method | Path | Notes |
 |---|---|---|
-| `GET` | `/health` | Includes storage kind (e.g. `"storage":"neon"` or `"fs"`) |
+| `GET` | `/health` | `storage`, `ephemeralStorage`, `transferStaging`, `databaseUrlConfigured`, `setupHint`, and `neon.ok` + `neon.capabilities` (`write` / `import` / `export` / `transferStaging`) |
+| `POST` | `/api/admin/storage-probe` | Verifies Neon migrate + write/delete probe row; `503` when Neon unset |
 
 ---
 

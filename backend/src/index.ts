@@ -120,6 +120,35 @@ function storageSetupHint(): string | null {
   return null;
 }
 
+let neonHealthCache: { ok: boolean; error?: string; revision?: number; checkedAt: number } | null =
+  null;
+
+async function checkNeonHealth(force = false): Promise<{
+  ok: boolean;
+  error?: string;
+  revision?: number;
+  checkedAt: number;
+}> {
+  if (!neonStore) {
+    return { ok: false, error: "Neon storage is not configured", checkedAt: Date.now() };
+  }
+  if (!force && neonHealthCache && Date.now() - neonHealthCache.checkedAt < 30_000) {
+    return neonHealthCache;
+  }
+  try {
+    await neonStore.ensureReady();
+    const revision = await neonStore.getTasksRevision();
+    neonHealthCache = { ok: true, revision, checkedAt: Date.now() };
+  } catch (err) {
+    neonHealthCache = {
+      ok: false,
+      error: err instanceof Error ? err.message : String(err),
+      checkedAt: Date.now()
+    };
+  }
+  return neonHealthCache;
+}
+
 const TaskSchema = z.object({
   id: z.string(),
   title: z.string().min(1),
@@ -2055,9 +2084,10 @@ async function persistProfiles() {
   await schedulePersistFlush();
 }
 
-app.get("/health", (_req, res) => {
+app.get("/health", async (_req, res) => {
+  const neon = neonStore ? await checkNeonHealth() : null;
   res.json({
-    status: "ok",
+    status: neon && !neon.ok ? "degraded" : "ok",
     service: "focista-schedulo-backend",
     storage: storage.kind,
     production: isProduction,
@@ -2069,12 +2099,78 @@ app.get("/health", (_req, res) => {
         process.env.DATABASE_URL_POOLED?.trim()
     ),
     ephemeralStorage: Boolean(isVercel && !neonStore),
+    neon: neon
+      ? {
+          ok: neon.ok,
+          revision: neon.revision ?? null,
+          error: neon.error ?? null,
+          capabilities: {
+            write: neon.ok,
+            import: neon.ok,
+            export: neon.ok,
+            transferStaging: neon.ok
+          }
+        }
+      : {
+          ok: false,
+          revision: null,
+          error: storageSetupHint(),
+          capabilities: {
+            write: false,
+            import: false,
+            export: false,
+            transferStaging: false
+          }
+        },
     setupHint: storageSetupHint(),
     bootstrap: {
       profilesReady: lightBootstrapComplete || dataBootstrapComplete,
       dataReady: dataBootstrapComplete
     }
   });
+});
+
+/** Verify Neon can migrate + read/write (admin). */
+app.post("/api/admin/storage-probe", async (_req, res) => {
+  if (!neonStore) {
+    return res.status(503).json({
+      ok: false,
+      error: storageSetupHint() ?? "Neon is not configured (set DATABASE_URL).",
+      storage: storage.kind
+    });
+  }
+  try {
+    await neonStore.ensureReady();
+    const probeId = `__probe_${Date.now()}`;
+    await neonStore.upsertTasks([
+      {
+        id: probeId,
+        title: "neon-probe",
+        priority: "low",
+        labels: [],
+        projectId: null,
+        completed: false
+      }
+    ]);
+    await neonStore.deleteTasks([probeId]);
+    const health = await checkNeonHealth(true);
+    return res.json({
+      ok: true,
+      storage: "neon",
+      write: true,
+      import: true,
+      export: true,
+      transferStaging: true,
+      revision: health.revision ?? null
+    });
+  } catch (err) {
+    console.error("[storage-probe]", err);
+    return res.status(500).json({
+      ok: false,
+      storage: "neon",
+      error: err instanceof Error ? err.message : String(err)
+    });
+  }
 });
 
 app.get("/api/events", (req, res) => {
@@ -4330,12 +4426,19 @@ app.post("/api/admin/export-data", async (req, res) => {
     const json = JSON.stringify(data);
     const bytes = Buffer.byteLength(json, "utf8");
     const maxInline = inlineExportMaxBytes(isVercel);
+    // Neon staging stores the snapshot, but downloading via /api/admin/export-download
+    // still counts against Vercel Hobby ~4.5MB response limits. On Vercel, prefer parts
+    // for large exports; use Neon staging off-Vercel or when explicitly requested and small.
     const preferStaging =
-      deliveryPref === "staging" ||
-      (deliveryPref === "auto" &&
-        (isVercel || bytes > INLINE_TRANSFER_MAX_BYTES) &&
-        canUseTransferStaging());
-    const forceParts = deliveryPref === "parts";
+      deliveryPref === "staging" && canUseTransferStaging()
+        ? true
+        : deliveryPref === "auto" &&
+          canUseTransferStaging() &&
+          bytes > INLINE_TRANSFER_MAX_BYTES &&
+          !isVercel;
+    const forceParts =
+      deliveryPref === "parts" ||
+      (deliveryPref === "auto" && isVercel && bytes > maxInline);
 
     if (preferStaging && !forceParts && neonStore) {
       try {
@@ -4346,6 +4449,7 @@ app.post("/api/admin/export-data", async (req, res) => {
         return res.json({
           ok: true,
           delivery: "staging",
+          storage: "neon",
           pathname,
           downloadUrl,
           byteLength: bytes,
@@ -4364,6 +4468,7 @@ app.post("/api/admin/export-data", async (req, res) => {
       return res.json({
         ok: true,
         delivery: "inline",
+        storage: storage.kind,
         data,
         excludedLockedProfiles: deniedProfileNames
       });
@@ -4374,6 +4479,7 @@ app.post("/api/admin/export-data", async (req, res) => {
     return res.json({
       ok: true,
       delivery: "parts",
+      storage: storage.kind,
       data: {
         app: data.app,
         exportedAt: data.exportedAt,

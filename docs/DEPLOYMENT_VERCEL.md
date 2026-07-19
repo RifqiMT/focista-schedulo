@@ -94,13 +94,26 @@ At build time, Vite inlines this value. Production builds on Vercel **fail** if 
 
 ### Persistence (Neon Postgres Free — no Redis / no MongoDB)
 
-**Required for Vercel Prod:** without a Neon URL the API falls back to ephemeral `fs`, and large imports previously failed with “Transfer staging requires Neon storage”.
+**Required for Vercel Prod:** without a Neon URL the API falls back to ephemeral `/tmp` `fs`, so writes/import/export do not survive cold starts.
 
 1. Neon dashboard → create Free project → copy **pooled** connection string.  
-2. Vercel project → **Settings → Environment Variables** → add to the **backend** service (Production):  
+2. Link to Vercel (from repo root):
+
+```bash
+DATABASE_URL='postgresql://USER:PASS@ep-….pooler….neon.tech/neondb?sslmode=require' npm run neon:link
+```
+
+Or set manually in Vercel → **Settings → Environment Variables** (backend / Production):  
    - `DATABASE_URL` = pooled URL (also accepts `POSTGRES_URL` from the Neon Vercel integration)  
    - `STORAGE_BACKEND` = `neon` (optional if `DATABASE_URL` is set)  
-3. Redeploy. Verify `GET /health` shows `"storage":"neon"` and `databaseUrlConfigured: true`.
+3. Redeploy. Verify:
+
+```bash
+curl -s https://focista-schedulo.vercel.app/health | jq .
+# expect: storage=neon, neon.ok=true, ephemeralStorage=false
+curl -s -X POST https://focista-schedulo.vercel.app/api/admin/storage-probe | jq .
+# expect: ok=true, write/import/export/transferStaging true
+```
 
 Create a **Neon Free** project (region near your Vercel deployment). Use the **pooled** connection string on the API host.
 

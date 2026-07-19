@@ -1669,6 +1669,7 @@ export function TaskBoard({
     const snapshotRes = await apiFetch("/api/admin/export-data", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
+      // On Vercel, auto uses parts for large payloads (Neon staging download still hits body limits).
       body: JSON.stringify({ profilePasswords, delivery: "auto" })
     });
     const elapsedFetch = performance.now() - started;

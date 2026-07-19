@@ -231,9 +231,19 @@ export async function importFileInBatches(
   };
 }
 
-export function shouldUseBatchedImport(file: File): boolean {
+/**
+ * Prefer batched merge on Vercel only when Neon transfer staging is unavailable.
+ * When Neon is configured, large imports should use chunked staging instead.
+ */
+export function shouldUseBatchedImport(
+  file: File,
+  opts?: { neonTransferStaging?: boolean }
+): boolean {
+  if (opts?.neonTransferStaging) {
+    // Neon staging handles large files; keep batches for huge browser-parse fallbacks only.
+    return false;
+  }
   if (typeof window !== "undefined" && /\.vercel\.app$/i.test(window.location.hostname)) {
-    // Prefer batches on Vercel for anything that might approach platform body limits.
     return file.size > 256 * 1024;
   }
   return file.size > 3_000_000;

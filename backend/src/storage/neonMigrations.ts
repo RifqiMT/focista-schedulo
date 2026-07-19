@@ -1,13 +1,11 @@
--- Focista Schedulo — Neon Free core schema
--- Replaces Vercel Blob runtime objects + Blob transfer staging.
--- Decision: docs/plans/2026-07-19-neon-schema-decision.md
---
--- Neon Free targets: 0.5 GB storage, 100 CU-hours, scale-to-zero.
--- Row-per-task + jsonb payload avoids multi-MB whole-document rewrites.
--- Filter indexes use immutable jsonb operators (no generated columns).
-
-BEGIN;
-
+/**
+ * Neon core DDL embedded for serverless deploys (no filesystem SQL at runtime).
+ * Keep in sync with `migrations/001_neon_core.sql`.
+ *
+ * Note: task filter fields stay inside `payload jsonb` (expression indexes).
+ * Generated columns were avoided — Postgres rejects some jsonb casts as non-immutable.
+ */
+export const NEON_CORE_MIGRATION_SQL = `
 CREATE EXTENSION IF NOT EXISTS pgcrypto;
 
 CREATE TABLE IF NOT EXISTS profiles (
@@ -27,7 +25,6 @@ CREATE TABLE IF NOT EXISTS projects (
 
 CREATE INDEX IF NOT EXISTS projects_profile_id_idx ON projects (profile_id);
 
--- Canonical task document lives in payload (TaskSchema JSON).
 CREATE TABLE IF NOT EXISTS tasks (
   id text PRIMARY KEY,
   payload jsonb NOT NULL,
@@ -41,7 +38,6 @@ CREATE INDEX IF NOT EXISTS tasks_parent_id_idx ON tasks ((payload->>'parentId'))
 CREATE INDEX IF NOT EXISTS tasks_completed_idx ON tasks (((payload->>'completed') = 'true'));
 CREATE INDEX IF NOT EXISTS tasks_updated_at_idx ON tasks (updated_at DESC);
 
--- Cheap multi-isolate freshness (replaces Blob list/head mtime peeks).
 CREATE TABLE IF NOT EXISTS runtime_meta (
   key text PRIMARY KEY,
   value bigint NOT NULL DEFAULT 0,
@@ -55,7 +51,6 @@ VALUES
   ('profiles_revision', 0)
 ON CONFLICT (key) DO NOTHING;
 
--- Replaces focista-schedulo/imports|exports Blob staging.
 CREATE TABLE IF NOT EXISTS transfer_staging (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   pathname text NOT NULL UNIQUE,
@@ -70,5 +65,4 @@ CREATE TABLE IF NOT EXISTS transfer_staging (
 );
 
 CREATE INDEX IF NOT EXISTS transfer_staging_expires_idx ON transfer_staging (expires_at);
-
-COMMIT;
+`.trim();

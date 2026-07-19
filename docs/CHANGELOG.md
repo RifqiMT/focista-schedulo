@@ -16,7 +16,9 @@
 - Transfer: `POST /api/admin/transfer-upload` + import `stagingPathname`; export `delivery: "staging"` / download via `GET /api/admin/export-download`; frontend `transferImport.ts`. Parts paging remains the fallback when staging is unavailable.
 - Neon `persistDebounceMs` is **`0` when `VERCEL` is set**; ~200ms off-Vercel. Task complete **awaits** durable persist and fail-closes with rollback + `500` + UI toast.
 - **Export output:** always one JSON file, one CSV file, or both — each file covers **all profiles'** entries (including cancelled tasks and empty profiles); locked profiles remain optional via password gate.
-- **Vercel large import:** client-parsed **batched** `POST /api/admin/import-merge` (primary) avoids `FUNCTION_PAYLOAD_TOO_LARGE` and does not require transfer staging; chunked Neon staging remains as a fallback path.
+- **Vercel large import:** when Neon is configured, prefer **chunked Neon `transfer_staging`**; otherwise client-parsed **batched** `POST /api/admin/import-merge` (avoids `FUNCTION_PAYLOAD_TOO_LARGE`).
+- **Neon capabilities:** `GET /health` reports `neon.ok` + write/import/export/transferStaging; `POST /api/admin/storage-probe` verifies migrate + write; `npm run neon:link` wires `DATABASE_URL` to Vercel.
+- **Neon schema on serverless:** core DDL is embedded in `neonMigrations.ts` (no runtime `dist/migrations/*.sql` file dependency). Task filter indexes use jsonb expression indexes (generated columns removed — Postgres immutability).
 - **Vercel storage selection:** when `DATABASE_URL` / `POSTGRES_URL` is set, Neon is preferred even if stale `STORAGE_BACKEND=fs` remains (override with `VERCEL_ALLOW_FS=1`).
 
 ### Removed
