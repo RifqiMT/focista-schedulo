@@ -3,6 +3,7 @@ import cors from "cors";
 import compression from "compression";
 import { z } from "zod";
 import path from "path";
+import os from "os";
 import { computeMonthlyGrinding } from "./monthlyGrinding";
 import { computeYearlyGrinding } from "./yearlyGrinding";
 import { buildBadgesEarnedMilestoneBlock } from "./badgesEarnedMilestone";
@@ -80,7 +81,10 @@ app.use((req, res, next) => {
 });
 
 const PORT = process.env.PORT || 4000;
-const DATA_DIR = path.join(__dirname, "..", "data");
+// Vercel serverless package dir is read-only (EROFS). Use /tmp for any fs fallback.
+const DATA_DIR = isVercel
+  ? path.join(os.tmpdir(), "focista-schedulo-data")
+  : path.join(__dirname, "..", "data");
 const UNIFIED_DATA_FILE = "focista-unified-data.json";
 const TASKS_FILE = "tasks.runtime.json";
 const PROJECTS_FILE = "projects.runtime.json";
@@ -93,12 +97,14 @@ const NEON_FRESHNESS_TTL_MS = Math.max(
   0,
   Number(process.env.NEON_FRESHNESS_TTL_MS ?? 2000) || 2000
 );
-console.log(`[storage] backend=${storage.kind} debounceMs=${storage.persistDebounceMs}`);
+console.log(
+  `[storage] backend=${storage.kind} debounceMs=${storage.persistDebounceMs} dataDir=${DATA_DIR}`
+);
 if (isVercel && !neonStore) {
   console.error(
-    "[storage] Vercel Prod is not using Neon. Large import/export and durable persistence require " +
+    "[storage] Vercel Prod is not using Neon. Durable import/export/persistence require " +
       "DATABASE_URL (pooled) on the backend service. Create a Neon Free project and set " +
-      "DATABASE_URL + STORAGE_BACKEND=neon (or leave STORAGE_BACKEND unset)."
+      "DATABASE_URL (STORAGE_BACKEND=neon optional)."
   );
 }
 
@@ -112,6 +118,16 @@ function storageSetupHint(): string | null {
     return "Set DATABASE_URL (Neon pooled connection string) on the Vercel backend service, then redeploy. Optional: STORAGE_BACKEND=neon.";
   }
   return null;
+}
+
+/** Vercel serverless cannot durably persist with fs; mutations need Neon. */
+function vercelNeonRequiredError(): string | null {
+  if (!isVercel || neonStore) return null;
+  return (
+    "Vercel production cannot save data without Neon Postgres " +
+    "(the app filesystem is read-only). Create a Neon Free project, set DATABASE_URL " +
+    "on this Vercel project’s backend env, then redeploy. Check GET /health for setupHint."
+  );
 }
 
 const TaskSchema = z.object({
@@ -1928,6 +1944,10 @@ async function ensureTasksMemoryFresh(): Promise<void> {
 
 async function persistRuntimeData(): Promise<void> {
   await ensureDataDir();
+  const neonRequired = vercelNeonRequiredError();
+  if (neonRequired) {
+    throw new Error(neonRequired);
+  }
   const wroteTasks = dirtyTasks;
 
   if (neonStore) {
@@ -4449,6 +4469,10 @@ app.post("/api/admin/import-merge", async (req, res) => {
    * Self-contained batch merge for large Vercel imports (avoids FUNCTION_PAYLOAD_TOO_LARGE
    * and does not require transfer_staging). Each request merges a small payload and persists.
    */
+  const neonRequired = vercelNeonRequiredError();
+  if (neonRequired) {
+    return res.status(503).json({ ok: false, error: neonRequired, setupHint: storageSetupHint() });
+  }
   const body = z
     .object({
       profiles: z.array(z.unknown()).max(500).optional(),
@@ -4538,6 +4562,10 @@ app.post("/api/admin/import-merge", async (req, res) => {
 });
 
 app.post("/api/admin/import", async (req, res) => {
+  const neonRequired = vercelNeonRequiredError();
+  if (neonRequired) {
+    return res.status(503).json({ ok: false, error: neonRequired, setupHint: storageSetupHint() });
+  }
   const schema = z
     .object({
       format: z.enum(["json", "csv"]),

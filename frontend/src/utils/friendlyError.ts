@@ -17,7 +17,8 @@ function fallbackByStatus(status: number): string {
     return "This file is too large for a single API request. On Vercel, imports use chunked Neon staging automatically—retry after redeploying the latest build. Large exports use staging or pages.";
   if (status === 422) return "The data format is invalid. Please verify the file structure and values.";
   if (status === 429) return "Too many requests. Please wait a moment, then try again.";
-  if (status === 503) return "The workspace is still warming up. Please wait a moment and try again.";
+  if (status === 503)
+    return "Storage is not ready for saving on Vercel. Set DATABASE_URL (Neon pooled URL) on the backend service, redeploy, then retry. Check /health for setupHint.";
   if (status >= 500) return "Server issue detected. Please try again in a moment.";
   return `Request failed (${status}). Please try again.`;
 }
@@ -47,6 +48,16 @@ export async function getFriendlyErrorMessage(res: Response): Promise<string> {
 
   if (isMeaningfulMessage(directError)) return directError.trim();
   if (isMeaningfulMessage(nestedMessage)) return nestedMessage.trim();
+  if (
+    jsonPayload &&
+    typeof jsonPayload === "object" &&
+    typeof (jsonPayload as any).setupHint === "string" &&
+    (jsonPayload as any).setupHint.trim()
+  ) {
+    const hint = String((jsonPayload as any).setupHint).trim();
+    if (isMeaningfulMessage(directError)) return `${directError.trim()} (${hint})`;
+    return hint;
+  }
   if (text.trim() && !text.trim().startsWith("<")) {
     const cleaned = text.replace(/\s+/g, " ").trim().slice(0, 240);
     if (isMeaningfulMessage(cleaned)) return cleaned;
