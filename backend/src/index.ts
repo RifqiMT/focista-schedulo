@@ -120,16 +120,6 @@ function storageSetupHint(): string | null {
   return null;
 }
 
-/** Vercel serverless cannot durably persist with fs; mutations need Neon. */
-function vercelNeonRequiredError(): string | null {
-  if (!isVercel || neonStore) return null;
-  return (
-    "Vercel production cannot save data without Neon Postgres " +
-    "(the app filesystem is read-only). Create a Neon Free project, set DATABASE_URL " +
-    "on this Vercel project’s backend env, then redeploy. Check GET /health for setupHint."
-  );
-}
-
 const TaskSchema = z.object({
   id: z.string(),
   title: z.string().min(1),
@@ -1944,10 +1934,6 @@ async function ensureTasksMemoryFresh(): Promise<void> {
 
 async function persistRuntimeData(): Promise<void> {
   await ensureDataDir();
-  const neonRequired = vercelNeonRequiredError();
-  if (neonRequired) {
-    throw new Error(neonRequired);
-  }
   const wroteTasks = dirtyTasks;
 
   if (neonStore) {
@@ -2082,6 +2068,7 @@ app.get("/health", (_req, res) => {
         process.env.NEON_DATABASE_URL?.trim() ||
         process.env.DATABASE_URL_POOLED?.trim()
     ),
+    ephemeralStorage: Boolean(isVercel && !neonStore),
     setupHint: storageSetupHint(),
     bootstrap: {
       profilesReady: lightBootstrapComplete || dataBootstrapComplete,
@@ -2509,6 +2496,7 @@ app.get("/api/tasks", async (req, res) => {
 });
 
 app.post("/api/tasks", async (req, res) => {
+  try {
   const baseSchema = TaskSchema.omit({ id: true, completed: true });
   const parsed = baseSchema.safeParse(req.body);
   if (!parsed.success) {
@@ -2608,6 +2596,12 @@ app.post("/api/tasks", async (req, res) => {
   }
   const saved = tasks.find((t) => t.id === task.id) ?? task;
   res.status(201).json(saved);
+  } catch (err) {
+    console.error("[tasks] create failed", err);
+    return res.status(500).json({
+      error: err instanceof Error ? err.message : "Failed to create task. Please retry."
+    });
+  }
 });
 
 function applyTaskUpdateInMemory(
@@ -2719,6 +2713,7 @@ function applyTaskUpdateInMemory(
 }
 
 app.put("/api/tasks/:id", async (req, res) => {
+  try {
   const id = req.params.id;
   const out = applyTaskUpdateInMemory(id, req.body);
   if (!out.ok) {
@@ -2746,6 +2741,12 @@ app.put("/api/tasks/:id", async (req, res) => {
   }
   const updated = tasks.find((t) => t.id === id) ?? updatedAfterRebuild;
   res.json(updated);
+  } catch (err) {
+    console.error("[tasks] update failed", err);
+    return res.status(500).json({
+      error: err instanceof Error ? err.message : "Failed to update task. Please retry."
+    });
+  }
 });
 
 app.post("/api/tasks/batch-update", async (req, res) => {
@@ -4468,11 +4469,8 @@ app.post("/api/admin/import-merge", async (req, res) => {
   /**
    * Self-contained batch merge for large Vercel imports (avoids FUNCTION_PAYLOAD_TOO_LARGE
    * and does not require transfer_staging). Each request merges a small payload and persists.
+   * Without Neon on Vercel, data is written under /tmp (ephemeral per isolate)—configure DATABASE_URL for durability.
    */
-  const neonRequired = vercelNeonRequiredError();
-  if (neonRequired) {
-    return res.status(503).json({ ok: false, error: neonRequired, setupHint: storageSetupHint() });
-  }
   const body = z
     .object({
       profiles: z.array(z.unknown()).max(500).optional(),
@@ -4562,10 +4560,6 @@ app.post("/api/admin/import-merge", async (req, res) => {
 });
 
 app.post("/api/admin/import", async (req, res) => {
-  const neonRequired = vercelNeonRequiredError();
-  if (neonRequired) {
-    return res.status(503).json({ ok: false, error: neonRequired, setupHint: storageSetupHint() });
-  }
   const schema = z
     .object({
       format: z.enum(["json", "csv"]),
