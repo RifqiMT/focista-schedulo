@@ -6,29 +6,33 @@ import { createFsStorage } from "./fsStorage";
 import { resolveStorageKind } from "./createStorage";
 
 describe("resolveStorageKind", () => {
-  it("defaults to fs without blob credentials", () => {
+  it("defaults to fs without database url", () => {
     expect(resolveStorageKind({})).toBe("fs");
   });
 
-  it("auto-selects vercel-blob when BLOB_READ_WRITE_TOKEN is set", () => {
-    expect(resolveStorageKind({ BLOB_READ_WRITE_TOKEN: "vercel_blob_rw_test" })).toBe(
-      "vercel-blob"
-    );
+  it("auto-selects neon when DATABASE_URL is set", () => {
+    expect(
+      resolveStorageKind({
+        DATABASE_URL: "postgresql://user:pass@ep-test.neon.tech/neondb"
+      })
+    ).toBe("neon");
   });
 
-  it("honors explicit fs even when a blob token exists", () => {
+  it("honors explicit fs even when DATABASE_URL exists", () => {
     expect(
       resolveStorageKind({
         STORAGE_BACKEND: "fs",
-        BLOB_READ_WRITE_TOKEN: "vercel_blob_rw_test"
+        DATABASE_URL: "postgresql://user:pass@ep-test.neon.tech/neondb"
       })
     ).toBe("fs");
   });
 
-  it("rejects vercel-blob without credentials", () => {
-    expect(() => resolveStorageKind({ STORAGE_BACKEND: "vercel-blob" })).toThrow(
-      /BLOB_READ_WRITE_TOKEN/
-    );
+  it("rejects neon without DATABASE_URL", () => {
+    expect(() => resolveStorageKind({ STORAGE_BACKEND: "neon" })).toThrow(/DATABASE_URL/);
+  });
+
+  it("rejects unknown storage backends", () => {
+    expect(() => resolveStorageKind({ STORAGE_BACKEND: "redis" })).toThrow(/Unknown STORAGE_BACKEND/);
   });
 });
 

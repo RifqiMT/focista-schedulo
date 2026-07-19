@@ -17,15 +17,15 @@ Focista Schedulo helps users:
 - Plan realistically with **date/time**, **duration**, and **calendar context**
 - Execute quickly using **bulk operations** and low-friction editing
 - Measure momentum through **stats**, **streaks**, **milestones**, **badges**, and **historical productivity charts**
-- Retain ownership of data through **JSON/CSV import and export**, including large-payload transfers via **Vercel Blob** in production
+- Retain ownership of data through **JSON/CSV import and export**, including large-payload transfers via **Neon `transfer_staging`** in production
 
 ### Primary Benefits
 
 | Benefit | What it means in practice |
 |---|---|
 | **Control** | Profile-scoped tasks, projects, and progress prevent cross-context leakage. Optional password locks protect sensitive scopes. |
-| **Reliability** | Recurring series use deterministic parent/child identity; merge/dedupe and per-row import guards protect data; Vercel completions await durable Blob persist. |
-| **Speed** | Split-file (or Blob-object) runtime persistence avoids monolith write bottlenecks; batch APIs reduce round-trips. |
+| **Reliability** | Recurring series use deterministic parent/child identity; merge/dedupe and per-row import guards protect data; Vercel completions await durable Neon persist. |
+| **Speed** | Neon row upserts (or local split-file) runtime persistence avoids monolith write bottlenecks; batch APIs reduce round-trips. |
 | **Ownership** | Import/export (JSON, CSV, or Both) keeps datasets portable; locked-profile export requires credentials. |
 | **Clarity** | Friendly error messages explain root cause and next steps; showcase profile `Test` is read-only for demos. |
 | **Motivation** | XP, levels, streaks, calendar-week charts, grinding milestones, badge PNG export, and AI Productivity Summary reinforce completion. |
@@ -44,7 +44,7 @@ Focista Schedulo helps users:
 | Planning UI | List + calendar month + day-agenda timeline with timeframe filters; free-text search across all task attributes (AND tokens). |
 | Productivity | `/api/stats` and `/api/productivity-insights` power progress, milestones, badges, and trend charts. **Productivity Summary** (`/api/productivity-summary*`) adds Groq + optional Tavily AI overviews and task Q&A (degrades to local brief when needed). |
 | Gamification | Streaks, XP/levels, Consistency Builder, Monthly/Yearly Grinding, badges-earned milestones, badge PNG export. |
-| Data Ops | Import/export with Blob staging or export **parts** paging; **per-row** import validation; **automated** sync + save after import; **AI keys** header for optional browser-local secrets. |
+| Data Ops | Import/export with Neon staging or export **parts** paging; **per-row** import validation; **automated** sync + save after import; **AI keys** header for optional browser-local secrets. |
 
 ### Progress surface (calendar week and tooltips)
 
@@ -58,7 +58,7 @@ Focista Schedulo helps users:
 ### Profile selector and boot UX
 
 - Password-protected profiles show a **lock indicator** in the workspace profile dropdown and summary.
-- Profile loading shows a **progress bar with staged status**; on Vercel, profiles load via a fast path before the large tasks blob.
+- Profile loading shows a **progress bar with staged status**; on Vercel, profiles load via a fast path before the large tasks working set.
 
 ---
 
@@ -68,7 +68,7 @@ Focista Schedulo helps users:
 - **Security-sensitive deletion:** Deleting a password-protected profile requires password confirmation and backend verification.
 - **Friendly error standard:** Toasts resolve backend root-cause messages and provide guidance by HTTP status class (`400`, `401`, `403`, `413`, `5xx`, etc.).
 - **Export flexibility:** `JSON`, `CSV`, and `Both`; locked-profile inclusion requires password validation.
-- **Large transfer path:** Production imports stage through **Vercel Blob** when configured. Large exports prefer Blob, otherwise page tasks (`parts`) so export still works without `BLOB_READ_WRITE_TOKEN`.
+- **Large transfer path:** Production imports stage through **Neon `transfer_staging`** when `DATABASE_URL` is configured. Large exports prefer staging download, otherwise page tasks (`parts`) so export still works without staging.
 - **Automated persistence ops:** Sync/save run automatically after import (not on every boot for expensive paths); manual Sync/Save header buttons are removed.
 - **Profile-first integrity:** Tasks, projects, progress, and insights remain scoped by active profile with resilient fallback visibility.
 
@@ -80,9 +80,9 @@ Focista Schedulo helps users:
 |---|---|
 | Backend | Node.js, Express 4, TypeScript, Zod, compression, CORS |
 | Frontend | React 18, Vite 6, TypeScript, React Router 6, html-to-image |
-| Persistence | JSON documents via pluggable `DataStorage`: local `fs` or **Vercel Blob** |
+| Persistence | Pluggable `DataStorage`: local `fs` or **Neon Postgres Free** (row-per-task) |
 | Tooling | npm workspaces (`backend`, `frontend`), ESLint, Vitest |
-| Deployment | Vercel (SPA + optional Services) + Node API + Vercel Blob |
+| Deployment | Vercel (SPA + optional Services) + Node API + Neon |
 
 ---
 
@@ -99,14 +99,18 @@ focista-schedulo/
 │   │   ├── yearlyGrinding.ts        # Yearly grinding formula
 │   │   ├── badgesEarnedMilestone.ts # Badges-earned milestone tiers
 │   │   ├── capMilestoneBadges.ts    # Milestone list capping
-│   │   ├── blobTransfer.ts          # Large import/export Blob staging
-│   │   └── storage/                 # fs + vercel-blob adapters
+│   │   ├── transferStaging.ts       # Large import/export Neon staging helpers
+│   │   ├── exportEntities.ts        # Export filtering helpers
+│   │   └── storage/                 # fs + neon adapters + migrations
 │   └── data/                        # Local *.runtime.json (dev)
+├── docs/
+│   ├── plans/                       # Architecture plans (Neon migration, etc.)
+│   └── …                            # Product documentation suite
 ├── frontend/
 │   ├── src/
 │   │   ├── App.tsx                  # Shell, import/export, auto sync/save
 │   │   ├── apiClient.ts             # API base URL resolution
-│   │   ├── blobImport.ts            # Client upload for large imports
+│   │   ├── transferImport.ts        # Client upload for large imports (Neon staging)
 │   │   ├── uiExclusiveOverlay.ts    # Single tooltip/hovercard slot
 │   │   ├── components/              # UI modules
 │   │   ├── utils/friendlyError.ts   # User-facing error formatter
@@ -123,16 +127,18 @@ focista-schedulo/
 
 The product uses a **non-monolith runtime** strategy:
 
-| Object | Role |
+| Store | Role |
 |---|---|
-| `tasks.runtime.json` | Primary task store for high-frequency mutations |
-| `projects.runtime.json` | Project store |
-| `profiles.runtime.json` | Profile store (fast-path load in production) |
+| Neon `tasks` (row-per-task) / local `tasks.runtime.json` | Primary task store for high-frequency mutations |
+| Neon `projects` / local `projects.runtime.json` | Project store |
+| Neon `profiles` / local `profiles.runtime.json` | Profile store (fast-path load in production) |
+| Neon `runtime_meta` | Multi-isolate freshness (`tasks_revision`, …) |
+| Neon `transfer_staging` | Temporary large import/export payloads |
 | `focista-unified-data.json` | Interchange snapshot for import/export/admin (not primary runtime write path) |
 
-- **Local development:** `backend/data/` with `STORAGE_BACKEND=fs` (default without Blob credentials).
-- **Production:** same objects in **Vercel Blob** (`STORAGE_BACKEND=vercel-blob` + `BLOB_READ_WRITE_TOKEN`).
-- Debounce: ~40ms on `fs`, ~1500ms on `vercel-blob` (protects free-tier upload quotas).
+- **Local development:** `backend/data/` with `STORAGE_BACKEND=fs` (default without `DATABASE_URL`).
+- **Production:** Neon Postgres Free (`STORAGE_BACKEND=neon` + pooled `DATABASE_URL`).
+- Debounce: ~40ms on `fs`, ~200ms on Neon off-Vercel; **`0`** on Vercel so awaited flushes complete.
 
 See `docs/DEPLOYMENT_VERCEL.md` and `docs/ARCHITECTURE.md`.
 
@@ -168,17 +174,17 @@ Runs setup, then lint, test, and build.
 
 ---
 
-## Production Deployment (Vercel + API + Blob)
+## Production Deployment (Vercel + API + Neon)
 
 See **[docs/DEPLOYMENT_VERCEL.md](docs/DEPLOYMENT_VERCEL.md)**:
 
 - Deploy the **Vite frontend** (and optionally API via Vercel Services).
-- Persist runtime JSON in **Vercel Blob**.
+- Persist runtime entities in **Neon Postgres Free**.
 - Set **`FRONTEND_ORIGIN`** on the API in production.
 - For split hosting, set **`VITE_API_BASE_URL`** on Vercel Production builds.
-- Configure **`BLOB_READ_WRITE_TOKEN`** for runtime persistence and large import/export.
+- Configure **`DATABASE_URL`** (pooled) for runtime persistence and large import/export staging.
 
-Redis and MongoDB are **not** part of the current topology.
+Redis, MongoDB, and external object-store persistence are **not** part of the current topology.
 
 ---
 

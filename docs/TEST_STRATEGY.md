@@ -15,7 +15,7 @@ Provide a practical and auditable testing strategy that validates functional cor
 
 | Layer | Scope | Current Mechanism |
 |---|---|---|
-| Unit tests | Isolated logic (profile security/service, badge rules, grinding, Blob helpers, storage selection) | Backend `vitest` |
+| Unit tests | Isolated logic (profile security/service, badge rules, grinding, transfer staging, storage selection / Neon) | Backend `vitest` |
 | Unit tests | Task free-text search haystack / token matching | Frontend `vitest` (`src/utils/taskSearch.test.ts`) |
 | Integration tests | Route behavior and persistence invariants | Backend route-level verification (manual + scripted) |
 | UI regression checks | Task/project/profile flows, filters, calendar/day agenda, Progress | Frontend manual smoke suite |
@@ -31,11 +31,12 @@ Provide a practical and auditable testing strategy that validates functional cor
 | `capMilestoneBadges.test.ts` | Milestone capping algorithm |
 | `profileService.test.ts` | Profile CRUD + password flows |
 | `profileSecurity.test.ts` | Password hashing/verification |
-| `blobTransfer.test.ts` | Blob transfer utilities |
-| `storage/storage.test.ts` | Storage kind resolution / adapters |
+| `transferStaging.test.ts` | Neon transfer staging helpers (pathname prefixes, inline caps) |
+| `exportEntities.test.ts` | Export filtering by denied profile IDs |
+| `storage/storage.test.ts` | Storage kind resolution (`fs` / `neon` / reject invalid backend) |
 | `productivitySummaryService.test.ts` | Period ranges, digests, progress-date semantics, degraded local brief |
 | `importParse.test.ts` | Per-row import validation and soft coercion |
-| `taskCompletePersist.test.ts` | Vercel Blob debounce is `0`; off-Vercel Blob debounce > 0 |
+| `taskCompletePersist.test.ts` | Neon debounce is `0` on Vercel; positive off-Vercel |
 
 ### Current frontend unit test inventory
 
@@ -69,8 +70,8 @@ Provide a practical and auditable testing strategy that validates functional cor
    - Import/export complete successfully and preserve scope links.
    - `Both` export emits JSON and CSV outputs.
    - Post-import **auto sync/save** runs without Sync/Save header buttons.
-   - Large transfer path: Blob upload + `blobPathname` import; large export via presigned URL when configured.
-   - `413` surfaces friendly guidance when Blob transfer unavailable.
+   - Large transfer path: Neon `transfer-upload` + `stagingPathname` import; large export via staging download when configured.
+   - `413` surfaces friendly guidance when Neon transfer staging unavailable.
 5. **Error clarity**
    - Failure paths show friendly root-cause toasts.
    - No status-only generic error text in key user flows.
@@ -82,11 +83,12 @@ Provide a practical and auditable testing strategy that validates functional cor
    - Badge PNG export completes without layout regression (cards vs. modal header naming).
 7. **Boot UX**
    - Profile load shows progress bar / staged status.
-   - Production path can load profiles before large tasks blob without requiring boot-time full sync/save.
+   - Production path can load profiles before large tasks working set without requiring boot-time full sync/save.
 8. **Persistence topology**
-   - `/health` reports expected storage kind.
-   - Split runtime objects remain the write path (fs or Blob).
-   - On Vercel: Blob debounce `0`; complete awaits persist; freshness reload before list/complete (`taskCompletePersist.test.ts`).
+   - `/health` reports expected storage kind (`neon` or `fs`).
+   - Neon row tables (or local split runtime files) remain the write path.
+   - On Vercel: Neon debounce `0`; complete awaits persist; freshness reload via `tasks_revision` before list/complete (`taskCompletePersist.test.ts`).
+   - Storage selection requires `DATABASE_URL` for `neon`; invalid backend values are rejected.
 9. **Feedback layering**
    - Exclusive tooltip slot: opening a new tooltip dismisses the previous; toasts dismiss tooltips.
    - Single toast queue (no multi-toast stack).
@@ -112,7 +114,7 @@ Provide a practical and auditable testing strategy that validates functional cor
 
 - Test run command outputs (`npm run test`, lint/build where applicable)
 - Manual scenario checklist with pass/fail status
-- Blob transfer validation notes when releasing Prod topology changes
+- Neon transfer / staging validation notes when releasing Prod topology changes
 - Any known issues with risk classification and mitigation owner
 
 ---

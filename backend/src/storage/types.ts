@@ -1,4 +1,4 @@
-export type StorageKind = "fs" | "vercel-blob";
+export type StorageKind = "fs" | "neon";
 
 export type StorageJsonEntry = {
   name: string;
@@ -7,7 +7,7 @@ export type StorageJsonEntry = {
 
 export type DataStorage = {
   readonly kind: StorageKind;
-  /** Longer debounce for remote object stores to protect free-tier write quotas. */
+  /** Longer debounce for remote stores to protect free-tier write quotas. */
   readonly persistDebounceMs: number;
   ensureReady(): Promise<void>;
   readText(name: string): Promise<string | null>;
@@ -17,6 +17,6 @@ export type DataStorage = {
    * Names are basenames (e.g. tasks.runtime.json).
    */
   listSyncJsonEntries(): Promise<StorageJsonEntry[]>;
-  /** Local-dev hot reload only; no-op / unsupported for Blob. */
+  /** Local-dev hot reload only; no-op / unsupported for Neon. */
   watchJsonChanges?(onChange: (filename: string) => void): void;
 };

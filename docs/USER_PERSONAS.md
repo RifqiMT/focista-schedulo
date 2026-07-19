@@ -43,7 +43,7 @@ Define the primary user archetypes for Focista Schedulo, including goals, pain p
 - Common actions complete quickly (sub-1s perceived locally)
 - Recurring workflows stay predictable
 - Locked profiles are **visually obvious** in the selector
-- Large exports succeed via Blob staging when needed
+- Large exports succeed via Neon staging when needed
 
 **Highest-value features**
 
@@ -164,13 +164,13 @@ Showcase read-only policy, friendly error toasts, lock/read-only affordances
 ## Persona E: Reliability-Conscious Operator
 
 **Name archetype:** Casey Nguyen  
-**Profile:** Power user or maintainer who cares about persistence correctness, deployment health, and recoverability (including production Blob configuration).
+**Profile:** Power user or maintainer who cares about persistence correctness, deployment health, and recoverability (including production Neon configuration).
 
 **Primary goals**
 
 - Trust that runtime data survives restarts and deploys
 - Recover from failed imports with clear guidance
-- Understand storage topology (fs vs Blob) without guessing
+- Understand storage topology (fs vs Neon) without guessing
 
 **Pain points**
 
@@ -181,20 +181,20 @@ Showcase read-only policy, friendly error toasts, lock/read-only affordances
 **Typical workflows**
 
 1. Observe staged boot progress while profiles/tasks load
-2. Import a large JSON via Blob staging
+2. Import a large JSON via Neon staging
 3. Confirm auto sync/save completed quietly
 4. Verify `/health` storage kind in production
 
 **Success criteria**
 
 - Split runtime persistence remains the write path
-- Large import/export succeeds when Blob credentials are configured
+- Large import/export succeeds when `DATABASE_URL` and Neon staging are configured
 - Boot progress communicates stages; expensive boot sync/save is avoided
-- Failures cite actionable next steps (token, format, password)
+- Failures cite actionable next steps (connection string, format, password)
 
 **Highest-value features**
 
-Storage adapters, Blob transfer, auto sync/save, boot progress, `/health`, deployment docs
+Storage adapters, Neon transfer staging, auto sync/save, boot progress, `/health`, deployment docs
 
 ---
 
@@ -206,7 +206,7 @@ Storage adapters, Blob transfer, auto sync/save, boot progress, `/health`, deplo
 | Routine Builder | Recurrence engine, historical loading, completion robustness |
 | Progress-Motivated Planner | Stats, insights, badges, streaks, weekly chart, PNG export, AI Productivity Summary / Ask |
 | Showcase Presenter | Read-only `Test` profile, friendly blocked-action messaging |
-| Reliability-Conscious Operator | Blob persistence/transfer, parts export fallback, per-row import, auto sync/save, boot progress, health, AI keys |
+| Reliability-Conscious Operator | Neon persistence/transfer, parts export fallback, per-row import, auto sync/save, boot progress, health, AI keys |
 
 ---
 

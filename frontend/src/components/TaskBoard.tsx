@@ -1684,18 +1684,24 @@ export function TaskBoard({
     }
     const snapshot = await snapshotRes.json();
     let exportPayload = snapshot?.data;
-    if (snapshot?.delivery === "blob" && typeof snapshot?.downloadUrl === "string") {
+    if (
+      snapshot?.delivery === "staging" &&
+      typeof snapshot?.downloadUrl === "string"
+    ) {
       try {
-        const blobRes = await fetch(snapshot.downloadUrl);
-        if (!blobRes.ok) {
-          throw new Error(`Blob download failed (${blobRes.status})`);
+        const downloadPath = snapshot.downloadUrl.startsWith("http")
+          ? snapshot.downloadUrl
+          : apiUrl(snapshot.downloadUrl);
+        const stagedRes = await fetch(downloadPath);
+        if (!stagedRes.ok) {
+          throw new Error(`Staging download failed (${stagedRes.status})`);
         }
-        exportPayload = await blobRes.json();
+        exportPayload = await stagedRes.json();
       } catch (err) {
         toast({
           kind: "error",
           title: "Export failed",
-          message: err instanceof Error ? err.message : "Could not download export from Blob.",
+          message: err instanceof Error ? err.message : "Could not download staged export.",
           durationMs: performance.now() - started
         });
         return false;
@@ -1836,30 +1842,27 @@ export function TaskBoard({
       return true;
     }
 
-    // Single CSV file containing both projects and tasks.
-    // Projects use recordType=project; tasks use recordType=task.
+    // Single CSV file: profiles + projects + tasks from all allowed profiles.
     const projectNameById = new Map(allProjects.map((p) => [p.id, p.name]));
     const headers = [
       "recordType",
-      // shared-ish
       "id",
       "profileId",
       "projectId",
       "projectName",
       "name",
-      "title",
+      "profileTitle",
       "passwordHash",
       "createdAt",
       "updatedAt",
-      // project fields
       "projectNameOnly",
-      // task fields
       "title",
       "description",
       "priority",
       "dueDate",
       "isoWeekDueDate",
       "dueTime",
+      "durationMinutes",
       "repeat",
       "repeatEvery",
       "repeatUnit",
@@ -1881,7 +1884,7 @@ export function TaskBoard({
         recordType: "profile",
         id: p.id,
         name: p.name,
-        title: p.title,
+        profileTitle: p.title,
         passwordHash: p.passwordHash ?? "",
         createdAt: p.createdAt,
         updatedAt: p.updatedAt
@@ -1914,6 +1917,7 @@ export function TaskBoard({
         dueDate: t.dueDate ?? "",
         isoWeekDueDate: isoWeekForDueDate(t.dueDate),
         dueTime: t.dueTime ?? "",
+        durationMinutes: t.durationMinutes ?? "",
         repeat: t.repeat ?? "none",
         repeatEvery: t.repeatEvery ?? "",
         repeatUnit: t.repeatUnit ?? "",
@@ -6173,13 +6177,14 @@ export function TaskBoard({
                   }
                   title="Choose export format."
                 >
-                  <option value="json">JSON (recommended)</option>
-                  <option value="csv">CSV</option>
-                  <option value="both">Both (JSON + CSV)</option>
+                  <option value="json">JSON — single file</option>
+                  <option value="csv">CSV — single file</option>
+                  <option value="both">Both — one JSON + one CSV</option>
                 </select>
               </label>
               <p className="muted" style={{ marginTop: "0.5rem" }}>
-                Exports merged profiles, projects, and tasks in a single file.
+                Always downloads at most one JSON and/or one CSV. Each file includes entries from
+                all profiles (unless you exclude locked profiles below).
               </p>
               {lockedProfiles.length > 0 ? (
                 <label className="field" style={{ marginTop: "0.65rem" }}>
@@ -6263,7 +6268,7 @@ export function TaskBoard({
                   };
                   void run();
                 }}
-                title="Download an export file containing all profiles, projects, and tasks."
+                title="Download one JSON and/or one CSV file with all profiles, projects, and tasks."
               >
                 Download
               </button>

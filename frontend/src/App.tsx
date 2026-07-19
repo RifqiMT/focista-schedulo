@@ -13,7 +13,7 @@ import {
 import { dismissExclusiveTooltip } from "./uiExclusiveOverlay";
 import { getFriendlyErrorMessage } from "./utils/friendlyError";
 import { apiFetch, apiUrl } from "./apiClient";
-import { shouldStageImportViaBlob, uploadImportFileToBlob } from "./blobImport";
+import { shouldStageImport, uploadImportFileToStaging } from "./transferImport";
 import { AiKeysModal } from "./components/AiKeysModal";
 import { AI_KEYS_CHANGED_EVENT, hasAnyAiKey, hasGroqKey, loadAiKeys } from "./aiKeys";
 
@@ -150,7 +150,7 @@ export function App() {
     const bootstrapActiveProfile = async () => {
       try {
         // Profiles first (fast path). Avoid racing task-counts on cold start —
-        // that endpoint needs the full tasks blob and can starve profile loading.
+        // that endpoint needs the full tasks payload and can starve profile loading.
         const profilesRes = await apiFetch("/api/profiles");
         if (!profilesRes.ok) return;
         const profiles = (await profilesRes.json()) as Array<{ id: string; name: string }>;
@@ -261,7 +261,7 @@ export function App() {
   /**
    * Auto sync + save after import only.
    * Boot no longer runs this — full sync/save on every page load blocked the UI
-   * behind multi‑MB Blob I/O and felt stuck on "Loading profiles…".
+   * behind multi‑MB task I/O and felt stuck on "Loading profiles…".
    * Day-to-day mutations already persist via the runtime flush path.
    */
   const autoSyncAndSave = async (opts?: { quiet?: boolean }) => {
@@ -313,16 +313,16 @@ export function App() {
         return;
       }
 
-      let importBody: { format: "json" | "csv"; content?: string; blobPathname?: string };
-      if (shouldStageImportViaBlob(file)) {
+      let importBody: { format: "json" | "csv"; content?: string; stagingPathname?: string };
+      if (shouldStageImport(file)) {
         try {
-          const blobPathname = await uploadImportFileToBlob(file);
-          importBody = { format, blobPathname };
+          const stagingPathname = await uploadImportFileToStaging(file);
+          importBody = { format, stagingPathname };
         } catch (err) {
           const message =
             err instanceof Error
               ? err.message
-              : "Could not stage the import file in Blob storage.";
+              : "Could not stage the import file in Neon transfer staging.";
           const elapsed = performance.now() - started;
           setImportError(message);
           pushToast({

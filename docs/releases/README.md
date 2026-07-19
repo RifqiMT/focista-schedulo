@@ -21,7 +21,7 @@ This folder stores serial, release-specific documentation artifacts (for example
 ## Standard Flow
 
 1. Copy from `docs/RELEASE_CHECKLIST_TEMPLATE.md`.
-2. Fill release metadata and verification evidence (include Blob transfer and auto sync/save checks when relevant).
+2. Fill release metadata and verification evidence (include Neon transfer staging and auto sync/save checks when relevant).
 3. Collect product + engineering sign-off.
 4. Archive final release notes and keep historical drafts for auditability.
 5. Ensure `docs/CHANGELOG.md` references the release outcome.

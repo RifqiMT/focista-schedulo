@@ -103,8 +103,8 @@ Define product-team Objectives and Key Results (OKRs) for Focista Schedulo, with
 
 | KR | Statement | Supporting Metrics | Example Target Evidence |
 |---|---|---|---|
-| KR6.1 | ≥ 95% success for Blob-staged large import/export when configured | PM-09 | Prod/staging transfer logs |
-| KR6.2 | Zero releases that introduce Redis/Mongo as required Prod persistence without architecture approval | Guardrail compliance | Architecture review |
+| KR6.1 | ≥ 95% success for Neon-staged large import/export when configured | PM-09 | Prod/staging transfer logs |
+| KR6.2 | Keep Prod durable store on **Neon Postgres Free** (or local `fs`); zero releases that introduce Redis/Mongo as required Prod persistence without architecture approval | Guardrail compliance | Architecture review |
 | KR6.3 | ≥ 99% of production boots reach interactive state with staged progress feedback | PM-10 | Boot UX validation |
 
 ---

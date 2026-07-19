@@ -28,8 +28,8 @@ Map functional and non-functional requirements to personas, user stories, primar
 | FR-10 | Non-monolith runtime persistence | A, B, C, E | US-503 | `backend/src/storage/*`, load/persist in `index.ts` | Persistence audit + storage unit tests | QM-03 |
 | FR-11 | Friendly root-cause error feedback | A–E | US-601 | `frontend/src/utils/friendlyError.ts`; toast usages | Error-path validation | PM-07 |
 | FR-12 | Showcase read-only profile enforcement | D | US-602 | Read-only guards in `backend/src/index.ts`; UI disable gates | Blocked mutation regression | PM-08 |
-| FR-13 | Vercel Prod split hosting + Blob store | A, E | US-503 | `frontend/vercel.json`, `vite.config.ts`, env wiring, `DEPLOYMENT_VERCEL.md` | Vercel build guard + `/health` storage check | QM-02 |
-| FR-14 | Large-payload import/export via Blob staging | A, E | US-504 | `blobTransfer.ts`, `blobImport.ts`, `/api/admin/blob-upload`, import/export admin routes, `/api/admin/export-tasks-page` | Large payload smoke; parts fallback; `413` messaging | PM-09 |
+| FR-13 | Vercel Prod split hosting + Neon store | A, E | US-503 | `frontend/vercel.json`, `vite.config.ts`, env wiring, `DEPLOYMENT_VERCEL.md`, `neonStorage.ts` | Vercel build guard + `/health` storage check | QM-02 |
+| FR-14 | Large-payload import/export via Neon staging | A, E | US-504 | `transferStaging.ts`, `transferImport.ts`, `/api/admin/transfer-upload`, import/export admin routes, `/api/admin/export-tasks-page` | Large payload smoke; parts fallback; `413` messaging | PM-09 |
 | FR-15 | Calendar-week progress chart + rich tooltips | C | US-403, US-404 | `/api/stats` `last7Days` builder; `GamificationPanel.tsx` | Weekly bar/tooltip review | EM-05 |
 | FR-16 | Badge PNG export + modal naming | C | US-405 | `badgePngExport.ts`, `BadgesModalDialogBody.tsx` | PNG export smoke | EM-06 |
 | FR-17 | Lock affordance for protected profiles | A | US-406 | `ProfileManagement.tsx` | Visual lock review | PM-02 |
@@ -52,13 +52,13 @@ Map functional and non-functional requirements to personas, user stories, primar
 | NFR-04 | Graceful degradation on API failure | Optimistic UI + friendly errors | Manual failure injection |
 | NFR-05 | Traceable, auditable docs | This matrix + crosswalk | Release docs gate |
 | NFR-06 | Actionable error messages | `friendlyError.ts` | PM-07 audit |
-| NFR-07 | No Redis/Mongo required in current Prod | Architecture + deployment docs | Architecture review |
-| NFR-08 | Respect Blob/body limits; Vercel debounce `0` | Debounce + Blob staging + awaited complete | PM-09, QM-01 |
-| NFR-09 | Production env hardening | `FRONTEND_ORIGIN`, `VITE_API_BASE_URL` | Deploy checklist |
+| NFR-07 | No Redis/Mongo required in current Prod | Architecture + deployment docs (Neon) | Architecture review |
+| NFR-08 | Respect Neon/body limits; Vercel debounce `0` | Debounce + Neon staging + awaited complete | PM-09, QM-01 |
+| NFR-09 | Production env hardening | `FRONTEND_ORIGIN`, `VITE_API_BASE_URL`, `DATABASE_URL` | Deploy checklist |
 | NFR-10 | AI keys never logged | Guardrails + validate route | EM-09 |
 | NFR-11 | AI Summary degraded brief | `degraded: true` path | EM-09 |
 | NFR-12 | Await complete persist on Vercel | `PATCH .../complete` + debounce test | QM-01, US-202 |
-| NFR-13 | Multi-isolate tasks freshness | `ensureTasksMemoryFresh` | QM-01, FR-02 |
+| NFR-13 | Multi-isolate tasks freshness | `ensureTasksMemoryFresh` / `tasks_revision` | QM-01, FR-02 |
 
 ---
 
@@ -71,7 +71,7 @@ Map functional and non-functional requirements to personas, user stories, primar
 | EM-06 | Badge export adoption | PNG export actions | FR-16 |
 | EM-07 | Monthly grinding attainment | `monthlyGrinding` / `yearlyGrinding` | FR-07 |
 | PM-04 | Action latency compliance | Frontend timing + `X-Server-Time-Ms` | FR-06, FR-10 |
-| PM-09 | Large transfer success | Blob transfer admin flows | FR-14 |
+| PM-09 | Large transfer success | Neon transfer staging admin flows | FR-14 |
 | PM-10 | Boot progress completeness | Boot UX path | FR-18 |
 | PM-03 | Recurrence integrity rate | Backend recurrence rules | FR-04 |
 | EM-09 | Productivity Summary usage | Summary/Ask actions | FR-21, FR-24 |

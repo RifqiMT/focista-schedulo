@@ -164,6 +164,10 @@ Toasts use local CSS variables on `.toast` variants:
 | `ps-*` | Productivity Summary modal | Tabs, period chips, metrics, completion ring `--ps-rate`, prose, Ask composer |
 | `header-action-*` | Header Import/Export/AI keys | Glyph + label buttons |
 
+### Cold-start UX (Neon Free)
+
+When the API host uses Neon Free (scale-to-zero), the first request after idle may be slower while compute resumes. Prefer existing warming/toast patterns over blocking empty shells; do not invent keep-alive pings that burn CU-hours.
+
 ---
 
 ## Layout Guidance

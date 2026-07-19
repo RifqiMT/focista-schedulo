@@ -54,9 +54,10 @@ flowchart TB
   end
 
   subgraph Persistence and transfer
-    Runtime[Split runtime JSON]
-    Store[DataStorage fs or Blob]
-    BlobXfer[blobPathname / presigned URL]
+    Runtime[Tasks/projects/profiles]
+    Store[DataStorage fs or Neon]
+    Rev[tasks_revision]
+    Staging[stagingPathname / transfer_staging]
     Auto[autoSyncAndSave]
   end
 
@@ -99,7 +100,9 @@ flowchart TB
   Project --> Runtime
   Task --> Runtime
   Runtime --> Store
-  BlobXfer --> Runtime
+  Store --> Rev
+  Rev --> Store
+  Staging --> Runtime
   Auto --> Store
 ```
 
@@ -252,28 +255,31 @@ The JSON key `last7Days` is a **legacy name**. Shipped behavior: an ordered arra
 
 | Variable Name | Friendly Name | Definition | Formula | App Location | Example |
 |---|---|---|---|---|---|
-| `STORAGE_BACKEND` | Storage Backend Selector | Forces persistence adapter. | `fs` \| `vercel-blob` \| unset (auto) | `createStorage.ts`; `.env` | `vercel-blob` |
-| `BLOB_READ_WRITE_TOKEN` | Blob Credential | Read/write token for Vercel Blob. | Env secret | Storage + `blobTransfer.ts` | `vercel_blob_rw_...` |
-| `BLOB_RUNTIME_PREFIX` | Runtime Blob Prefix | Pathname prefix for runtime JSON objects. | Default `focista-schedulo/runtime/` | `backend/src/storage/createStorage.ts` | `focista-schedulo/runtime/` |
-| `BLOB_ACCESS` | Blob Access Mode | Public vs private Blob access mode. | Default `private` | Blob clients | `private` |
+| `STORAGE_BACKEND` | Storage Backend Selector | Forces persistence adapter. | `fs` \| `neon` \| unset/`auto` | `createStorage.ts`; `.env` | `neon` |
+| `DATABASE_URL` | Neon Pooled Connection | Primary Postgres connection string for Neon Free (prefer `-pooler` host). | Env secret | `neonClient.ts`; `createStorage.ts` | `postgresql://…@ep-….neon.tech/neondb?sslmode=require` |
+| `DATABASE_URL_UNPOOLED` | Neon Unpooled Connection | Optional direct URL for migrations / admin. | Env secret | `neonClient.ts` | `postgresql://…@ep-….neon.tech/neondb?sslmode=require` |
+| `NEON_FRESHNESS_TTL_MS` | Freshness Peek Cooldown | Minimum ms between `tasks_revision` peeks. | Default `2000` | Freshness path in `index.ts` | `2000` |
+| `NEON_TRANSFER_TTL_HOURS` | Staging Expiry Hours | How long `transfer_staging` rows remain valid. | Default `2` | `transferStaging` / `neonStorage` | `2` |
+| `NEON_STATEMENT_TIMEOUT_MS` | Statement Timeout | Fail-fast query budget under cold/load. | Default `15000` | `neonClient.ts` | `15000` |
 | `FRONTEND_ORIGIN` | Allowed Frontend Origin | CORS lock for production API. | Required when `NODE_ENV`/`FOCISTA_ENV` is production | `backend/src/index.ts` | `https://app.vercel.app` |
 | `GROQ_API_KEY` | Groq API Key | Server-only key for Productivity Summary LLM completions. | Required unless client sends `groqApiKey` | `productivitySummaryService.ts`; backend `.env` | `gsk_...` |
 | `TAVILY_API_KEY` | Tavily API Key | Server-only key for optional web enrich in Productivity Summary. | Optional; client may send `tavilyApiKey` | `productivitySummaryService.ts`; backend `.env` | `tvly-...` |
 | `pst.aiKeys` | Local AI Keys | Browser localStorage JSON `{ groqApiKey, tavilyApiKey }` for Productivity Summary. | User-entered via **AI keys** header | `frontend/src/aiKeys.ts`; `AiKeysModal.tsx` | `{ "groqApiKey":"gsk_…" }` |
 | `GROQ_MODEL` | Groq Model Override | Chat model id for Groq completions. | Default `llama-3.3-70b-versatile` | `productivitySummaryService.ts` | `llama-3.3-70b-versatile` |
 | `VITE_API_BASE_URL` | Frontend API Base URL | API origin for split hosting. | Required on Vercel Production when split | `apiClient.ts`; frontend env | `https://api.example.com` |
-| `import.blobPathname` | Import Blob Path | Staged import object pathname instead of inline content. | Exactly one of `content` or `blobPathname` | `POST /api/admin/import`; `App.tsx` | `focista-schedulo/imports/...` |
-| `export.downloadUrl` | Export Presigned URL | Short-lived Blob URL for large export download. | Issued when inline body would exceed limits | `POST /api/admin/export-data`; `blobTransfer.ts` | `https://...blob.vercel-storage.com/...` |
+| `import.stagingPathname` | Import Staging Path | Staged import pathname instead of inline content. | Exactly one of `content` or `stagingPathname` | `POST /api/admin/import`; `App.tsx`; `transferImport.ts` | `focista-schedulo/imports/...` |
+| `export.downloadUrl` | Export Staging Download | Short-lived API download URL for large staged export. | Issued when inline body would exceed limits | `POST /api/admin/export-data`; export-download route | `/api/admin/export-download?...` |
+| `transfer_staging` | Transfer Staging Table | Neon table holding temporary import/export payloads. | Rows expire via `NEON_TRANSFER_TTL_HOURS` | `001_neon_core.sql`; `neonStorage.ts` | pathname + content |
 | `autoSyncAndSave` | Automated Sync and Save | Client orchestration that syncs then saves after import (quiet optional). | Sequential admin calls | `frontend/src/App.tsx` | Quiet post-import run |
 | `X-Server-Time-Ms` | Server Timing Header | Backend processing time for the request. | Middleware measured ms | Express middleware | `42` |
 | `claimExclusiveTooltip` | Exclusive Tooltip Claim | Registers the single active tooltip/hovercard closer; dismisses any previous owner. | Module singleton closer slot | `frontend/src/uiExclusiveOverlay.ts`; TaskBoard, GamificationPanel, ProductivityAnalysisModal | Release fn from claim |
 | `dismissExclusiveTooltip` | Exclusive Tooltip Dismiss | Closes the active exclusive tooltip (e.g. before showing a toast). | Invoke registered closer | `uiExclusiveOverlay.ts`; `App.tsx` `enqueueToast` | n/a |
 | `toast.singleSlot` | Single Toast Queue | Only one toast is retained in the queue (replace, do not stack). | `setToasts` keeps latest non-duplicate toast | `App.tsx` `enqueueToast` | One toast object |
-| `export.delivery` | Export Delivery Mode | How large exports are delivered to the client (request preference). | `auto` \| `inline` \| `blob` \| `parts` | `/api/admin/export-data` | `auto` |
+| `export.delivery` | Export Delivery Mode | How large exports are delivered to the client (request preference). | `auto` \| `inline` \| `staging` \| `parts` | `/api/admin/export-data` | `auto` |
 | `droppedRows` | Import Skip Counts | Counts of projects/tasks/profiles skipped during per-row import validation. | `{ projects, tasks, profiles }` integers | import response payload; import toast | `{ tasks: 2, projects: 0, profiles: 0 }` |
-| `persistDebounceMs` | Persistence Debounce | Delay before flushing dirty runtime objects to storage. | `fs` ≈ 40; Blob ≈ 1500 off-Vercel; Blob **`0`** when `VERCEL` set | `DataStorage` / `vercelBlobStorage.ts` | `0` on Vercel |
-| `tasksStorageMtimeMs` | Tasks Blob Mtime Cursor | Last known Blob mtime for `tasks.runtime.json` in this isolate. | Updated after load/persist; compared in freshness check | `backend/src/index.ts` | `1721400000000` |
-| `ensureTasksMemoryFresh()` | Tasks Memory Freshness | Reloads in-memory tasks when remote Blob mtime is newer (Vercel multi-isolate). | Peek `listSyncJsonEntries` → `loadData` if newer | `GET /api/tasks`, `PATCH .../complete` | n/a |
+| `persistDebounceMs` | Persistence Debounce | Delay before flushing dirty entities to storage. | `fs` ≈ 40; Neon ≈ 200 off-Vercel; Neon **`0`** when `VERCEL` set | `DataStorage` / `neonStorage.ts` | `0` on Vercel |
+| `tasks_revision` | Tasks Revision Counter | Monotonic Neon `runtime_meta` value bumped on task writes. | Increment on persist | `runtime_meta`; `neonStorage.ts` | `42` |
+| `ensureTasksMemoryFresh()` | Tasks Memory Freshness | Reloads in-memory tasks when remote `tasks_revision` is newer (Vercel multi-isolate). | Peek revision → `loadData` if newer | `GET /api/tasks`, `PATCH .../complete` | n/a |
 
 ---
 
@@ -296,18 +302,19 @@ The JSON key `last7Days` is a **legacy name**. Shipped behavior: an ordered arra
 
 | Variable Name | Friendly Name | Definition | Formula | App Location | Example |
 |---|---|---|---|---|---|
-| `tasks.runtime.json` | Tasks Runtime Store | Primary task persistence object. | Serialized task array/object | `backend/data/` or Blob prefix | Runtime file/object |
-| `projects.runtime.json` | Projects Runtime Store | Primary project persistence object. | Serialized projects | Same | Runtime file/object |
-| `profiles.runtime.json` | Profiles Runtime Store | Primary profile persistence object; fast-path boot load. | Serialized profiles | Same | Runtime file/object |
+| `tasks` (Neon) / `tasks.runtime.json` (fs) | Tasks Runtime Store | Primary task persistence (Neon: one row per task with `payload jsonb`). | Serialized task array/object or row upserts | `neonStorage.ts`; `backend/data/` | Runtime rows/files |
+| `projects` / `projects.runtime.json` | Projects Runtime Store | Primary project persistence. | Serialized projects / relational rows | Same | Runtime rows/files |
+| `profiles` / `profiles.runtime.json` | Profiles Runtime Store | Primary profile persistence; fast-path boot load. | Serialized profiles / relational rows | Same | Runtime rows/files |
+| `runtime_meta` | Runtime Revision Meta | Neon keys for multi-isolate freshness (`tasks_revision`, …). | Monotonic counters | `001_neon_core.sql` | `tasks_revision=42` |
 | `focista-unified-data.json` | Unified Interchange Snapshot | Import/export oriented snapshot, not primary mutation store. | Combined entities | Admin sync/import/export | Unified JSON |
 
 ---
 
 ## Notes on Source of Truth
 
-- Runtime entity truth is persisted as split JSON objects (same schema on disk or in Vercel Blob).
-- Local path: `backend/data/` when `STORAGE_BACKEND=fs` (default without Blob credentials).
-- Prod path: Vercel Blob under `BLOB_RUNTIME_PREFIX` when `STORAGE_BACKEND=vercel-blob`.
+- Runtime entity truth is persisted as Neon rows (Prod) or split JSON files (local `fs`) — same Task/Project/Profile schemas at the API boundary.
+- Local path: `backend/data/` when `STORAGE_BACKEND=fs` (default without `DATABASE_URL`).
+- Prod path: Neon Postgres Free when `STORAGE_BACKEND=neon` (or auto with `DATABASE_URL`).
 - Metrics truth is computed server-side from persisted runtime entities.
 - Unified JSON is interchange-oriented and not the primary runtime mutation store.
 - Error-message source of truth is `frontend/src/utils/friendlyError.ts`.

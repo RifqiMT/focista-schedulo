@@ -40,7 +40,7 @@ Formula authority for domain variables: `VARIABLES.md`.
 | PM-06 | Import Reliability | Successful imports without data corruption | `successful imports / import attempts` | Admin import + post-import auto sync/save | Up | `0.97` |
 | PM-07 | Error Clarity Coverage | Share of failed user actions with friendly root-cause copy | `friendly errors / total surfaced errors` | `friendlyError.ts` audit | Up | `1.00` |
 | PM-08 | Showcase Integrity | Share of blocked mutations correctly prevented for showcase profile | `blocked showcase writes / showcase write attempts` | `Test` profile regression | Up | `1.00` |
-| PM-09 | Large Transfer Success | Success rate of Blob-staged import/export when payload exceeds inline limits | `successful blob transfers / blob transfer attempts` | `blobTransfer.ts`, admin import/export | Up | `0.95` |
+| PM-09 | Large Transfer Success | Success rate of Neon-staged import/export when payload exceeds inline limits | `successful staged transfers / staged transfer attempts` | `transferStaging.ts`, `transferImport.ts`, admin import/export | Up | `0.95` |
 | PM-10 | Boot Progress Completeness | Share of boots that reach interactive state without user-abort | `completed boots / boot attempts` | Profile load progress UI | Up | `0.99` |
 
 ---
@@ -69,7 +69,7 @@ Formula authority for domain variables: `VARIABLES.md`.
 | QM-01 | Data Write Safety | No invalid or destructive persistence events | Incident count of corrupt/wipe/lost-complete events = `0` | `0` incidents / release |
 | QM-06 | Completion Persist Success | Share of complete toggles that durable-save successfully on Prod | `successful completes / complete attempts` | `≥ 0.99` |
 | QM-02 | API Contract Stability | Contract-breaking changes per release | Count of breaking changes without versioning/docs | `0` |
-| QM-03 | Runtime Persistence Efficiency | Write coalescing effectiveness under high activity | Debounced flushes vs mutation rate | Fewer Blob puts than mutations |
+| QM-03 | Runtime Persistence Efficiency | Write coalescing effectiveness under high activity | Debounced flushes vs mutation rate | Fewer Neon row upserts than mutations (batch where possible) |
 | QM-04 | Docs-Code Parity | Unresolved mismatches in crosswalk audit | Count of open discrepancies | `0` at release close |
 | QM-05 | Test Gate Pass Rate | Backend suite + lint/build green rate for release candidates | `passing gates / gate runs` | `1.00` |
 

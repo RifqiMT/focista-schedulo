@@ -25,17 +25,19 @@ This file maps documentation artifacts to the primary implementation locations.
 | Analysis chart Y-axis | `frontend/src/utils/chartYAxis.ts` (`niceYDomain`, `buildYTicks`); `ProductivityAnalysisModal.tsx` |
 | Export parts paging | `POST /api/admin/export-tasks-page`; export `delivery: "parts"` in `index.ts` / App export flow |
 | Fullscreen helpers | `fullscreenApi.ts`, `badgeFullscreen.ts`, `productivityAnalysisFullscreen.ts` |
-| Runtime persistence model | `backend/src/storage/*`, persistence helpers in `backend/src/index.ts`, local `backend/data/*.runtime.json` or Vercel Blob prefix |
-| Vercel task complete durability | `PATCH /api/tasks/:id/complete` awaits `persistTasks`; Blob `persistDebounceMs=0` when `VERCEL`; `taskCompletePersist.test.ts` |
-| Multi-isolate Blob freshness | `ensureTasksMemoryFresh` / `tasksStorageMtimeMs` in `backend/src/index.ts` (list + complete) |
+| Runtime persistence model | `backend/src/storage/*` (`neonStorage.ts`, `createStorage.ts`, `neonClient.ts`), persistence helpers in `backend/src/index.ts`, local `backend/data/*.runtime.json` |
+| Neon schema / migrations | `backend/src/storage/migrations/001_neon_core.sql`; `ensureNeonMigrations` in `neonClient.ts` |
+| Vercel task complete durability | `PATCH /api/tasks/:id/complete` awaits `persistTasks`; Neon `persistDebounceMs=0` when `VERCEL`; `taskCompletePersist.test.ts` |
+| Multi-isolate Neon freshness | `ensureTasksMemoryFresh` / `tasks_revision` in `backend/src/index.ts` + `neonStorage.ts` (list + complete) |
 | Automated sync/save (no header buttons) | `autoSyncAndSave` in `frontend/src/App.tsx` (post-import; quiet reload-data on tab return) |
-| Large import/export Blob staging | `backend/src/blobTransfer.ts`, `frontend/src/blobImport.ts`, `/api/admin/blob-upload`, `/api/admin/import`, `/api/admin/export-data` |
+| Large import/export Neon staging | `backend/src/transferStaging.ts`, `frontend/src/transferImport.ts`, `/api/admin/transfer-upload`, `/api/admin/export-download`, `/api/admin/import` (`stagingPathname`), `/api/admin/export-data` |
+| Export entity filtering | `backend/src/exportEntities.ts` (+ `exportEntities.test.ts`) |
 | Import/export/sync/save admin flows | Admin routes in `backend/src/index.ts`; Import/Export in `App.tsx` / `TaskBoard.tsx` |
 | Performance instrumentation | Action logging in `TaskBoard.tsx`; `X-Server-Time-Ms` middleware in backend |
 | Friendly error root-cause formatting | `frontend/src/utils/friendlyError.ts`, integrated in `App.tsx`, `TaskBoard.tsx`, `ProfileManagement.tsx` |
 | Showcase read-only policy | Mutation guards in `backend/src/index.ts`; UI disable gates in profile/project/task components |
 | Production CORS lock | `FRONTEND_ORIGIN` in `backend/src/index.ts`, `backend/.env.example` |
-| Vercel Blob runtime store | `BLOB_READ_WRITE_TOKEN`, `STORAGE_BACKEND`, `backend/src/storage/vercelBlobStorage.ts` |
+| Neon Prod store | `DATABASE_URL`, `STORAGE_BACKEND=neon`, `backend/src/storage/neonStorage.ts` |
 | Design tokens | `frontend/src/styles.css` `:root` and component theme rules |
 | Toast system | `frontend/src/components/Toaster.tsx` + toast CSS; **single-toast** queue in `App.tsx` `enqueueToast` |
 | Exclusive tooltips / hovercards | `frontend/src/uiExclusiveOverlay.ts` (`claimExclusiveTooltip`, `dismissExclusiveTooltip`); consumers in `TaskBoard.tsx`, `GamificationPanel.tsx`, `ProductivityAnalysisModal.tsx` |
@@ -46,10 +48,10 @@ This file maps documentation artifacts to the primary implementation locations.
 
 ## Verification Checklist
 
-- [ ] Docs mention split runtime persistence (not monolith runtime)
-- [ ] Docs mention `fs` vs `vercel-blob` backends (no Redis/Mongo in current Prod topology)
-- [ ] Docs mention Blob staging for large import/export (`blobPathname`, presigned download, `413`)
-- [ ] Docs mention Vercel Blob debounce `0`, awaited task-complete persist, and multi-isolate freshness
+- [ ] Docs mention Neon row-per-task (or local `fs`) persistence — not monolith runtime; no Redis/Mongo in Prod
+- [ ] Docs mention `fs` vs `neon` backends (`STORAGE_BACKEND`, `DATABASE_URL`)
+- [ ] Docs mention Neon staging for large import/export (`stagingPathname`, transfer-upload, parts fallback, `413`)
+- [ ] Docs mention Vercel Neon debounce `0`, awaited task-complete persist, and multi-isolate `tasks_revision` freshness
 - [ ] Docs mention automated sync/save and absence of Sync/Save header buttons
 - [ ] Docs mention staged boot progress / production profile fast-path
 - [ ] Profile-scoped behavior reflected in product and technical docs
@@ -70,3 +72,4 @@ This file maps documentation artifacts to the primary implementation locations.
 - Traceability: `TRACEABILITY_MATRIX.md`
 - Changelog: `CHANGELOG.md`
 - Documentation standard: `PRODUCT_DOCUMENTATION_STANDARD.md`
+- Neon plan: `plans/2026-07-19-neon-postgres.md`

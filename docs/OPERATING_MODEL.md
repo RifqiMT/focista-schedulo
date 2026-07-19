@@ -62,7 +62,7 @@ Escalate immediately when any of the following occurs:
 
 - Cross-profile data leakage regression
 - Recurrence integrity failure at scale
-- Save/sync/import/export data corruption risk (including Blob staging failures)
+- Save/sync/import/export data corruption risk (including Neon transfer staging failures)
 - Security-sensitive workflow bypass risk
 - Production boot inability to reach interactive state
 - Unexpected introduction of Redis/Mongo or monolith runtime writes

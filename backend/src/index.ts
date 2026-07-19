@@ -15,19 +15,15 @@ import {
   updateProfile as updateProfileRecord,
   verifyProfileUnlock
 } from "./profileService";
-import { createDataStorage } from "./storage";
+import { createDataStorage, isNeonEntityStorage } from "./storage";
+import type { TaskRecord } from "./storage";
 import {
   INLINE_TRANSFER_MAX_BYTES,
   EXPORT_TASKS_PAGE_SIZE,
-  canUseBlobTransfer,
-  createPresignedGetUrl,
-  deleteBlobQuietly,
-  handleBlobClientUpload,
   inlineExportMaxBytes,
-  putJsonBlob,
-  readBlobText
-} from "./blobTransfer";
-import type { HandleUploadBody } from "@vercel/blob/client";
+  isExportStagingPathname,
+  isImportStagingPathname
+} from "./transferStaging";
 import {
   PeriodRangeError,
   ProviderConfigError,
@@ -43,6 +39,7 @@ import {
   coerceTaskImportRow,
   parseImportArrayPerRow
 } from "./importParse";
+import { filterExportEntities } from "./exportEntities";
 
 const app = express();
 const isVercel = Boolean(process.env.VERCEL);
@@ -89,7 +86,16 @@ const PROFILES_FILE = "profiles.runtime.json";
 const LEGACY_TASKS_FILE = "tasks.json";
 const LEGACY_PROJECTS_FILE = "projects.json";
 const storage = createDataStorage({ dataDir: DATA_DIR });
+const neonStore = isNeonEntityStorage(storage) ? storage : null;
+const NEON_FRESHNESS_TTL_MS = Math.max(
+  0,
+  Number(process.env.NEON_FRESHNESS_TTL_MS ?? 2000) || 2000
+);
 console.log(`[storage] backend=${storage.kind} debounceMs=${storage.persistDebounceMs}`);
+
+function canUseTransferStaging(): boolean {
+  return Boolean(neonStore);
+}
 
 const TaskSchema = z.object({
   id: z.string(),
@@ -1357,7 +1363,7 @@ async function readUnifiedDataFile(): Promise<{
   }
 }
 
-/** When true, persist* no-ops so cold bootstrap never re-uploads multi-MB Blobs. */
+/** When true, persist* no-ops so cold bootstrap never rewrites large Neon tables. */
 let bootstrapPersistSuppressed = false;
 
 async function readRuntimeDataFiles(): Promise<{
@@ -1365,6 +1371,19 @@ async function readRuntimeDataFiles(): Promise<{
   tasks: Task[];
   profiles: Profile[];
 } | null> {
+  if (neonStore) {
+    const [taskRows, projectRows, profileRows] = await Promise.all([
+      neonStore.loadTasks(),
+      neonStore.loadProjects(),
+      neonStore.loadProfiles()
+    ]);
+    return {
+      projects: projectRows as Project[],
+      tasks: taskRows as Task[],
+      profiles: profileRows as Profile[]
+    };
+  }
+
   const parseArrayFile = async <T>(file: string, schema: z.ZodType<T>): Promise<T[] | null> => {
     try {
       const raw = await storage.readText(file);
@@ -1401,11 +1420,11 @@ async function readRuntimeDataFiles(): Promise<{
 
 async function loadData() {
   await ensureDataDir();
-  // On Vercel, never rewrite Blobs during bootstrap — uploads of ~12MB tasks can alone exceed maxDuration.
+  // On Vercel, never rewrite durable store during bootstrap — full task rebuilds can exceed maxDuration.
   const prevSuppress = bootstrapPersistSuppressed;
   if (isVercel) bootstrapPersistSuppressed = true;
   try {
-  // Runtime mode (non-monolith): split files are primary source for normal app usage.
+  // Runtime mode (non-monolith): split files / Neon rows are primary source for normal app usage.
   const runtime = await readRuntimeDataFiles();
   if (runtime) {
     projects = runtime.projects;
@@ -1413,10 +1432,10 @@ async function loadData() {
     profiles = runtime.profiles;
     if (isVercel) {
       // Vercel Hobby maxDuration (~60s) cannot afford multi-pass series repairs over multi-MB task sets.
-      // Serve the Blob snapshot as-is; local/dev still runs full normalization below.
+      // Serve the durable snapshot as-is; local/dev still runs full normalization below.
       statsCache.clear();
       productivityCache.clear();
-      await noteTasksStorageMtime();
+      await noteTasksStorageRevision();
       return;
     }
   } else {
@@ -1770,7 +1789,7 @@ async function loadData() {
 
   statsCache.clear();
   productivityCache.clear();
-  await noteTasksStorageMtime();
+  await noteTasksStorageRevision();
   } finally {
     bootstrapPersistSuppressed = prevSuppress;
   }
@@ -1821,47 +1840,60 @@ let dirtyTasks = false;
 let dirtyProjects = false;
 let dirtyProfiles = false;
 
-/** Last known Blob mtime for tasks.runtime.json in this isolate (multi-instance sync). */
-let tasksStorageMtimeMs = 0;
+/** Last known Neon tasks_revision in this isolate (multi-instance sync). */
+let tasksStorageRevision = 0;
 let tasksFreshnessCheckInFlight: Promise<void> | null = null;
+let lastTasksFreshnessCheckAt = 0;
+/** Dirty task ids for Neon row upserts; empty + dirtyTasks ⇒ full replace. */
+let dirtyTaskIds = new Set<string>();
+let deletedTaskIds = new Set<string>();
 
-async function peekTasksStorageMtimeMs(): Promise<number> {
-  const entries = await storage.listSyncJsonEntries();
-  return entries.find((e) => e.name === TASKS_FILE)?.mtimeMs ?? 0;
+async function peekTasksStorageRevision(): Promise<number> {
+  if (!neonStore) return 0;
+  return neonStore.getTasksRevision();
 }
 
-async function noteTasksStorageMtime(): Promise<void> {
-  if (storage.kind !== "vercel-blob") return;
+async function noteTasksStorageRevision(): Promise<void> {
+  if (!neonStore) return;
   try {
-    tasksStorageMtimeMs = await peekTasksStorageMtimeMs();
+    tasksStorageRevision = await peekTasksStorageRevision();
   } catch (err) {
     console.warn(
-      "[storage] could not note tasks mtime",
+      "[storage] could not note tasks revision",
       err instanceof Error ? err.message : String(err)
     );
   }
 }
 
 /**
- * On Vercel Blob, each serverless isolate keeps its own in-memory `tasks`.
- * Reload when another isolate has written a newer Blob so complete toggles
+ * On Neon (Vercel), each serverless isolate keeps its own in-memory `tasks`.
+ * Reload when another isolate has a newer tasks_revision so complete toggles
  * (and silent UI refreshes) do not snap back to stale state.
  */
 async function ensureTasksMemoryFresh(): Promise<void> {
-  if (storage.kind !== "vercel-blob" || !isVercel) return;
+  if (!neonStore || !isVercel) return;
   if (bootstrapPersistSuppressed) return;
   if (dirtyTasks || persistDebounceTimer || persistInFlight) return;
+  const now = Date.now();
+  if (
+    NEON_FRESHNESS_TTL_MS > 0 &&
+    now - lastTasksFreshnessCheckAt < NEON_FRESHNESS_TTL_MS &&
+    !tasksFreshnessCheckInFlight
+  ) {
+    return;
+  }
 
   if (!tasksFreshnessCheckInFlight) {
     tasksFreshnessCheckInFlight = (async () => {
-      const remote = await peekTasksStorageMtimeMs();
-      if (remote <= tasksStorageMtimeMs) return;
-      console.log("[storage] reloading tasks; blob newer than isolate memory", {
+      lastTasksFreshnessCheckAt = Date.now();
+      const remote = await peekTasksStorageRevision();
+      if (remote <= tasksStorageRevision) return;
+      console.log("[storage] reloading tasks; neon revision newer than isolate memory", {
         remote,
-        local: tasksStorageMtimeMs
+        local: tasksStorageRevision
       });
       await loadData();
-      tasksStorageMtimeMs = Math.max(tasksStorageMtimeMs, remote);
+      tasksStorageRevision = Math.max(tasksStorageRevision, remote);
     })()
       .catch((err) => {
         console.error(
@@ -1879,11 +1911,37 @@ async function ensureTasksMemoryFresh(): Promise<void> {
 
 async function persistRuntimeData(): Promise<void> {
   await ensureDataDir();
-  // Compact JSON on Vercel: prettier dumps inflate Blob size/time for multi-MB tasks.
+  const wroteTasks = dirtyTasks;
+
+  if (neonStore) {
+    // FK-safe order: profiles → projects → tasks (do not parallelize).
+    if (dirtyProfiles) await neonStore.replaceProfiles(profiles);
+    if (dirtyProjects) await neonStore.replaceProjects(projects);
+    if (dirtyTasks) {
+      const ids = [...dirtyTaskIds];
+      const deleted = [...deletedTaskIds];
+      dirtyTaskIds = new Set();
+      deletedTaskIds = new Set();
+      if (ids.length === 0 && deleted.length === 0) {
+        await neonStore.replaceAllTasks(tasks as TaskRecord[]);
+      } else {
+        const idSet = new Set(ids);
+        const toUpsert = tasks.filter((t) => idSet.has(t.id)) as TaskRecord[];
+        if (toUpsert.length) await neonStore.upsertTasks(toUpsert);
+        if (deleted.length) await neonStore.deleteTasks(deleted);
+      }
+    }
+    dirtyTasks = false;
+    dirtyProjects = false;
+    dirtyProfiles = false;
+    if (wroteTasks) await noteTasksStorageRevision();
+    return;
+  }
+
+  // Compact JSON on Vercel: prettier dumps inflate file size/time for multi-MB tasks.
   const encode = (value: unknown) =>
     isVercel ? JSON.stringify(value) : JSON.stringify(value, null, 2);
   const writes: Array<Promise<void>> = [];
-  const wroteTasks = dirtyTasks;
   if (dirtyTasks) {
     writes.push(storage.writeText(TASKS_FILE, encode(tasks)));
   }
@@ -1897,9 +1955,6 @@ async function persistRuntimeData(): Promise<void> {
   dirtyTasks = false;
   dirtyProjects = false;
   dirtyProfiles = false;
-  if (wroteTasks) {
-    await noteTasksStorageMtime();
-  }
 }
 
 async function flushPersistQueue(): Promise<void> {
@@ -1939,13 +1994,25 @@ function schedulePersistFlush(delayMs = storage.persistDebounceMs): Promise<void
   });
 }
 
-async function persistTasks() {
+async function persistTasks(opts?: { ids?: string[]; deletedIds?: string[] }) {
   // Invalidate before awaiting I/O so /api/stats cannot return pre-mutation cache
   // while in-memory `tasks` is already updated.
   statsCache.clear();
   productivityCache.clear();
   if (bootstrapPersistSuppressed) return;
   dirtyTasks = true;
+  if (opts?.ids) {
+    for (const id of opts.ids) {
+      dirtyTaskIds.add(id);
+      deletedTaskIds.delete(id);
+    }
+  }
+  if (opts?.deletedIds) {
+    for (const id of opts.deletedIds) {
+      deletedTaskIds.add(id);
+      dirtyTaskIds.delete(id);
+    }
+  }
   await schedulePersistFlush();
 }
 
@@ -1971,6 +2038,7 @@ app.get("/health", (_req, res) => {
     service: "focista-schedulo-backend",
     storage: storage.kind,
     production: isProduction,
+    transferStaging: canUseTransferStaging(),
     bootstrap: {
       profilesReady: lightBootstrapComplete || dataBootstrapComplete,
       dataReady: dataBootstrapComplete
@@ -2716,7 +2784,7 @@ app.post("/api/tasks/batch-delete", async (req, res) => {
 
   if (deleteSet.size > 0) {
     tasks = tasks.filter((t) => !deleteSet.has(t.id));
-    await persistTasks();
+    await persistTasks({ deletedIds: Array.from(deleteSet) });
     await rebuildParentAndChildIdsDeterministic();
   }
 
@@ -2746,7 +2814,7 @@ app.patch("/api/tasks/:id/complete", async (req, res) => {
   task.completedAt = task.completed ? new Date().toISOString() : undefined;
   // Must await on Vercel: fire-and-forget timers are frozen after the response.
   try {
-    await persistTasks();
+    await persistTasks({ ids: [task.id] });
   } catch (err) {
     console.error("[tasks/complete] persist failed", err);
     task.completed = prevCompleted;
@@ -2768,7 +2836,7 @@ app.delete("/api/tasks/:id", async (req, res) => {
   const before = tasks.length;
   tasks = tasks.filter((t) => t.id !== id);
   if (tasks.length === before) return res.sendStatus(404);
-  await persistTasks();
+  await persistTasks({ deletedIds: [id] });
   // Recompute series prefixes after deletion (earliest date may change).
   await rebuildParentAndChildIdsDeterministic();
   res.sendStatus(204);
@@ -4026,10 +4094,10 @@ app.post("/api/admin/save-data", async (_req, res) => {
       projects = canonical.projects;
       tasks = canonical.tasks;
     }
-    // Runtime persistence (split files).
+    // Runtime persistence (profiles first, then projects/tasks).
+    await persistProfiles();
     await persistProjects();
     await persistTasks();
-    await persistProfiles();
     // Run standard normalization/dedupe to keep deterministic ids/series.
     await loadData();
     res.json({
@@ -4044,27 +4112,76 @@ app.post("/api/admin/save-data", async (_req, res) => {
   }
 });
 
-app.post("/api/admin/blob-upload", async (req, res) => {
-  if (!canUseBlobTransfer()) {
+app.post(
+  "/api/admin/transfer-upload",
+  express.raw({ type: () => true, limit: "50mb" }),
+  async (req, res) => {
+    if (!neonStore) {
+      return res.status(503).json({
+        ok: false,
+        error:
+          "Transfer staging requires Neon storage. Set DATABASE_URL and STORAGE_BACKEND=neon (required for large import/export on Vercel)."
+      });
+    }
+    try {
+      const pathnameHeader = req.header("x-staging-pathname")?.trim();
+      if (!pathnameHeader || !isImportStagingPathname(pathnameHeader)) {
+        return res.status(400).json({
+          ok: false,
+          error: "Invalid X-Staging-Pathname (expected focista-schedulo/imports/...)"
+        });
+      }
+      const body = Buffer.isBuffer(req.body)
+        ? req.body
+        : Buffer.from(typeof req.body === "string" ? req.body : "");
+      if (body.length === 0) {
+        return res.status(400).json({ ok: false, error: "Empty upload body" });
+      }
+      const content = body.toString("utf8");
+      await neonStore.pruneExpiredTransferStaging();
+      await neonStore.putTransferStaging(pathnameHeader, content);
+      return res.json({ ok: true, pathname: pathnameHeader, byteLength: body.length });
+    } catch (error) {
+      console.error("[transfer-upload]", error);
+      return res.status(400).json({
+        ok: false,
+        error: error instanceof Error ? error.message : String(error)
+      });
+    }
+  }
+);
+
+app.get("/api/admin/export-download", async (req, res) => {
+  if (!neonStore) {
     return res.status(503).json({
       ok: false,
-      error:
-        "Blob transfer is not configured. Set BLOB_READ_WRITE_TOKEN (required for large import/export on Vercel)."
+      error: "Export download requires Neon transfer staging."
+    });
+  }
+  const pathname =
+    typeof req.query.pathname === "string" ? req.query.pathname.trim() : "";
+  if (!pathname || !isExportStagingPathname(pathname)) {
+    return res.status(400).json({
+      ok: false,
+      error: "Invalid pathname (expected focista-schedulo/exports/...)"
     });
   }
   try {
-    const body = req.body as HandleUploadBody;
-    const result = await handleBlobClientUpload({ body, request: req });
-    return res.json(result);
+    const content = await neonStore.readTransferStaging(pathname);
+    if (content == null) {
+      return res.status(404).json({ ok: false, error: "Export staging not found or expired" });
+    }
+    res.setHeader("Content-Type", "application/json; charset=utf-8");
+    res.setHeader("Cache-Control", "no-store");
+    return res.send(content);
   } catch (error) {
-    console.error("[blob-upload]", error);
-    return res.status(400).json({
+    console.error("[export-download]", error);
+    return res.status(500).json({
       ok: false,
       error: error instanceof Error ? error.message : String(error)
     });
   }
 });
-
 
 async function prepareExportEntities(profilePasswords: Record<string, string>): Promise<{
   exportProfiles: Profile[];
@@ -4075,27 +4192,8 @@ async function prepareExportEntities(profilePasswords: Record<string, string>): 
   const mergedProjects = mergeProjects([], projects);
   const mergedTasks = mergeTasksPreferLatest([], tasks);
   const mergedProfiles = mergeProfiles([], profiles);
-  const profileIdSet = new Set(mergedProfiles.map((p) => p.id));
-  const liveProjects = mergedProjects.filter(
-    (p) => !p.profileId || profileIdSet.has(p.profileId)
-  );
-  const liveProjectIdSet = new Set(liveProjects.map((p) => p.id));
-  const liveTasks = mergedTasks.filter((t) => {
-    if (t.cancelled) return false;
-    if (t.profileId && !profileIdSet.has(t.profileId)) return false;
-    if (t.projectId && !liveProjectIdSet.has(t.projectId)) return false;
-    return true;
-  });
-  const liveProfileIds = new Set<string>();
-  for (const p of liveProjects) {
-    if (p.profileId) liveProfileIds.add(p.profileId);
-  }
-  for (const t of liveTasks) {
-    if (t.profileId) liveProfileIds.add(t.profileId);
-  }
-  const liveProfiles = mergedProfiles.filter((p) => liveProfileIds.has(p.id));
 
-  const lockedProfiles = liveProfiles.filter((p) => !!p.passwordHash);
+  const lockedProfiles = mergedProfiles.filter((p) => !!p.passwordHash);
   const deniedProfileIds = new Set<string>();
   const deniedProfileNames: string[] = [];
 
@@ -4113,13 +4211,11 @@ async function prepareExportEntities(profilePasswords: Record<string, string>): 
     }
   }
 
-  const exportProfiles = liveProfiles.filter((p) => !deniedProfileIds.has(p.id));
-  const exportProjects = liveProjects.filter((p) => !deniedProfileIds.has(p.profileId ?? ""));
-  const allowedProjectIds = new Set(exportProjects.map((p) => p.id));
-  const exportTasks = liveTasks.filter((t) => {
-    const profileAllowed = !deniedProfileIds.has(t.profileId ?? "");
-    const projectAllowed = !t.projectId || allowedProjectIds.has(t.projectId);
-    return profileAllowed && projectAllowed;
+  const { exportProfiles, exportProjects, exportTasks } = filterExportEntities({
+    profiles: mergedProfiles,
+    projects: mergedProjects,
+    tasks: mergedTasks,
+    deniedProfileIds
   });
 
   return { exportProfiles, exportProjects, exportTasks, deniedProfileNames };
@@ -4129,7 +4225,7 @@ app.post("/api/admin/export-data", async (req, res) => {
   const body = z
     .object({
       profilePasswords: z.record(z.string(), z.string()).optional(),
-      delivery: z.enum(["auto", "inline", "blob", "parts"]).optional()
+      delivery: z.enum(["auto", "inline", "staging", "parts"]).optional()
     })
     .safeParse(req.body ?? {});
   if (!body.success) {
@@ -4152,32 +4248,31 @@ app.post("/api/admin/export-data", async (req, res) => {
     const json = JSON.stringify(data);
     const bytes = Buffer.byteLength(json, "utf8");
     const maxInline = inlineExportMaxBytes(isVercel);
-    const preferBlob =
-      deliveryPref === "blob" ||
+    const preferStaging =
+      deliveryPref === "staging" ||
       (deliveryPref === "auto" &&
         (isVercel || bytes > INLINE_TRANSFER_MAX_BYTES) &&
-        canUseBlobTransfer());
+        canUseTransferStaging());
     const forceParts = deliveryPref === "parts";
 
-    if (preferBlob && !forceParts) {
+    if (preferStaging && !forceParts && neonStore) {
       try {
-        const blob = await putJsonBlob(
-          `focista-schedulo/exports/export-${Date.now()}.json`,
-          json
-        );
-        const downloadUrl = await createPresignedGetUrl(blob.pathname);
+        await neonStore.pruneExpiredTransferStaging();
+        const pathname = `focista-schedulo/exports/export-${Date.now()}.json`;
+        await neonStore.putTransferStaging(pathname, json);
+        const downloadUrl = `/api/admin/export-download?pathname=${encodeURIComponent(pathname)}`;
         return res.json({
           ok: true,
-          delivery: "blob",
-          pathname: blob.pathname,
+          delivery: "staging",
+          pathname,
           downloadUrl,
           byteLength: bytes,
           excludedLockedProfiles: deniedProfileNames
         });
-      } catch (blobErr) {
+      } catch (stagingErr) {
         console.warn(
-          "[admin/export-data] Blob staging failed; falling back",
-          blobErr instanceof Error ? blobErr.message : blobErr
+          "[admin/export-data] Neon staging failed; falling back",
+          stagingErr instanceof Error ? stagingErr.message : stagingErr
         );
         // Fall through to inline / parts.
       }
@@ -4192,7 +4287,7 @@ app.post("/api/admin/export-data", async (req, res) => {
       });
     }
 
-    // Large payload without usable Blob (or explicit parts): ship profiles/projects
+    // Large payload without staging (or explicit parts): ship profiles/projects
     // inline and let the client page tasks via /api/admin/export-tasks-page.
     return res.json({
       ok: true,
@@ -4265,9 +4360,9 @@ app.post("/api/admin/sync-from-data", async (_req, res) => {
       projects = canonical.projects;
       tasks = canonical.tasks;
     }
+    await persistProfiles();
     await persistProjects();
     await persistTasks();
-    await persistProfiles();
     await loadData();
     res.json({
       ok: true,
@@ -4293,11 +4388,12 @@ app.post("/api/admin/import", async (req, res) => {
     .object({
       format: z.enum(["json", "csv"]),
       content: z.string().min(1).optional(),
-      blobPathname: z.string().min(1).optional()
+      stagingPathname: z.string().min(1).optional()
     })
-    .refine((v) => Boolean(v.content) !== Boolean(v.blobPathname), {
-      message: "Provide exactly one of content or blobPathname"
-    });
+    .refine(
+      (v) => Boolean(v.content) !== Boolean(v.stagingPathname),
+      { message: "Provide exactly one of content or stagingPathname" }
+    );
   const parsed = schema.safeParse(req.body);
   if (!parsed.success) {
     return res.status(400).json({ ok: false, error: parsed.error.flatten() });
@@ -4306,21 +4402,33 @@ app.post("/api/admin/import", async (req, res) => {
   const { format } = parsed.data as {
     format: ImportFormat;
     content?: string;
-    blobPathname?: string;
+    stagingPathname?: string;
   };
   let content = parsed.data.content;
-  let stagedPathname: string | undefined;
+  let stagedPathname: string | undefined = parsed.data.stagingPathname;
 
   try {
-    if (parsed.data.blobPathname) {
-      stagedPathname = parsed.data.blobPathname;
-      if (!stagedPathname.startsWith("focista-schedulo/imports/")) {
+    if (stagedPathname) {
+      if (!isImportStagingPathname(stagedPathname)) {
         return res.status(400).json({
           ok: false,
-          error: "Invalid blobPathname (expected focista-schedulo/imports/...)"
+          error: "Invalid stagingPathname (expected focista-schedulo/imports/...)"
         });
       }
-      content = await readBlobText(stagedPathname);
+      if (!neonStore) {
+        return res.status(503).json({
+          ok: false,
+          error: "Staged import requires Neon storage (DATABASE_URL)."
+        });
+      }
+      const staged = await neonStore.readTransferStaging(stagedPathname);
+      if (staged == null) {
+        return res.status(404).json({
+          ok: false,
+          error: "Import staging not found or expired"
+        });
+      }
+      content = staged;
     }
     if (!content) {
       return res.status(400).json({ ok: false, error: "Missing import content" });
@@ -4682,9 +4790,9 @@ app.post("/api/admin/import", async (req, res) => {
     profiles = canonical.profiles;
     projects = canonical.projects;
     tasks = canonical.tasks;
+    await persistProfiles();
     await persistProjects();
     await persistTasks();
-    await persistProfiles();
     await loadData();
 
     res.json({
@@ -4703,8 +4811,13 @@ app.post("/api/admin/import", async (req, res) => {
         importedTasksByProfileName
       }
     });
-    if (stagedPathname) {
-      void deleteBlobQuietly(stagedPathname);
+    if (stagedPathname && neonStore) {
+      void neonStore.deleteTransferStaging(stagedPathname).catch((err) => {
+        console.warn(
+          "[admin/import] staging cleanup failed",
+          err instanceof Error ? err.message : String(err)
+        );
+      });
     }
   } catch (error) {
     res.status(500).json({

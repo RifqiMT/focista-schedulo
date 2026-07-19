@@ -18,7 +18,7 @@ Copy this template for each release (for example, `docs/releases/2026-07-18_docs
 - Release owner:
 - Scope summary:
 - Primary risk areas:
-- Topology target (local / Vercel+Blob / split host):
+- Topology target (local / Vercel+Neon / split host):
 
 ---
 
@@ -34,7 +34,7 @@ Copy this template for each release (for example, `docs/releases/2026-07-18_docs
 - [ ] Project CRUD and association integrity verified
 - [ ] Import + automated sync/save verified (no Sync/Save header buttons required)
 - [ ] Export verified (`JSON`, `CSV`, `Both`)
-- [ ] Large transfer path verified when targeting Prod (Blob upload / `blobPathname` / presigned export)
+- [ ] Large transfer path verified when targeting Prod (transfer-upload / `stagingPathname` / staging export download)
 - [ ] Boot progress / staged profile loading validated
 - [ ] Progress weekly chart + tooltips + badge PNG export validated
 - [ ] Task complete survives refresh on Vercel (await persist; no silent snap-back; error toast on failure)
@@ -42,7 +42,7 @@ Copy this template for each release (for example, `docs/releases/2026-07-18_docs
 - [ ] Exclusive tooltip + single-toast layering validated (tooltip dismisses on toast)
 - [ ] Task free-text search AND matching validated across key attributes
 - [ ] Per-row import: invalid rows skipped; toast skip counts accurate
-- [ ] Export parts paging validated when Blob unavailable (or documented N/A for Blob-only targets)
+- [ ] Export parts paging validated when Neon staging unavailable (or documented N/A for local-only targets)
 - [ ] Productivity Summary generate + Ask validated (key present / missing / degraded)
 - [ ] AI keys modal format + live validation; keys not logged
 
@@ -71,7 +71,7 @@ Evidence links/log references:
 - [ ] Password-protected profile deletion requires password validation
 - [ ] Locked-profile export behavior validated with correct/incorrect passwords
 - [ ] No secrets introduced in repository changes
-- [ ] Production env vars present (`FRONTEND_ORIGIN`, Blob token, `VITE_API_BASE_URL` if split)
+- [ ] Production env vars present (`FRONTEND_ORIGIN`, `DATABASE_URL`, `VITE_API_BASE_URL` if split)
 
 ---
 

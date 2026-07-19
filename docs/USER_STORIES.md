@@ -38,7 +38,7 @@ As a user, I want staged loading feedback so that I understand startup progress 
 **Acceptance criteria**
 
 - Profile loading shows a progress bar and staged status messaging.
-- Production boot may load profiles via a fast path before the large tasks blob.
+- Production boot may load profiles via a fast path before the large tasks working set.
 - Expensive full sync/save is not forced on every boot.
 
 ---
@@ -259,22 +259,22 @@ As a user, I want runtime operations to remain fast while still supporting inter
 
 **Acceptance criteria**
 
-- Runtime persistence uses split files (or Vercel Blob equivalents).
+- Runtime persistence uses split files (local) or Neon row tables (Prod).
 - Sync-from-data and save workflows do not force monolith runtime writes.
 - Sync and save run **automatically** after import; manual Sync/Save header buttons are not shown.
 - Quiet reload-data may run on tab return without requiring a header button.
 
-### US-504 Transfer large datasets via Blob staging
+### US-504 Transfer large datasets via Neon staging
 
 As a production user, I want large import/export to succeed despite serverless body limits so that backups and migrations remain reliable.
 
 **Acceptance criteria**
 
-- Large imports may upload to Vercel Blob and call `/api/admin/import` with `blobPathname` (exactly one of `content` or `blobPathname`).
-- Large exports may return a short-lived presigned Blob download URL instead of an inline body.
-- When Blob transfer is unavailable and an **import** payload exceeds limits, API returns clear `413` guidance; UI surfaces friendly next steps.
-- Large **exports** without Blob use parts paging so download still completes.
-- `/api/admin/blob-upload` supports client upload handoff when configured.
+- Large imports may upload via `POST /api/admin/transfer-upload` into Neon `transfer_staging` and call `/api/admin/import` with `stagingPathname` (exactly one of `content` or `stagingPathname`).
+- Large exports may return a staging download (`delivery: "staging"`) instead of an inline body.
+- When Neon transfer staging is unavailable and an **import** payload exceeds limits, API returns clear `413` guidance; UI surfaces friendly next steps.
+- Large **exports** without staging use parts paging so download still completes.
+- Frontend uses `transferImport.ts` for staged uploads when payload size warrants it.
 
 ---
 
@@ -338,7 +338,7 @@ As a privacy-conscious user, I want password confirmation before deleting a prot
 | US-412 | 5 | Import without losing valid rows |
 | US-502 | 5 | Export data safely |
 | US-503 | 5 | Save and sync without monolith runtime coupling |
-| US-504 | 5 | Transfer large datasets via Blob staging |
+| US-504 | 5 | Transfer large datasets via Neon staging |
 | US-601 | 6 | User-friendly error feedback |
 | US-602 | 6 | Showcase profile protection |
 | US-603 | 6 | Secure profile deletion confirmation |

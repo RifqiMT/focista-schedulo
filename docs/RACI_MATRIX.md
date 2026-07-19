@@ -46,7 +46,7 @@ Legend:
 | AI Productivity Summary / Ask | C | A | R | R | C | C | I |
 | AI keys modal + never-log secrets | C | A | R | R | C | I | I |
 | Progress chart / tooltip / badge export UX | C | A | R | C | C | C | I |
-| Blob persistence and large transfer paths | C | A | C | R | I | I | I |
+| Neon persistence and large transfer paths | C | A | C | R | I | I | I |
 | Automated sync/save and boot progress UX | C | A | R | C | C | I | I |
 | Metrics and OKR definition updates | C | C | I | I | I | A/R | I |
 | Traceability matrix maintenance | C | C | I | I | I | C | A/R |

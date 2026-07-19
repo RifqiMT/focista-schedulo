@@ -7,50 +7,56 @@
 
 ## 2026-07-19
 
-### Added
+### Changed — Production persistence (Neon Postgres)
 
-- **Productivity Summary** (AI): Tasks toolbar **Summary** opens a modal for period summaries and task Q&A via Groq + optional Tavily web enrich.
-- **AI keys** header action (next to Import): users can enter Groq/Tavily keys and save them in browser localStorage for Productivity Summary.
-- Backend: `productivitySummaryService.ts` with timeline periods (day, week, sprint, month, bi-month, quarter, semester, year, custom); routes `POST /api/productivity-summary` and `POST /api/productivity-summary/ask`.
-- Env: `GROQ_API_KEY`, optional `GROQ_MODEL`, `TAVILY_API_KEY` (server-only).
-- Unit tests for period resolution and task digests (16 cases).
+- **Prod durable storage:** **Neon Postgres Free** (row-per-task + `payload jsonb`) is the production durable store for runtime persistence and large import/export staging. Local development remains `STORAGE_BACKEND=fs` (`backend/data/*.runtime.json`).
+- Storage selection: `STORAGE_BACKEND=neon` (or auto) + pooled `DATABASE_URL`; optional `DATABASE_URL_UNPOOLED`, `NEON_FRESHNESS_TTL_MS`, `NEON_TRANSFER_TTL_HOURS`, `NEON_STATEMENT_TIMEOUT_MS`.
+- Schema: `backend/src/storage/migrations/001_neon_core.sql` — `profiles`, `projects`, `tasks` (row-per-task), `runtime_meta`, `transfer_staging`.
+- Freshness: `runtime_meta.tasks_revision` drives multi-isolate reloads (`ensureTasksMemoryFresh`) before task list/complete on Vercel.
+- Transfer: `POST /api/admin/transfer-upload` + import `stagingPathname`; export `delivery: "staging"` / download via `GET /api/admin/export-download`; frontend `transferImport.ts`. Parts paging remains the fallback when staging is unavailable.
+- Neon `persistDebounceMs` is **`0` when `VERCEL` is set**; ~200ms off-Vercel. Task complete **awaits** durable persist and fail-closes with rollback + `500` + UI toast.
+- **Export output:** always one JSON file, one CSV file, or both — each file covers **all profiles'** entries (including cancelled tasks and empty profiles); locked profiles remain optional via password gate.
 
-### Changed
+### Removed
 
-- Productivity Summary UX polish: clearer timeline labels, stale-timeline banner when the period changes after generate, copy summary, ⌘/Ctrl+Enter shortcuts, edge-fade timeline scroller, and summary action bar.
-- Productivity Summary LLM output: stronger plain-English status brief prompts; digests now include explicit open/overdue task lists with name + ID, and summaries/Ask answers must render dedicated Open tasks / Overdue tasks sections when those lists are present.
-- Productivity Summary resilience: leaner digests, smaller completion budget, Groq fallback model on rate limits, and local digest brief/answer when AI is unavailable (`degraded: true`).
-- Productivity Summary timelines: added forward ranges — next day, next week, next sprint, next month, next quarter, next half year, next year.
-- Productivity Summary timeline UI: period unit chips + **This | Next** offset (Concept A) instead of a long flat chip list.
-- AI keys modal refresh: solid Summary-aligned shell, Groq/Tavily status pills, provider cards with inline reveal, dirty-state Save, and ⌘/Ctrl+Enter.
-- AI key auto-validation: format checks while typing plus live Groq/Tavily verification via `POST /api/ai-keys/validate` (keys never logged).
-- Admin import reliability: JSON/CSV now coerce common quirks and validate **per row** so one bad task/profile no longer drops an entire array (critical on Vercel Prod). Skipped rows are counted accurately in the import toast.
-- Large export without Blob: Dev allows larger inline payloads; Prod falls back to **parts** paging (`/api/admin/export-tasks-page`) when Blob staging is unavailable—no more hard `413` on export.
-- Productivity Analysis dual-series charts: Raw (brand red) and Average (blue) now share one palette across lines, legends, tooltips, and PNG export; raw no longer fades to pink when both series are shown.
-- Productivity Analysis Y-axis: nice tick grid with even spacing; no duplicate compact labels (e.g. stacked "14k") or uneven endpoint gaps.
+- Vercel Blob runtime adapter, Blob transfer helpers, `blobPathname` routes, and related frontend/backend dependencies.
+- Documentation scrub: purged leftover object-store persistence aliases and deprecated env-variable rows (runtime path is Neon/`fs` only).
+
 ### Fixed
 
-- **Task completion durability on Vercel:** `PATCH /api/tasks/:id/complete` now **awaits** Blob persist before responding (serverless freezes timers after the response). On persist failure, state rolls back and returns `500` with a clear message; the UI toasts and silently refreshes.
-- **Multi-isolate Blob freshness:** Before task list/complete, Vercel Blob hosts reload in-memory tasks when remote `tasks.runtime.json` mtime is newer than this isolate—prevents completion toggles from snapping back after another instance wrote.
+- **Task completion durability on Vercel:** `PATCH /api/tasks/:id/complete` awaits Neon persist before responding (serverless freezes timers after the response).
+- **Multi-isolate Neon freshness:** isolates reload in-memory tasks when remote `tasks_revision` is newer—prevents completion snap-back.
 - Virtual recurring occurrences no longer use a temporary July-2026 force-complete backfill; synthesized occurrences start incomplete.
 
-### Changed
+### Added — Productivity Summary (AI)
 
-- Vercel Blob `persistDebounceMs` is **`0` when `VERCEL` is set** (was 80ms)—required so awaited flushes complete before the isolate freezes. Non-Vercel Blob hosts keep ~1500ms debounce.
-- Dead-code cleanup: removed deprecated AI key wrappers, unused `ImportDropCounts` / `RuntimeFileName`, unused module exports, superseded CSS/keyframes, and corrected `VARIABLES.md` (`droppedRows`, `export.delivery` includes `auto`).
-- Task search indexes all task attributes (title, description, labels, project/profile names, priority, dates/times, duration, reminder, repeat, location, links, status, ids)—AND token match.
-- Productivity Summary modal visual refresh: elevated header meta chips, sliding Overview/Ask control, web-tips switch, completion ring, richer empty/loading states, and refined Ask composer—still on the solid Analysis shell (no glass).
-- Productivity Summary modal clipping fix: fit dialog inside viewport (`calc(100dvh - …)`), scroll the body instead of `overflow: hidden`, and keep Sources fully reachable.
+- **Productivity Summary** (AI): Tasks toolbar **Summary** opens a modal for period summaries and task Q&A via Groq + optional Tavily web enrich.
+- **AI keys** header action: users can enter Groq/Tavily keys in browser localStorage; live validation via `POST /api/ai-keys/validate` (keys never logged).
+- Backend: `productivitySummaryService.ts` with timelines (day, week, sprint, month, bi-month, quarter, semester, year, next_* ranges, custom); routes `POST /api/productivity-summary` and `POST /api/productivity-summary/ask`.
+- Env: `GROQ_API_KEY`, optional `GROQ_MODEL`, `TAVILY_API_KEY` (server-only).
+
+### Changed — Product UX and reliability
+
+- Productivity Summary UX polish: clearer timeline labels, stale-timeline banner, copy summary, ⌘/Ctrl+Enter, This/Next period offset, degraded local brief when Groq fails (`degraded: true`).
+- Admin import reliability: JSON/CSV per-row validation with soft coercion; skipped rows counted accurately (`droppedRows`).
+- Large export: Dev allows larger inline payloads; Prod prefers Neon staging, else **parts** paging (`/api/admin/export-tasks-page`)—no hard `413` on export.
+- Productivity Analysis: Raw/Average dual-series palette; nice Y-axis ticks without duplicate compact labels.
+- Task search indexes all task attributes with AND token match.
+- Dead-code cleanup: unused exports/types, superseded CSS/keyframes; corrected variable naming (`droppedRows`, `export.delivery` includes `auto` / `staging`).
 
 ### Added (tests)
 
-- `backend/src/taskCompletePersist.test.ts` — asserts Blob debounce is `0` on Vercel and positive off-Vercel.
+- `taskCompletePersist.test.ts` — Neon debounce `0` on Vercel / positive off-Vercel.
+- `transferStaging.test.ts` — staging pathname prefixes and inline size caps.
+- `exportEntities.test.ts` — export filtering by denied profile IDs.
+- Expanded `storage/storage.test.ts` for `fs` / `neon` selection.
+- Productivity Summary period/digest coverage (28 cases in service tests).
 
 ### Documentation
 
-- Suite sync for Productivity Summary: README, PRD, personas, stories (US-409/US-410), API contracts, architecture, variables, design, guardrails, traceability, metrics, deployment, crosswalk, tests, changelog.
-- Completeness pass: FR-22–FR-24, US-411–US-413, importParse/taskSearch/chartYAxis/export-parts crosswalk, CSS namespace table, NFR-10/11, and remaining docs bumped to **2026-07-19**.
-- Follow-up: document Vercel completion await + Blob multi-isolate freshness (`ensureTasksMemoryFresh`), debounce=`0` on Vercel, and related NFR/guardrail updates.
+- Full suite aligned to Neon topology: README, Architecture, Deployment, Guardrails, Variables, API contracts, PRD (FR-13/14, NFR-12/13), Traceability, Stories (US-504), Test strategy, Crosswalk, metrics (PM-09), plans under `docs/plans/` (Implemented).
+- Completeness for AI Summary (US-409/410/413, FR-21/24), import resilience (FR-22, US-412), task search (FR-23, US-411), exclusive tooltip / single-toast, and calendar-week progress semantics.
+- Follow-up audit: reorganized changelog; indexed `docs/plans/`; Mermaid `tasks_revision` link; Design cold-start note; exportEntities in crosswalk/tests; Neon Free limit guardrails.
 
 ---
 
@@ -63,7 +69,7 @@
 
 ### Fixed
 
-- Vercel Prod import/export for large payloads: stage via **Vercel Blob** (client upload + `blobPathname` import; export returns a short-lived presigned download URL) to avoid Hobby ~4.5MB serverless body limits (HTTP 413).
+- Task completion and isolate-memory hardening on the then-current Prod store (superseded the same day by Neon migration — see 2026-07-19).
 
 ### Added
 
@@ -76,13 +82,7 @@
 - Achievement and milestone cards now use short plain-English descriptions (achievements via `/api/stats` copy; milestones show a `description` line under each card title).
 - Toast queue is **single-toast** (replace, do not stack up to four).
 - Removed manual **Sync** and **Save** header buttons. Sync/save now run automatically after import (not on every boot).
-- Profile loading shows a **progress bar + staged status**; Vercel boot loads profiles via a fast path before the large tasks blob, and skips expensive boot-time sync/save.
-- Dead-code cleanup: removed unused backend helpers (`mergeTasks`, `makeCache`, `startOfWeekMondayIso`, `createImportClientToken`), unused logo assets, superseded Profile/Projects/Productivity CSS (~1k lines), and corrected `VARIABLES.md` profile ID / friendly-error examples.
-- Follow-up dead-code pass: removed unused TaskEditorDrawer link/location formatters, unused `fsOverlayPeak` / `started` locals, superseded PA/tooltip/drawer CSS (~1.6k lines), and corrected `BLOB_RUNTIME_PREFIX` docs location.
-
-### Documentation
-
-- Follow-up suite sync for exclusive tooltips, single-toast UX, achievement/milestone `description` fields, and header action patterns (README, PRD, personas, stories, VARIABLES, design, API, architecture, traceability, guardrails, crosswalk, tests).
+- Profile loading shows a **progress bar + staged status**; Vercel boot loads profiles via a fast path before the large tasks working set, and skips expensive boot-time sync/save.
 
 ---
 
@@ -90,14 +90,12 @@
 
 ### Added
 
-- Pluggable persistence adapters: local `fs` and **Vercel Blob** (`backend/src/storage/`), selected via `STORAGE_BACKEND` / Blob credentials.
-- Production hardening: require `FRONTEND_ORIGIN` when `NODE_ENV`/`FOCISTA_ENV` is production; require `VITE_API_BASE_URL` on Vercel Production builds when split-hosted.
+- Pluggable persistence adapters and production hardening (`FRONTEND_ORIGIN`, `VITE_API_BASE_URL` for split hosting).
 - Storage kind exposed on `GET /health`.
 
 ### Changed
 
-- Prod topology (Option A): Vercel SPA + Node API + **Vercel Blob** for durable runtime JSON (explicitly **no Redis / no MongoDB**).
-- Updated `docs/DEPLOYMENT_VERCEL.md`, `ARCHITECTURE.md`, `GUARDRAILS.md`, env examples, and `frontend/vercel.json`.
+- Prod topology: Vercel SPA + Node API + durable store (later finalized as **Neon Postgres**; see 2026-07-19). Explicitly **no Redis / no MongoDB**.
 
 ---
 
@@ -106,8 +104,6 @@
 ### Documentation
 
 - Documentation suite refresh aligned with shipped **progress** behavior: calendar-week weekly chart (JSON key `last7Days`), rich bar tooltips (per-task XP and weekday-historical stats), badge PNG export and modal naming, and profile **lock** affordance.
-- Updated: `PRODUCT_DOCUMENTATION_STANDARD.md` (§4.1 variables/API discipline), `PRD.md`, `USER_PERSONAS.md`, `USER_STORIES.md` (US-403–US-406), `VARIABLES.md` (relationship diagram + `/api/stats` weekly fields), `API_CONTRACTS.md` (`GET /api/stats` contract notes), `DESIGN_GUIDELINES.md`, `GUARDRAILS.md` (copy vs. implementation; legacy API keys), `TRACEABILITY_MATRIX.md`, `PRODUCT_METRICS.md`, `METRICS_AND_OKRS.md`, `DOCS_CODE_CROSSWALK.md`, `ARCHITECTURE.md`, `TEST_STRATEGY.md`, `OPERATING_MODEL.md`, `RACI_MATRIX.md`, `RELEASE_CHECKLIST_TEMPLATE.md`, `releases/README.md`.
-- Callout: some achievement **UI copy** may still say “last 7 days” while eligibility iterates the calendar-week series—documented in `VARIABLES.md` / `GUARDRAILS.md` for product alignment.
 
 ### Product
 
@@ -121,24 +117,12 @@
 
 - Production-oriented Vercel deployment guide: `docs/DEPLOYMENT_VERCEL.md`.
 - Configurable API origin for split hosting: `frontend/src/apiClient.ts`, `frontend/.env.example`, `frontend/vercel.json`.
-- Optional strict CORS for production API: `FRONTEND_ORIGIN` (`backend/src/index.ts`, `backend/.env.example`).
+- Optional strict CORS for production API: `FRONTEND_ORIGIN`.
 
 ### Changed
 
-- Shifted runtime persistence to split files (`tasks.runtime.json`, `projects.runtime.json`, `profiles.runtime.json`) for non-monolith operational performance.
-- Updated save/sync behavior alignment so runtime operations do not depend on unified monolith persistence.
-- Optimized high-frequency frontend task flows:
-  - concurrent batch creation
-  - batch deletion for recurring series
-  - reduced heavy visible refreshes after optimistic updates
-- Added performance diagnostics:
-  - backend API timing header (`X-Server-Time-Ms`)
-  - frontend slow-action logging instrumentation
-- Added profile-gated performance toggle available only for profile name `Rifqi Tjahyono`.
-- Added showcase read-only enforcement for profile `Test` across profile/project/task mutation paths (frontend and backend).
-- Added password confirmation requirement for deleting password-protected profiles.
-- Added centralized friendly error-message formatter to improve toaster root-cause clarity for failed actions.
-- Added export `Both` mode for one-action JSON+CSV export.
+- Shifted runtime persistence to split files (`tasks.runtime.json`, `projects.runtime.json`, `profiles.runtime.json`) for non-monolith operational performance (local `fs`; Prod later moved to Neon rows).
+- Showcase read-only enforcement for profile `Test`; password confirmation for deleting protected profiles; friendly error formatter; export `Both` mode.
 
 ### Documentation
 

@@ -15,7 +15,7 @@ In production, the browser resolves the API origin via `frontend/src/apiClient.t
 - Showcase profile `Test` mutations return **`403`** with a readable reason.
 - Password-protected profile deletion requires verified password.
 - Responses may include performance header **`X-Server-Time-Ms`**.
-- Runtime persistence is split-object based (`tasks` / `projects` / `profiles`), not monolith-primary.
+- Runtime persistence is **Neon rows** (Prod) or split JSON files (local `fs`) for `tasks` / `projects` / `profiles` — not a monolith primary write path.
 
 ---
 
@@ -23,7 +23,7 @@ In production, the browser resolves the API origin via `frontend/src/apiClient.t
 
 | Method | Path | Notes |
 |---|---|---|
-| `GET` | `/health` | Includes storage kind (e.g. `"storage":"vercel-blob"` or `"fs"`) |
+| `GET` | `/health` | Includes storage kind (e.g. `"storage":"neon"` or `"fs"`) |
 
 ---
 
@@ -55,7 +55,7 @@ In production, the browser resolves the API origin via `frontend/src/apiClient.t
 
 | Method | Path | Notes |
 |---|---|---|
-| `GET` | `/api/tasks` | Profile/project/time scope and pagination; on Vercel Blob, may reload tasks if remote mtime is newer |
+| `GET` | `/api/tasks` | Profile/project/time scope and pagination; on Neon/Vercel, may reload tasks if `tasks_revision` is newer |
 | `POST` | `/api/tasks` | Create task (incl. recurrence materialization paths) |
 | `PUT` | `/api/tasks/:id` | Update task |
 | `PATCH` | `/api/tasks/:id/complete` | Toggle completion; **awaits** persist on Vercel; may `500` + rollback if save fails; freshness reload before mutate |
@@ -142,10 +142,11 @@ Other top-level fields (illustrative): `totalPoints`, `level`, `xpToNext`, `comp
 | `POST` | `/api/admin/reload-data` | Reload runtime from storage (used for quiet tab-return refresh) |
 | `POST` | `/api/admin/save-data` | Persist in-memory state to storage |
 | `POST` | `/api/admin/sync-from-data` | Sync from interchange/data sources |
-| `POST` | `/api/admin/blob-upload` | Client upload handoff for large transfers |
-| `POST` | `/api/admin/export-data` | Export JSON snapshot; may return inline, Blob URL, or parts manifest |
+| `POST` | `/api/admin/transfer-upload` | Multipart/chunked upload into Neon `transfer_staging` for large imports |
+| `GET` | `/api/admin/export-download` | Download a previously staged export payload from Neon |
+| `POST` | `/api/admin/export-data` | Export JSON snapshot; may return inline, staging download, or parts manifest |
 | `POST` | `/api/admin/export-tasks-page` | Page of export tasks (used when `delivery: "parts"`) |
-| `POST` | `/api/admin/import` | Import JSON/CSV; body must include exactly one of `content` or `blobPathname` |
+| `POST` | `/api/admin/import` | Import JSON/CSV; body must include exactly one of `content` or `stagingPathname` |
 
 ### Import body shape (conceptual)
 
@@ -153,11 +154,11 @@ Other top-level fields (illustrative): `totalPoints`, `level`, `xpToNext`, `comp
 {
   "format": "json",
   "content": "... optional inline ...",
-  "blobPathname": "focista-schedulo/imports/... optional staged ..."
+  "stagingPathname": "focista-schedulo/imports/... optional staged ..."
 }
 ```
 
-Validation rule: **exactly one** of `content` or `blobPathname`.
+Validation rule: **exactly one** of `content` or `stagingPathname`.
 
 Import parsing validates **per row** (with soft coercion for common quirks such as missing `labels`, string `link`, `durationMinutes: 0`). Invalid rows are skipped and reported in `droppedRows`; a single bad row must not discard the rest of that entity array.
 
@@ -166,10 +167,10 @@ Import parsing validates **per row** (with soft coercion for common quirks such 
 `POST /api/admin/export-data` returns one of:
 
 - **`inline`** — full `{ profiles, projects, tasks }` in the JSON body (local Dev allows up to ~24MB; Vercel ~3MB).
-- **`blob`** — short-lived `downloadUrl` when `BLOB_READ_WRITE_TOKEN` (or OIDC) is configured.
-- **`parts`** — profiles/projects inline; client pages tasks via `POST /api/admin/export-tasks-page` (no Blob required).
+- **`staging`** — staged in Neon `transfer_staging` with a short-lived download URL (requires `DATABASE_URL` / Neon storage).
+- **`parts`** — profiles/projects inline; client pages tasks via `POST /api/admin/export-tasks-page` (no staging required).
 
-Blob staging is preferred when available; if Blob fails or is unset, export falls back to inline or parts instead of hard-failing with `413`.
+Neon staging is preferred when available; if staging fails or Neon is unset, export falls back to inline or parts instead of hard-failing with `413`.
 
 ### Client automation note
 
@@ -180,7 +181,7 @@ The UI no longer exposes manual Sync/Save header buttons. After import, the clie
 ## Response / Performance Notes
 
 - Prefer batch task endpoints for multi-item operations.
-- Blob persistence uses longer write debounce than local `fs` on long-running hosts; on **Vercel**, Blob debounce is **`0`** and completion must await flush.
+- Neon persistence uses moderate write debounce on long-running hosts; on **Vercel**, Neon debounce is **`0`** and completion must await flush.
 - SSE (`/api/events`) requires compatible CORS/origin configuration in split hosting.
 
 ---

@@ -15,7 +15,7 @@ Define the technical and business limitations that bound safe product developmen
 
 - **User-facing copy accuracy:** Achievement or chart labels must match shipped formulas. Prefer a single source of truth documented in `VARIABLES.md` (including the canonical achievement description table).
 - Keep profile data boundaries strict; no cross-profile leakage.
-- Preserve user data ownership with reliable import/export capability (including large Blob-staged transfers in production).
+- Preserve user data ownership with reliable import/export capability (including large Neon-staged transfers in production).
 - Prioritize execution reliability over feature volume.
 - Avoid introducing behavior changes without documentation and changelog updates.
 - Preserve showcase integrity: profile `Test` acts as read-only during demonstrations.
@@ -27,8 +27,9 @@ Define the technical and business limitations that bound safe product developmen
 ## Technical Guardrails
 
 - **API field names vs. semantics:** Some response keys are historical (e.g. `last7Days` carrying a **calendar-week** series). Do not rename lightly without a coordinated frontend migration; when behavior changes, update `API_CONTRACTS.md`, `VARIABLES.md`, and consumer components in the same release.
-- Runtime persistence must remain non-monolith for high-frequency operations (split `tasks` / `projects` / `profiles` JSON objects).
-- Production durable store is **Vercel Blob** (or local `fs` in development) — do **not** introduce Redis or MongoDB without an approved architecture change.
+- Runtime persistence must remain non-monolith for high-frequency operations (split entity stores: tasks / projects / profiles — Neon rows or local JSON files).
+- Production durable store is **Neon Postgres Free** (or local `fs` in development) — do **not** introduce Redis or MongoDB as the primary store without an approved architecture change.
+- Design within Neon Free limits: **0.5 GB** storage, **100 CU-hours**/month, scale-to-zero after idle, **5 GB** egress/month — **no** keep-alive pinging; accept cold starts; prefer row upserts over full dumps.
 - Unified JSON (`focista-unified-data.json`) is interchange-oriented; do not reintroduce it as the primary high-frequency write path.
 - Validate all mutation payloads before persistence (Zod).
 - Avoid destructive save/sync patterns that can wipe valid datasets.
@@ -36,13 +37,13 @@ Define the technical and business limitations that bound safe product developmen
 - Maintain graceful recovery on API mutation failures.
 - Any read-only business policy must be enforced server-side, not UI-only.
 - Centralize user-facing error interpretation to ensure clear root-cause messaging.
-- Large import/export on constrained serverless body limits must use **Blob staging** when available (`blobPathname` / presigned download). When Blob is unavailable, large **exports** must fall back to **parts** paging (`/api/admin/export-tasks-page`) rather than failing with `413`.
+- Large import/export on constrained serverless body limits must use **Neon `transfer_staging`** when available (`stagingPathname` / staging download). When staging is unavailable, large **exports** must fall back to **parts** paging (`/api/admin/export-tasks-page`) rather than failing with `413`.
 - Import must never fail an entire entity array because of one malformed row; coerce common quirks and drop invalid rows individually (`droppedRows` in the response).
 - Do not force expensive full sync/save on every application boot in production; prefer post-import automation and quiet reload patterns.
 - **LLM secrets are server-only by default:** `GROQ_API_KEY` and `TAVILY_API_KEY` must never be exposed as `VITE_*`. Users may optionally store keys in **browser localStorage** (`pst.aiKeys`) via the **AI keys** header and send them only to `/api/productivity-summary*` and `/api/ai-keys/validate`. Never log client or server API keys.
 - AI summaries must be grounded in profile-scoped task digests; do not invent completed work. Cap highlight lists to bound latency/cost.
 - Missing Groq configuration must fail closed with `503` and a clear operator message — not a silent empty hallucination.
-- Long-running Node API process is required for in-memory working set and SSE; do not assume purely stateless per-request diskless compute without redesign.
+- Long-running Node API process is required for in-memory working set and SSE; do not assume purely stateless per-request diskless compute without redesign (Vercel + Neon freshness is the approved exception path).
 
 ---
 
@@ -51,9 +52,9 @@ Define the technical and business limitations that bound safe product developmen
 - Target: majority of core actions under 1 second in normal local usage.
 - Batch operations are preferred over N individual mutation calls.
 - Avoid redundant foreground refetches after successful optimistic updates.
-- Use longer persistence debounce on Blob (~1500ms) than local fs (~40ms) on long-running hosts to protect free-tier upload quotas.
-- On **Vercel serverless**, Blob `persistDebounceMs` must be **`0`**, and durability-critical mutations (especially task complete) must **await** persist before returning success—never rely on fire-and-forget timers after the response.
-- Prefer Blob multi-isolate freshness checks before task list/complete so in-memory state does not overwrite newer Blob writes from another isolate.
+- Use moderate persistence debounce on Neon (~200ms) vs local fs (~40ms) on long-running hosts; protect Neon Free CU-hours (no keep-alive pinging).
+- On **Vercel serverless**, Neon `persistDebounceMs` must be **`0`**, and durability-critical mutations (especially task complete) must **await** persist before returning success—never rely on fire-and-forget timers after the response.
+- Prefer Neon multi-isolate freshness checks (`tasks_revision`) before task list/complete so in-memory state does not overwrite newer Neon writes from another isolate.
 - Any potentially degrading change must include before/after measurement evidence (see Performance Guardrail rule).
 - Profile-gated performance diagnostics may exist for specific profile names; do not expose noisy logging to all users by default.
 
@@ -62,7 +63,7 @@ Define the technical and business limitations that bound safe product developmen
 ## Security and Privacy Guardrails
 
 - Never store plaintext secrets/passwords in repository files.
-- Never commit `.env.local`, tokens, or Blob credentials.
+- Never commit `.env.local`, tokens, or database credentials.
 - Use hashed profile passwords only where lock is enabled (scrypt).
 - Block or constrain sensitive export behavior for locked profiles without valid credentials.
 - Require password confirmation for deleting password-protected profiles.
@@ -78,9 +79,10 @@ Define the technical and business limitations that bound safe product developmen
 - Import must merge/dedupe rather than blindly overwrite without safeguards.
 - Import must validate **per row** (`importParse.ts`) so one malformed row cannot discard an entire array; report skip counts accurately.
 - Export modes: JSON, CSV, Both — document and test each.
-- When Blob transfer is not configured and **import** payloads exceed limits, return clear `413` with actionable guidance. Large **exports** must use parts paging instead of failing.
-- Import body must provide **exactly one** of `content` or `blobPathname`.
-- Treat presigned export URLs as short-lived; do not log them in durable public logs.
+- When Neon transfer staging is not configured and **import** payloads exceed limits, return clear `413` with actionable guidance. Large **exports** must use parts paging instead of failing.
+- Import body must provide **exactly one** of `content` or `stagingPathname`.
+- Treat staging download URLs as short-lived; do not log them in durable public logs.
+- Staging pathnames must match expected prefixes (`focista-schedulo/imports/…`, `focista-schedulo/exports/…`).
 
 ---
 
@@ -90,7 +92,7 @@ Before release:
 
 1. Verify task/project/profile CRUD under active profile scope.
 2. Verify recurrence create/edit/complete/delete integrity.
-3. Verify import/export and **automated** sync/save critical flows (including Blob staging when targeting Prod).
+3. Verify import/export and **automated** sync/save critical flows (including Neon staging when targeting Prod).
 4. Verify progress/insights correctness (calendar-week series + tooltips).
 5. Verify showcase `Test` blocks mutations at API and UI.
 6. Verify friendly errors on top failure paths (including `413`).

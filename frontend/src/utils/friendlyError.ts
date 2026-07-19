@@ -14,7 +14,7 @@ function fallbackByStatus(status: number): string {
   if (status === 404) return "The requested item was not found. It may have been removed already.";
   if (status === 409) return "This action conflicts with existing data. Please refresh and retry.";
   if (status === 413)
-    return "This transfer is too large for a direct API response. Large exports now download in pages automatically—retry the export. For imports on Vercel, Blob staging is used when configured.";
+    return "This transfer is too large for a direct API response. Large exports download in pages automatically—retry the export. For imports on Vercel, Neon transfer staging is used when DATABASE_URL is configured.";
   if (status === 422) return "The data format is invalid. Please verify the file structure and values.";
   if (status === 429) return "Too many requests. Please wait a moment, then try again.";
   if (status === 503) return "The workspace is still warming up. Please wait a moment and try again.";

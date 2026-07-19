@@ -12,26 +12,27 @@ Focista Schedulo is a **split architecture**:
 | Layer | Technology | Role |
 |---|---|---|
 | UI | React + Vite (`frontend/`) | Browser SPA; talks to HTTP APIs |
-| API | Express + TypeScript (`backend/`) | Validates input, applies business rules, persists JSON runtime objects |
-| Storage (Prod) | **Vercel Blob** (Hobby free tier) | Durable object store for `*.runtime.json` (no Redis, no MongoDB) |
-| Storage (Dev) | Local disk `backend/data/` | Same JSON shape; hot-reload via `fs.watch` |
+| API | Express + TypeScript (`backend/`) | Validates input, applies business rules, persists runtime entities |
+| Storage (Prod) | **Neon Postgres Free** | Durable row store (`STORAGE_BACKEND=neon`); no Redis, no MongoDB |
+| Storage (Dev) | Local disk `backend/data/` | Split JSON runtime files; hot-reload via `fs.watch` |
 
-**Vercel hosts the static/Vite frontend.** The Express API remains a **long-running Node process** on any Node host (Fly.io, Render, Railway, VPS, etc.). Persistence in production uses **Vercel Blob** so the API host does **not** need a persistent disk volume.
+**Vercel hosts the static/Vite frontend** (and optionally the API via Vercel Services). Persistence in production uses **Neon** so the API host does **not** need a persistent disk volume.
 
 **Recommended production topology**
 
 1. **Vercel Services (same project / same domain):** Vite frontend + Express backend routed via `vercel.json` `services` + rewrites.
-2. **Vercel Blob:** durable runtime JSON (`STORAGE_BACKEND=vercel-blob`).
+2. **Neon Free:** durable store (`STORAGE_BACKEND=neon` + `DATABASE_URL` pooled).
 3. **Same-origin API:** leave `VITE_API_BASE_URL` unset so the SPA calls `/api` on the Vercel host.
 
 ```mermaid
 flowchart LR
   Browser[Browser]
   Vercel[Vercel Services<br/>focista-schedulo.vercel.app]
-  Blob[(Vercel Blob)]
+  Neon[(Neon Postgres Free)]
 
   Browser --> Vercel
-  Vercel -->|put/get runtime JSON| Blob
+  Vercel -->|row upserts / SELECT| Neon
+  Vercel -->|transfer_staging| Neon
 ```
 
 Alternative **split hosting** (UI on Vercel, API elsewhere) still works: set `REQUIRE_VITE_API_BASE_URL=1` and `VITE_API_BASE_URL`, plus `FRONTEND_ORIGIN` on the API host.
@@ -42,8 +43,8 @@ Alternative **split hosting** (UI on Vercel, API elsewhere) still works: set `RE
 The app already uses the browser for **some** local persistence:
 
 - **Active profile id** is stored in `localStorage` (`pst.activeProfileId` in `frontend/src/App.tsx`).
-- **Import** reads a user-selected file in the browser, then posts content to `/api/admin/import`.
-- **Export** requests a snapshot from `/api/admin/export-data` and downloads blobs in the browser.
+- **Import** reads a user-selected file in the browser, then posts content (or a Neon staging pathname) to `/api/admin/import`.
+- **Export** requests a snapshot from `/api/admin/export-data` and downloads files in the browser.
 
 **Important distinction**
 
@@ -79,6 +80,8 @@ At build time, Vite inlines this value. Production builds on Vercel **fail** if 
 
 **Development note:** leave `VITE_API_BASE_URL` unset locally so `window.location.origin` is used and the Vite dev proxy (`vite.config.ts`) continues to forward `/api` to `localhost:4000`.
 
+**Same-origin Services note:** when UI and API share the Vercel host, leave `VITE_API_BASE_URL` unset so the SPA calls `/api` relative to the deployment origin.
+
 ---
 
 ## 4) Backend: production host checklist
@@ -89,30 +92,38 @@ At build time, Vite inlines this value. Production builds on Vercel **fail** if 
 - Expose port `4000` (or set `PORT`).
 - Set `NODE_ENV=production` or `FOCISTA_ENV=production`.
 
-### Persistence (Vercel Blob — no Redis / no MongoDB)
+### Persistence (Neon Postgres Free — no Redis / no MongoDB)
 
-Create a **Private** Blob store in the Vercel dashboard (Storage → Blob). Copy `BLOB_READ_WRITE_TOKEN` onto the **API host** (the token works from any Node process, not only Vercel Functions).
+Create a **Neon Free** project (region near your Vercel deployment). Use the **pooled** connection string on the API host.
 
 | Name | Example | Purpose |
 |---|---|---|
-| `STORAGE_BACKEND` | `vercel-blob` | Force Blob persistence (recommended in Prod) |
-| `BLOB_READ_WRITE_TOKEN` | `vercel_blob_rw_…` | Read/write credential for the Blob store |
-| `BLOB_RUNTIME_PREFIX` | `focista-schedulo/runtime/` | Optional pathname prefix for runtime JSON |
-| `BLOB_ACCESS` | `private` | Must match the store access mode |
+| `STORAGE_BACKEND` | `neon` | Force Neon persistence (recommended in Prod) |
+| `DATABASE_URL` | `postgresql://…@ep-….neon.tech/neondb?sslmode=require` | **Pooled** Neon URL (`-pooler` host preferred) |
+| `DATABASE_URL_UNPOOLED` | `postgresql://…@ep-….neon.tech/neondb?sslmode=require` | Optional; migrations / admin only |
+| `NEON_FRESHNESS_TTL_MS` | `2000` | Cooldown between revision peeks |
+| `NEON_TRANSFER_TTL_HOURS` | `2` | Staging row expiry |
+| `NEON_STATEMENT_TIMEOUT_MS` | `15000` | Fail fast under cold/load |
 
-Runtime objects written:
+Schema is applied from `backend/src/storage/migrations/001_neon_core.sql` (profiles, projects, tasks, `runtime_meta`, `transfer_staging`).
 
-- `tasks.runtime.json`
-- `projects.runtime.json`
-- `profiles.runtime.json`
+Local `fs` remains the default when `DATABASE_URL` is absent (`STORAGE_BACKEND=fs` or unset/`auto`).
 
-Local `fs` remains the default when no Blob credentials are present (`STORAGE_BACKEND=fs` or unset).
+### Neon Free operator checklist
 
-**Free-tier / serverless note:** Hobby limits advanced uploads. Off-Vercel Blob uses a **~1.5s debounce**. On **Vercel**, Blob debounce is **`0`** and completion toggles **await** flush before the response (timers are frozen after respond). Prefer batched UI mutations; avoid tight write loops.
+1. Create Neon project (region near Vercel).
+2. Enable **pooled** connection; copy `DATABASE_URL` onto the API / Vercel Services env.
+3. Leave **scale-to-zero** on (Free cannot disable).
+4. Do **not** configure external pingers / cron keep-alive (burns CU-hours).
+5. Autoscaling max ≤ 2 CU (Free cap).
+6. Single primary branch for Prod; avoid extra long-lived branches.
+7. Run migrations once (unpooled URL optional) if you prefer an explicit migrate step; otherwise first Neon storage use can ensure schema.
+
+**Free-tier / serverless note:** On **Vercel**, Neon `persistDebounceMs` is **`0`** and completion toggles **await** flush before the response (timers are frozen after respond). Prefer batched UI mutations; avoid tight write loops. Expect cold-start latency after idle (~5 min scale-to-zero).
 
 ### Multi-isolate memory
 
-When the API runs as multiple Vercel serverless isolates against one Blob store, each isolate tracks `tasks.runtime.json` mtime and reloads memory if another isolate wrote newer tasks—see `ARCHITECTURE.md` (`ensureTasksMemoryFresh`).
+When the API runs as multiple Vercel serverless isolates against one Neon database, each isolate tracks `tasks_revision` and reloads memory if another isolate wrote newer tasks—see `ARCHITECTURE.md` (`ensureTasksMemoryFresh`).
 
 ### CORS / browser security
 
@@ -139,31 +150,33 @@ These are **API-host secrets only** — never set `VITE_` prefixes for LLM keys.
 | Topic | Guidance |
 |---|---|
 | **SSE** (`/api/events`) | Works when UI and API share an origin **or** when API CORS allows the UI origin. Validate cross-origin EventSource from the Vercel domain. |
-| **Large imports / exports** | Vercel Hobby caps serverless request/response bodies (~4.5MB). Large **imports** use **Vercel Blob staging** when `BLOB_READ_WRITE_TOKEN` is set. Large **exports** prefer Blob; if Blob is unavailable they fall back to **parts** paging so export still succeeds. |
-| **Blob size / ops** | Full-file rewrites of large `tasks.runtime.json` count as uploads; monitor Hobby quotas. |
-| **Hot reload** | `fs.watch` is **disabled** on Blob; use admin reload/sync or process restart after external Blob edits. |
-| **Secrets** | Never commit tokens or `.env` files. Configure secrets in Vercel/API host dashboards only. |
+| **Large imports / exports** | Vercel Hobby caps serverless request/response bodies (~4.5MB). Large **imports** use **Neon `transfer_staging`** via `POST /api/admin/transfer-upload` + `stagingPathname`. Large **exports** prefer staging download; if staging is unavailable they fall back to **parts** paging so export still succeeds. |
+| **Neon Free compute** | 100 CU-hours / month; no keep-alive. Cold start after idle is expected. |
+| **Neon Free storage** | 0.5 GB / project; prune staging; avoid duplicate full dumps. |
+| **Hot reload** | `fs.watch` is **disabled** on Neon; use admin reload/sync or process restart after external DB edits. |
+| **Secrets** | Never commit connection strings or `.env` files. Configure secrets in Vercel/API host dashboards only. |
 
 ---
 
 ## 6) Verification checklist (staging / Prod)
 
 - [ ] UI loads from Vercel domain
-- [ ] API `/health` reports `"storage":"vercel-blob"`
+- [ ] API `/health` reports `"storage":"neon"`
 - [ ] Create/edit/complete/delete task works end-to-end
 - [ ] Task complete survives refresh/reload on Vercel (no snap-back); failed persist shows friendly toast
 - [ ] Import JSON + CSV works; post-import auto sync/save completes (no Sync/Save header buttons)
 - [ ] Export JSON + CSV + Both works
-- [ ] Large import via Blob staging (`blobPathname`) works when payload exceeds inline limits
-- [ ] Large export returns a usable short-lived Blob download URL when applicable
-- [ ] `413` friendly messaging appears if Blob transfer is misconfigured for oversized payloads
-- [ ] Boot shows staged profile loading progress; profiles can load before large tasks blob
+- [ ] Large import via Neon staging (`stagingPathname`) works when payload exceeds inline limits
+- [ ] Large export returns a usable staging download when applicable (else parts paging)
+- [ ] `413` friendly messaging appears if transfer staging is misconfigured for oversized payloads
+- [ ] Boot shows staged profile loading progress; profiles can load before large tasks working set
 - [ ] Progress panel (`/api/stats`) matches active profile scope (calendar-week chart)
 - [ ] Productivity insights (`/api/productivity-insights`) loads for the active profile
 - [ ] Productivity Summary opens from Tasks toolbar; returns 503-friendly UI when `GROQ_API_KEY` unset; succeeds when configured
 - [ ] SSE / Progress panel live updates work from the Vercel origin
-- [ ] Runtime objects appear under the Blob store prefix in the Vercel dashboard
+- [ ] Neon tables populated (`tasks`, `projects`, `profiles`, `runtime_meta`); staging rows expire
 - [ ] `FRONTEND_ORIGIN` set; `VITE_API_BASE_URL` set if split-hosted Production
+- [ ] `DATABASE_URL` (pooled) set
 - [ ] Optional: `GROQ_API_KEY` (+ `TAVILY_API_KEY`) configured for AI Summary in the API environment
 
 ---

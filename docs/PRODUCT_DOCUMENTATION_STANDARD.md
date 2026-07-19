@@ -91,7 +91,7 @@ When stats, task fields, or API payloads change in code:
 When storage backends, debounce policy, or import/export transfer paths change:
 
 1. Update `ARCHITECTURE.md`, `DEPLOYMENT_VERCEL.md`, `GUARDRAILS.md`, and `VARIABLES.md` (env/storage variables).
-2. Document Blob staging (`blobPathname`, presigned download) and body-size limits (`413`) explicitly.
+2. Document Neon transfer staging (`stagingPathname`, staging download URL) and body-size limits (`413`) explicitly.
 3. Clarify automated sync/save vs. any remaining admin endpoints.
 4. On Vercel serverless, document debounce=`0` and which mutations **await** flush before respond (especially task complete) plus multi-isolate freshness behavior.
 
@@ -142,7 +142,7 @@ When behavior changes in code:
 A release is not documentation-complete unless:
 
 - PRD reflects final shipped scope
-- API contracts reflect current route behaviors (including Blob transfer admin routes)
+- API contracts reflect current route behaviors (including Neon transfer admin routes)
 - Variables and metrics formulas match implementation
 - Traceability matrix includes changed requirements
 - Guardrails reflect current technical/business limits
@@ -171,10 +171,10 @@ The complete documentation suite must continuously cover:
 All user-facing failure communication must:
 
 - Explain probable root cause in plain language.
-- Include a safe next-step instruction (`retry`, `check password`, `validate file format`, `configure Blob token`, etc.).
+- Include a safe next-step instruction (`retry`, `check password`, `validate file format`, `configure DATABASE_URL`, etc.).
 - Avoid exposing only raw transport errors (for example, status-only messages without context).
 - Preserve security by excluding sensitive internals (tokens, hashes, stack traces).
-- Cover body-limit failures (`413`) with guidance to use Blob staging or reduce payload size.
+- Cover body-limit failures (`413`) with guidance to use Neon staging or reduce payload size.
 
 ---
 
@@ -183,8 +183,8 @@ All user-facing failure communication must:
 For complex logic paths, source files should include concise comments that clarify:
 
 - Why an invariant exists (profile scoping, recurrence determinism, read-only constraints).
-- Why a fallback or recovery branch is necessary (import fallback, profile visibility bootstrap, Blob staging).
-- Why a tradeoff was chosen (non-monolith runtime persistence, Blob debounce, calendar-week under `last7Days`).
+- Why a fallback or recovery branch is necessary (import fallback, profile visibility bootstrap, Neon transfer staging).
+- Why a tradeoff was chosen (non-monolith runtime persistence, Neon debounce on serverless, calendar-week under `last7Days`).
 
 Do not add noisy comments that restate obvious code.
 

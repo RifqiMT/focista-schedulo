@@ -7,7 +7,7 @@
 
 ## 1) Product Summary
 
-Focista Schedulo is a local-first productivity application designed to help users plan, execute, and track work through profile-scoped task and project organization, recurrence intelligence, calendar planning, gamified progress feedback, and portable data operations (including production-scale Blob transfers).
+Focista Schedulo is a local-first productivity application designed to help users plan, execute, and track work through profile-scoped task and project organization, recurrence intelligence, calendar planning, gamified progress feedback, and portable data operations (including production-scale Neon transfer staging).
 
 **Tagline:** Plan with clarity, focus without noise, and celebrate what you complete.
 
@@ -24,7 +24,7 @@ Users struggle with:
 - Fragile import/export when datasets exceed serverless body limits
 - Opaque failure messages that block recovery
 
-Focista Schedulo addresses these through deterministic scheduling logic, scoped organization (profiles/projects), measurable progress insights, Blob-staged large transfers, and friendly root-cause error communication.
+Focista Schedulo addresses these through deterministic scheduling logic, scoped organization (profiles/projects), measurable progress insights, Neon-staged large transfers, and friendly root-cause error communication.
 
 ---
 
@@ -71,7 +71,7 @@ Detailed profiles: `USER_PERSONAS.md`.
 - Profile-scoped filtering for tasks, projects, and progress modules
 - Showcase read-only behavior for profile named `Test` (UI + API)
 - Password confirmation required for deleting password-protected profiles
-- Staged boot progress (progress bar + status); production fast-path loads profiles before large tasks blob
+- Staged boot progress (progress bar + status); production fast-path loads profiles before large tasks working set
 
 ### 6.2 Task Management
 
@@ -106,10 +106,10 @@ Detailed profiles: `USER_PERSONAS.md`.
 
 ### 6.6 Data Operations
 
-- Import (JSON/CSV), including Blob staging via client upload + `blobPathname`
+- Import (JSON/CSV), including Neon staging via client upload + `stagingPathname`
 - **Per-row import validation** with soft coercion; invalid rows skipped and counted (does not drop entire arrays)
-- Export (JSON/CSV/Both), including short-lived presigned Blob download URLs for large payloads
-- When Blob is unavailable, large exports use **parts paging** (`/api/admin/export-tasks-page`) instead of hard `413`
+- Export (JSON/CSV/Both), including Neon staging download for large payloads (`delivery: "staging"`)
+- When Neon staging is unavailable, large exports use **parts paging** (`/api/admin/export-tasks-page`) instead of hard `413`
 - **Automated sync + save** after import (no manual Sync/Save header buttons)
 - Quiet `reload-data` on tab return
 - Admin endpoints retained for programmatic save/sync/reload
@@ -118,9 +118,9 @@ Detailed profiles: `USER_PERSONAS.md`.
 
 ### 6.7 Persistence and Deployment
 
-- Split runtime objects: `tasks.runtime.json`, `projects.runtime.json`, `profiles.runtime.json`
-- Pluggable storage: `fs` (local) or `vercel-blob` (prod)
-- Production topology: Vercel SPA (+ optional Services) + Node API + Vercel Blob
+- Non-monolith runtime: Neon row-per-task (Prod) or split `*.runtime.json` (local `fs`)
+- Pluggable storage: `fs` (local) or `neon` (prod)
+- Production topology: Vercel SPA (+ optional Services) + Node API + Neon Postgres Free
 - Explicit non-use of Redis/MongoDB in current topology
 
 ---
@@ -141,8 +141,8 @@ Detailed profiles: `USER_PERSONAS.md`.
 | FR-10 | Performance-oriented runtime persistence (non-monolith) |
 | FR-11 | User-friendly, root-cause error feedback for failed actions |
 | FR-12 | Showcase read-only profile policy enforcement (`Test`) |
-| FR-13 | Vercel Prod split hosting with Blob durable store |
-| FR-14 | Large-payload import/export via Vercel Blob staging (export parts fallback when Blob unavailable) |
+| FR-13 | Vercel Prod split hosting with Neon durable store |
+| FR-14 | Large-payload import/export via Neon transfer staging (export parts fallback when staging unavailable) |
 | FR-15 | Calendar-week progress chart with rich weekday tooltips |
 | FR-16 | Badge PNG export and consistent modal naming |
 | FR-17 | Lock affordance for password-protected profiles |
@@ -166,13 +166,13 @@ Detailed profiles: `USER_PERSONAS.md`.
 | NFR-04 | UI interactions must degrade gracefully on transient API failures |
 | NFR-05 | Architecture and docs must remain traceable and auditable |
 | NFR-06 | Error messages must be understandable and actionable for non-technical users |
-| NFR-07 | Production must not require Redis/MongoDB or a mandatory API disk volume when Blob is configured |
-| NFR-08 | Blob debounce and transfer paths must respect free-tier upload/body limits; on Vercel Blob debounce is `0` |
+| NFR-07 | Production must not require Redis/MongoDB or a mandatory API disk volume when Neon is configured |
+| NFR-08 | Neon Free CU/body limits respected; on Vercel Neon debounce is `0`; no keep-alive pinging |
 | NFR-09 | `FRONTEND_ORIGIN` required in production; `VITE_API_BASE_URL` required for split-host Production builds |
 | NFR-10 | Groq/Tavily secrets never logged; prefer server env, allow optional browser-local keys for Summary |
 | NFR-11 | AI Summary must degrade to local digest brief when Groq is unavailable (`degraded: true`) rather than hard-failing when a brief can be built |
 | NFR-12 | Task completion on Vercel must await durable persist; fail closed (rollback + `500`) if save fails |
-| NFR-13 | Vercel Blob isolates must refresh in-memory tasks when remote tasks mtime is newer before list/complete |
+| NFR-13 | Vercel Neon isolates must refresh in-memory tasks when remote `tasks_revision` is newer before list/complete |
 
 ---
 
@@ -190,10 +190,10 @@ Detailed profiles: `USER_PERSONAS.md`.
 
 - Validate all inbound mutation payloads (Zod-backed contracts).
 - Use batch endpoints for high-frequency multi-item operations.
-- Coalesce persistence writes where safe; use longer debounce on Blob **except** on Vercel where debounce is `0` and critical writes are awaited.
+- Coalesce persistence writes where safe; use Neon debounce ~200ms off-Vercel; on Vercel debounce is `0` and critical writes are awaited.
 - Keep recurrence identity deterministic across startup/reload/mutation paths.
 - Enforce read-only profile safeguards at API level (never UI-only).
-- Prefer Blob staging over raising serverless body limits for large transfers; fall back to export **parts** paging when Blob is unavailable.
+- Prefer Neon staging over raising serverless body limits for large transfers; fall back to export **parts** paging when staging is unavailable.
 - Do not rename legacy API keys lightly (`last7Days`); document semantic divergence.
 - Never log Groq/Tavily API keys (server or client-supplied).
 - Import must validate **per row** so one bad record cannot discard an entire array.
@@ -206,7 +206,7 @@ Detailed profiles: `USER_PERSONAS.md`.
 - Faster core action completion times
 - Reduced recurrence integrity defects
 - Improved daily/weekly engagement depth
-- Stable export/import success rates (including Blob-staged paths)
+- Stable export/import success rates (including Neon-staged paths)
 - High friendly-error coverage on failure paths
 - Zero showcase mutation escapes
 
@@ -223,9 +223,9 @@ Detailed definitions: `PRODUCT_METRICS.md` and `METRICS_AND_OKRS.md`.
 | Data inconsistency across profile scope | Profile-aware API filtering and validation |
 | Documentation drift | Documentation standard + traceability updates per release |
 | Unclear failure communication | Centralized friendly error formatter |
-| Large import/export HTTP 413 on Hobby | Blob staging (`blobPathname` / presigned download) |
-| Blob free-tier upload pressure | Longer Blob write debounce off-Vercel; debounce `0` + awaited flush on Vercel; avoid boot-time full sync/save |
-| Stale multi-isolate task memory | `ensureTasksMemoryFresh` before list/complete on Vercel Blob |
+| Large import/export HTTP 413 on Hobby | Neon staging (`stagingPathname` / staging download) |
+| Neon Free CU-hour pressure | No keep-alive; debounce `0` + awaited flush on Vercel; avoid boot-time full sync/save |
+| Stale multi-isolate task memory | `ensureTasksMemoryFresh` via `tasks_revision` before list/complete on Vercel Neon |
 | Lost completion after serverless freeze | Await `persistTasks` on complete; rollback + `500` + UI toast on failure |
 
 ---
