@@ -1416,6 +1416,7 @@ async function loadData() {
       // Serve the Blob snapshot as-is; local/dev still runs full normalization below.
       statsCache.clear();
       productivityCache.clear();
+      await noteTasksStorageMtime();
       return;
     }
   } else {
@@ -1769,6 +1770,7 @@ async function loadData() {
 
   statsCache.clear();
   productivityCache.clear();
+  await noteTasksStorageMtime();
   } finally {
     bootstrapPersistSuppressed = prevSuppress;
   }
@@ -1819,12 +1821,69 @@ let dirtyTasks = false;
 let dirtyProjects = false;
 let dirtyProfiles = false;
 
+/** Last known Blob mtime for tasks.runtime.json in this isolate (multi-instance sync). */
+let tasksStorageMtimeMs = 0;
+let tasksFreshnessCheckInFlight: Promise<void> | null = null;
+
+async function peekTasksStorageMtimeMs(): Promise<number> {
+  const entries = await storage.listSyncJsonEntries();
+  return entries.find((e) => e.name === TASKS_FILE)?.mtimeMs ?? 0;
+}
+
+async function noteTasksStorageMtime(): Promise<void> {
+  if (storage.kind !== "vercel-blob") return;
+  try {
+    tasksStorageMtimeMs = await peekTasksStorageMtimeMs();
+  } catch (err) {
+    console.warn(
+      "[storage] could not note tasks mtime",
+      err instanceof Error ? err.message : String(err)
+    );
+  }
+}
+
+/**
+ * On Vercel Blob, each serverless isolate keeps its own in-memory `tasks`.
+ * Reload when another isolate has written a newer Blob so complete toggles
+ * (and silent UI refreshes) do not snap back to stale state.
+ */
+async function ensureTasksMemoryFresh(): Promise<void> {
+  if (storage.kind !== "vercel-blob" || !isVercel) return;
+  if (bootstrapPersistSuppressed) return;
+  if (dirtyTasks || persistDebounceTimer || persistInFlight) return;
+
+  if (!tasksFreshnessCheckInFlight) {
+    tasksFreshnessCheckInFlight = (async () => {
+      const remote = await peekTasksStorageMtimeMs();
+      if (remote <= tasksStorageMtimeMs) return;
+      console.log("[storage] reloading tasks; blob newer than isolate memory", {
+        remote,
+        local: tasksStorageMtimeMs
+      });
+      await loadData();
+      tasksStorageMtimeMs = Math.max(tasksStorageMtimeMs, remote);
+    })()
+      .catch((err) => {
+        console.error(
+          "[storage] tasks freshness reload failed",
+          err instanceof Error ? err.message : String(err)
+        );
+        throw err;
+      })
+      .finally(() => {
+        tasksFreshnessCheckInFlight = null;
+      });
+  }
+  await tasksFreshnessCheckInFlight;
+}
+
 async function persistRuntimeData(): Promise<void> {
   await ensureDataDir();
   // Compact JSON on Vercel: prettier dumps inflate Blob size/time for multi-MB tasks.
   const encode = (value: unknown) =>
     isVercel ? JSON.stringify(value) : JSON.stringify(value, null, 2);
   const writes: Array<Promise<void>> = [];
+  const wroteTasks = dirtyTasks;
   if (dirtyTasks) {
     writes.push(storage.writeText(TASKS_FILE, encode(tasks)));
   }
@@ -1838,6 +1897,9 @@ async function persistRuntimeData(): Promise<void> {
   dirtyTasks = false;
   dirtyProjects = false;
   dirtyProfiles = false;
+  if (wroteTasks) {
+    await noteTasksStorageMtime();
+  }
 }
 
 async function flushPersistQueue(): Promise<void> {
@@ -2229,7 +2291,12 @@ function resolveEffectiveProfileId(profileIdQuery: unknown): string | null {
   return null;
 }
 
-app.get("/api/tasks", (req, res) => {
+app.get("/api/tasks", async (req, res) => {
+  try {
+    await ensureTasksMemoryFresh();
+  } catch (err) {
+    console.error("[tasks] freshness check failed", err);
+  }
   const { projectId, since, paginate, limit, offset, jumpToDate } = req.query;
   const effectiveProfileId = resolveEffectiveProfileId(req.query.profileId);
 
@@ -2656,7 +2723,12 @@ app.post("/api/tasks/batch-delete", async (req, res) => {
   res.json({ deletedIds: Array.from(deleteSet), missingIds });
 });
 
-app.patch("/api/tasks/:id/complete", (req, res) => {
+app.patch("/api/tasks/:id/complete", async (req, res) => {
+  try {
+    await ensureTasksMemoryFresh();
+  } catch (err) {
+    console.error("[tasks/complete] freshness check failed", err);
+  }
   const id = req.params.id;
   const baseId = id.includes("::") ? id.split("::")[0] : id;
   const task = tasks.find((t) => t.id === id) ?? tasks.find((t) => t.id === baseId);
@@ -2668,9 +2740,21 @@ app.patch("/api/tasks/:id/complete", (req, res) => {
   if (isShowcaseReadOnlyProfileId(task.profileId ?? null)) {
     return res.status(403).json({ error: SHOWCASE_READONLY_MESSAGE });
   }
+  const prevCompleted = task.completed;
+  const prevCompletedAt = task.completedAt;
   task.completed = !task.completed;
   task.completedAt = task.completed ? new Date().toISOString() : undefined;
-  void persistTasks();
+  // Must await on Vercel: fire-and-forget timers are frozen after the response.
+  try {
+    await persistTasks();
+  } catch (err) {
+    console.error("[tasks/complete] persist failed", err);
+    task.completed = prevCompleted;
+    task.completedAt = prevCompletedAt;
+    return res.status(500).json({
+      error: "Failed to save task completion. Please retry."
+    });
+  }
   res.json(task);
 });
 

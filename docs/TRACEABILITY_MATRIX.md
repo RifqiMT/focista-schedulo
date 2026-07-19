@@ -53,8 +53,12 @@ Map functional and non-functional requirements to personas, user stories, primar
 | NFR-05 | Traceable, auditable docs | This matrix + crosswalk | Release docs gate |
 | NFR-06 | Actionable error messages | `friendlyError.ts` | PM-07 audit |
 | NFR-07 | No Redis/Mongo required in current Prod | Architecture + deployment docs | Architecture review |
-| NFR-08 | Respect Blob/body limits | Debounce + Blob staging | PM-09 |
+| NFR-08 | Respect Blob/body limits; Vercel debounce `0` | Debounce + Blob staging + awaited complete | PM-09, QM-01 |
 | NFR-09 | Production env hardening | `FRONTEND_ORIGIN`, `VITE_API_BASE_URL` | Deploy checklist |
+| NFR-10 | AI keys never logged | Guardrails + validate route | EM-09 |
+| NFR-11 | AI Summary degraded brief | `degraded: true` path | EM-09 |
+| NFR-12 | Await complete persist on Vercel | `PATCH .../complete` + debounce test | QM-01, US-202 |
+| NFR-13 | Multi-isolate tasks freshness | `ensureTasksMemoryFresh` | QM-01, FR-02 |
 
 ---
 

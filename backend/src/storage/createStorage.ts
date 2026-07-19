@@ -49,7 +49,7 @@ export function createDataStorage(options: ResolveStorageOptions = {}): DataStor
       env.BLOB_RUNTIME_PREFIX?.trim() || "focista-schedulo/runtime/";
     const accessRaw = (env.BLOB_ACCESS ?? "private").trim().toLowerCase();
     const access = accessRaw === "public" ? "public" : "private";
-    return createVercelBlobStorage({ prefix, access });
+    return createVercelBlobStorage({ prefix, access, env });
   }
   const dataDir =
     options.dataDir ?? path.join(__dirname, "..", "..", "data");

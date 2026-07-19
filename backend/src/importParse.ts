@@ -1,11 +1,5 @@
 import { z } from "zod";
 
-export type ImportDropCounts = {
-  projects: number;
-  tasks: number;
-  profiles: number;
-};
-
 function asRecord(row: unknown): Record<string, unknown> | null {
   if (typeof row !== "object" || row === null || Array.isArray(row)) return null;
   return row as Record<string, unknown>;

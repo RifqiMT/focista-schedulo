@@ -4,7 +4,7 @@
  * and compact formats (e.g. "14k") never stack as duplicates.
  */
 
-export function niceNumber(range: number, round: boolean): number {
+function niceNumber(range: number, round: boolean): number {
   if (!(range > 0) || !Number.isFinite(range)) return 1;
   const exponent = Math.floor(Math.log10(range));
   const fraction = range / 10 ** exponent;
@@ -110,7 +110,7 @@ export function buildYTicks(yMin: number, yMax: number, preferredCount = 4): num
 }
 
 /** Drop ticks that would render as the same axis label (prevents stacked "14k"). */
-export function dedupeTicks(ticks: number[], format: (v: number) => string): number[] {
+function dedupeTicks(ticks: number[], format: (v: number) => string): number[] {
   if (ticks.length <= 1) return ticks;
   const out: number[] = [];
   let prevLabel: string | null = null;

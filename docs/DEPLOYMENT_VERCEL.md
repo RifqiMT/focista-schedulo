@@ -108,7 +108,11 @@ Runtime objects written:
 
 Local `fs` remains the default when no Blob credentials are present (`STORAGE_BACKEND=fs` or unset).
 
-**Free-tier note:** Hobby includes limited advanced operations (uploads). The Blob adapter uses a **1.5s debounce** and multipart uploads for large task dumps. Prefer batched UI mutations; avoid tight write loops.
+**Free-tier / serverless note:** Hobby limits advanced uploads. Off-Vercel Blob uses a **~1.5s debounce**. On **Vercel**, Blob debounce is **`0`** and completion toggles **await** flush before the response (timers are frozen after respond). Prefer batched UI mutations; avoid tight write loops.
+
+### Multi-isolate memory
+
+When the API runs as multiple Vercel serverless isolates against one Blob store, each isolate tracks `tasks.runtime.json` mtime and reloads memory if another isolate wrote newer tasks—see `ARCHITECTURE.md` (`ensureTasksMemoryFresh`).
 
 ### CORS / browser security
 
@@ -147,6 +151,7 @@ These are **API-host secrets only** — never set `VITE_` prefixes for LLM keys.
 - [ ] UI loads from Vercel domain
 - [ ] API `/health` reports `"storage":"vercel-blob"`
 - [ ] Create/edit/complete/delete task works end-to-end
+- [ ] Task complete survives refresh/reload on Vercel (no snap-back); failed persist shows friendly toast
 - [ ] Import JSON + CSV works; post-import auto sync/save completes (no Sync/Save header buttons)
 - [ ] Export JSON + CSV + Both works
 - [ ] Large import via Blob staging (`blobPathname`) works when payload exceeds inline limits

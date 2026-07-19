@@ -269,8 +269,11 @@ The JSON key `last7Days` is a **legacy name**. Shipped behavior: an ordered arra
 | `claimExclusiveTooltip` | Exclusive Tooltip Claim | Registers the single active tooltip/hovercard closer; dismisses any previous owner. | Module singleton closer slot | `frontend/src/uiExclusiveOverlay.ts`; TaskBoard, GamificationPanel, ProductivityAnalysisModal | Release fn from claim |
 | `dismissExclusiveTooltip` | Exclusive Tooltip Dismiss | Closes the active exclusive tooltip (e.g. before showing a toast). | Invoke registered closer | `uiExclusiveOverlay.ts`; `App.tsx` `enqueueToast` | n/a |
 | `toast.singleSlot` | Single Toast Queue | Only one toast is retained in the queue (replace, do not stack). | `setToasts` keeps latest non-duplicate toast | `App.tsx` `enqueueToast` | One toast object |
-| `export.delivery` | Export Delivery Mode | How large exports are delivered to the client. | `inline` \| `blob` \| `parts` | `/api/admin/export-data` | `parts` |
-| `ImportDropCounts` | Import Skip Counts | Counts of projects/tasks/profiles skipped during per-row import validation. | `{ projects, tasks, profiles }` integers | `importParse.ts`; import toast | `{ tasks: 2, projects: 0, profiles: 0 }` |
+| `export.delivery` | Export Delivery Mode | How large exports are delivered to the client (request preference). | `auto` \| `inline` \| `blob` \| `parts` | `/api/admin/export-data` | `auto` |
+| `droppedRows` | Import Skip Counts | Counts of projects/tasks/profiles skipped during per-row import validation. | `{ projects, tasks, profiles }` integers | import response payload; import toast | `{ tasks: 2, projects: 0, profiles: 0 }` |
+| `persistDebounceMs` | Persistence Debounce | Delay before flushing dirty runtime objects to storage. | `fs` ≈ 40; Blob ≈ 1500 off-Vercel; Blob **`0`** when `VERCEL` set | `DataStorage` / `vercelBlobStorage.ts` | `0` on Vercel |
+| `tasksStorageMtimeMs` | Tasks Blob Mtime Cursor | Last known Blob mtime for `tasks.runtime.json` in this isolate. | Updated after load/persist; compared in freshness check | `backend/src/index.ts` | `1721400000000` |
+| `ensureTasksMemoryFresh()` | Tasks Memory Freshness | Reloads in-memory tasks when remote Blob mtime is newer (Vercel multi-isolate). | Peek `listSyncJsonEntries` → `loadData` if newer | `GET /api/tasks`, `PATCH .../complete` | n/a |
 
 ---
 

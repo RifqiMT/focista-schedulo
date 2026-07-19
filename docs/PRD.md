@@ -167,10 +167,12 @@ Detailed profiles: `USER_PERSONAS.md`.
 | NFR-05 | Architecture and docs must remain traceable and auditable |
 | NFR-06 | Error messages must be understandable and actionable for non-technical users |
 | NFR-07 | Production must not require Redis/MongoDB or a mandatory API disk volume when Blob is configured |
-| NFR-08 | Blob debounce and transfer paths must respect free-tier upload/body limits |
+| NFR-08 | Blob debounce and transfer paths must respect free-tier upload/body limits; on Vercel Blob debounce is `0` |
 | NFR-09 | `FRONTEND_ORIGIN` required in production; `VITE_API_BASE_URL` required for split-host Production builds |
 | NFR-10 | Groq/Tavily secrets never logged; prefer server env, allow optional browser-local keys for Summary |
 | NFR-11 | AI Summary must degrade to local digest brief when Groq is unavailable (`degraded: true`) rather than hard-failing when a brief can be built |
+| NFR-12 | Task completion on Vercel must await durable persist; fail closed (rollback + `500`) if save fails |
+| NFR-13 | Vercel Blob isolates must refresh in-memory tasks when remote tasks mtime is newer before list/complete |
 
 ---
 
@@ -188,13 +190,14 @@ Detailed profiles: `USER_PERSONAS.md`.
 
 - Validate all inbound mutation payloads (Zod-backed contracts).
 - Use batch endpoints for high-frequency multi-item operations.
-- Coalesce persistence writes where safe; use longer debounce on Blob.
+- Coalesce persistence writes where safe; use longer debounce on Blob **except** on Vercel where debounce is `0` and critical writes are awaited.
 - Keep recurrence identity deterministic across startup/reload/mutation paths.
 - Enforce read-only profile safeguards at API level (never UI-only).
 - Prefer Blob staging over raising serverless body limits for large transfers; fall back to export **parts** paging when Blob is unavailable.
 - Do not rename legacy API keys lightly (`last7Days`); document semantic divergence.
 - Never log Groq/Tavily API keys (server or client-supplied).
 - Import must validate **per row** so one bad record cannot discard an entire array.
+- On Vercel, never fire-and-forget durability-critical persists after the HTTP response.
 
 ---
 
@@ -221,7 +224,9 @@ Detailed definitions: `PRODUCT_METRICS.md` and `METRICS_AND_OKRS.md`.
 | Documentation drift | Documentation standard + traceability updates per release |
 | Unclear failure communication | Centralized friendly error formatter |
 | Large import/export HTTP 413 on Hobby | Blob staging (`blobPathname` / presigned download) |
-| Blob free-tier upload pressure | Longer Blob write debounce; avoid boot-time full sync/save |
+| Blob free-tier upload pressure | Longer Blob write debounce off-Vercel; debounce `0` + awaited flush on Vercel; avoid boot-time full sync/save |
+| Stale multi-isolate task memory | `ensureTasksMemoryFresh` before list/complete on Vercel Blob |
+| Lost completion after serverless freeze | Await `persistTasks` on complete; rollback + `500` + UI toast on failure |
 
 ---
 

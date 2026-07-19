@@ -100,6 +100,7 @@ Baseline aligned to shipped behavior as of **2026-07-19**, including:
 - Staged profile boot progress and production fast-path profile loading
 - Calendar-week progress series under legacy key `last7Days`
 - Pluggable `fs` / `vercel-blob` storage without Redis/MongoDB
+- Vercel Blob: debounce `0`, awaited task-complete persist, multi-isolate tasks freshness reload
 - Plain-English achievement/milestone descriptions; exclusive tooltip + single-toast feedback
 - AI Productivity Summary / Ask (Groq + optional Tavily) with degraded local brief and browser AI keys
 - Comprehensive free-text task search (AND tokens)

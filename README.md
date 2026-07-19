@@ -24,7 +24,7 @@ Focista Schedulo helps users:
 | Benefit | What it means in practice |
 |---|---|
 | **Control** | Profile-scoped tasks, projects, and progress prevent cross-context leakage. Optional password locks protect sensitive scopes. |
-| **Reliability** | Recurring series use deterministic parent/child identity; merge/dedupe guards protect imports. |
+| **Reliability** | Recurring series use deterministic parent/child identity; merge/dedupe and per-row import guards protect data; Vercel completions await durable Blob persist. |
 | **Speed** | Split-file (or Blob-object) runtime persistence avoids monolith write bottlenecks; batch APIs reduce round-trips. |
 | **Ownership** | Import/export (JSON, CSV, or Both) keeps datasets portable; locked-profile export requires credentials. |
 | **Clarity** | Friendly error messages explain root cause and next steps; showcase profile `Test` is read-only for demos. |

@@ -62,6 +62,8 @@ As a user, I want to edit and toggle completion quickly so that execution remain
 
 - Edit and complete actions update UI optimistically.
 - Failure paths recover gracefully without data corruption.
+- On Vercel Prod, completion is only confirmed after durable persist succeeds; persist failures show a friendly error toast and refresh from server.
+- Virtual recurring occurrences are not auto-marked complete by temporary date backfills.
 
 ### US-203 Bulk task operations
 

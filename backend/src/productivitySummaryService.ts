@@ -123,7 +123,7 @@ export function isoDateLocal(d: Date): string {
   return `${y}-${m}-${day}`;
 }
 
-export function addDaysLocal(base: Date, days: number): Date {
+function addDaysLocal(base: Date, days: number): Date {
   const d = new Date(base.getTime());
   d.setDate(d.getDate() + days);
   return d;
@@ -136,7 +136,7 @@ export function startOfWeekMonday(d: Date): Date {
   return addDaysLocal(x, delta);
 }
 
-export function endOfWeekSunday(d: Date): Date {
+function endOfWeekSunday(d: Date): Date {
   return addDaysLocal(startOfWeekMonday(d), 6);
 }
 
@@ -681,17 +681,7 @@ export function resolveTavilyApiKey(override?: string | null): string | undefine
   return process.env.TAVILY_API_KEY?.trim() || undefined;
 }
 
-/** @deprecated Prefer resolveGroqApiKey — kept for callers that only use env. */
-export function getGroqApiKey(): string | undefined {
-  return resolveGroqApiKey();
-}
-
-/** @deprecated Prefer resolveTavilyApiKey — kept for callers that only use env. */
-export function getTavilyApiKey(): string | undefined {
-  return resolveTavilyApiKey();
-}
-
-export function getGroqModel(): string {
+function getGroqModel(): string {
   return process.env.GROQ_MODEL?.trim() || DEFAULT_GROQ_MODEL;
 }
 
@@ -786,7 +776,7 @@ export async function validateAiApiKey(
   }
 }
 
-export async function searchTavily(
+async function searchTavily(
   query: string,
   apiKey: string,
   maxResults = 4
@@ -820,7 +810,7 @@ export async function searchTavily(
     }));
 }
 
-export async function completeWithGroq(
+async function completeWithGroq(
   system: string,
   user: string,
   apiKey: string,

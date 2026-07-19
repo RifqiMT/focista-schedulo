@@ -28,14 +28,29 @@
 - Large export without Blob: Dev allows larger inline payloads; Prod falls back to **parts** paging (`/api/admin/export-tasks-page`) when Blob staging is unavailable—no more hard `413` on export.
 - Productivity Analysis dual-series charts: Raw (brand red) and Average (blue) now share one palette across lines, legends, tooltips, and PNG export; raw no longer fades to pink when both series are shown.
 - Productivity Analysis Y-axis: nice tick grid with even spacing; no duplicate compact labels (e.g. stacked "14k") or uneven endpoint gaps.
+### Fixed
+
+- **Task completion durability on Vercel:** `PATCH /api/tasks/:id/complete` now **awaits** Blob persist before responding (serverless freezes timers after the response). On persist failure, state rolls back and returns `500` with a clear message; the UI toasts and silently refreshes.
+- **Multi-isolate Blob freshness:** Before task list/complete, Vercel Blob hosts reload in-memory tasks when remote `tasks.runtime.json` mtime is newer than this isolate—prevents completion toggles from snapping back after another instance wrote.
+- Virtual recurring occurrences no longer use a temporary July-2026 force-complete backfill; synthesized occurrences start incomplete.
+
+### Changed
+
+- Vercel Blob `persistDebounceMs` is **`0` when `VERCEL` is set** (was 80ms)—required so awaited flushes complete before the isolate freezes. Non-Vercel Blob hosts keep ~1500ms debounce.
+- Dead-code cleanup: removed deprecated AI key wrappers, unused `ImportDropCounts` / `RuntimeFileName`, unused module exports, superseded CSS/keyframes, and corrected `VARIABLES.md` (`droppedRows`, `export.delivery` includes `auto`).
 - Task search indexes all task attributes (title, description, labels, project/profile names, priority, dates/times, duration, reminder, repeat, location, links, status, ids)—AND token match.
 - Productivity Summary modal visual refresh: elevated header meta chips, sliding Overview/Ask control, web-tips switch, completion ring, richer empty/loading states, and refined Ask composer—still on the solid Analysis shell (no glass).
 - Productivity Summary modal clipping fix: fit dialog inside viewport (`calc(100dvh - …)`), scroll the body instead of `overflow: hidden`, and keep Sources fully reachable.
+
+### Added (tests)
+
+- `backend/src/taskCompletePersist.test.ts` — asserts Blob debounce is `0` on Vercel and positive off-Vercel.
 
 ### Documentation
 
 - Suite sync for Productivity Summary: README, PRD, personas, stories (US-409/US-410), API contracts, architecture, variables, design, guardrails, traceability, metrics, deployment, crosswalk, tests, changelog.
 - Completeness pass: FR-22–FR-24, US-411–US-413, importParse/taskSearch/chartYAxis/export-parts crosswalk, CSS namespace table, NFR-10/11, and remaining docs bumped to **2026-07-19**.
+- Follow-up: document Vercel completion await + Blob multi-isolate freshness (`ensureTasksMemoryFresh`), debounce=`0` on Vercel, and related NFR/guardrail updates.
 
 ---
 

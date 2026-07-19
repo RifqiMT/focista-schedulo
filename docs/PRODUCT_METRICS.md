@@ -66,7 +66,8 @@ Formula authority for domain variables: `VARIABLES.md`.
 
 | Metric ID | Metric Name | Definition | Formula / Observation | Example |
 |---|---|---|---|---|
-| QM-01 | Data Write Safety | No invalid or destructive persistence events | Incident count of corrupt/wipe events = `0` | `0` incidents / release |
+| QM-01 | Data Write Safety | No invalid or destructive persistence events | Incident count of corrupt/wipe/lost-complete events = `0` | `0` incidents / release |
+| QM-06 | Completion Persist Success | Share of complete toggles that durable-save successfully on Prod | `successful completes / complete attempts` | `≥ 0.99` |
 | QM-02 | API Contract Stability | Contract-breaking changes per release | Count of breaking changes without versioning/docs | `0` |
 | QM-03 | Runtime Persistence Efficiency | Write coalescing effectiveness under high activity | Debounced flushes vs mutation rate | Fewer Blob puts than mutations |
 | QM-04 | Docs-Code Parity | Unresolved mismatches in crosswalk audit | Count of open discrepancies | `0` at release close |

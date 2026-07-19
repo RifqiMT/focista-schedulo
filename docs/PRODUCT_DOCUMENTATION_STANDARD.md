@@ -93,6 +93,7 @@ When storage backends, debounce policy, or import/export transfer paths change:
 1. Update `ARCHITECTURE.md`, `DEPLOYMENT_VERCEL.md`, `GUARDRAILS.md`, and `VARIABLES.md` (env/storage variables).
 2. Document Blob staging (`blobPathname`, presigned download) and body-size limits (`413`) explicitly.
 3. Clarify automated sync/save vs. any remaining admin endpoints.
+4. On Vercel serverless, document debounce=`0` and which mutations **await** flush before respond (especially task complete) plus multi-isolate freshness behavior.
 
 ### 4.3 Feedback-layer discipline
 

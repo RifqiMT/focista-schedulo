@@ -80,7 +80,23 @@ Split JSON objects (same schema locally and in Blob):
 - `projects.runtime.json`
 - `profiles.runtime.json`
 
-Used for frequent operational mutations and read paths. Writes are debounced (`~40ms` on `fs`, `~1500ms` on `vercel-blob`).
+Used for frequent operational mutations and read paths. Write debounce:
+
+| Backend | Debounce |
+|---|---|
+| `fs` (local) | ~40ms |
+| `vercel-blob` on long-running Node | ~1500ms (protect free-tier upload quotas) |
+| `vercel-blob` when `VERCEL` is set | **`0`** — serverless freezes timers after the HTTP response; mutations that must survive (especially complete) **await** flush before responding |
+
+### Multi-isolate Blob freshness (Vercel)
+
+Each serverless isolate keeps its own in-memory `tasks`. Before `GET /api/tasks` and `PATCH /api/tasks/:id/complete`, the API calls `ensureTasksMemoryFresh()`:
+
+1. Peek Blob mtime for `tasks.runtime.json` via `storage.listSyncJsonEntries()`.
+2. If remote mtime is newer than this isolate’s `tasksStorageMtimeMs`, reload via `loadData()`.
+3. Skip the check while local dirty flags / persist are in flight.
+
+This prevents completion toggles from appearing to succeed then snap back when another isolate had newer Blob state.
 
 Production boot may load **profiles** via a fast path before the large tasks object to improve time-to-interactive.
 
@@ -116,7 +132,8 @@ Selection: `STORAGE_BACKEND` or auto-detect Blob credentials (`backend/src/stora
 - Profile/project/task scope integrity
 - Stats and productivity aggregate computation (local-calendar semantics; weekly series keyed `last7Days` is seven **Monday–Sunday** buckets)
 - Monthly/Yearly Grinding and badges-earned milestone computation
-- Safe persistence with debounced flush strategy via `DataStorage`
+- Safe persistence with debounced flush strategy via `DataStorage` (**await** critical persists on Vercel; debounce `0` when `VERCEL` is set)
+- Blob multi-isolate task freshness reload before list/complete (`ensureTasksMemoryFresh`)
 - Read-only showcase profile policy enforcement for mutation endpoints
 - Blob staging for large import/export
 
@@ -164,7 +181,8 @@ Primary implementation:
 ## Reliability and Performance Patterns
 
 - Batch endpoints for high-volume mutations
-- Debounced/coalesced persistence writes (longer debounce on Blob)
+- Debounced/coalesced persistence writes (longer debounce on Blob **except** Vercel serverless where debounce is `0`)
+- Critical mutations (task complete) await durable flush before HTTP success on Vercel
 - Silent reconciliation refreshes after optimistic UI updates
 - Instrumentation for action latency diagnostics (`X-Server-Time-Ms`, optional FE slow-action logging)
 - Avoid expensive full sync/save on every boot; automate after import

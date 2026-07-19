@@ -3,7 +3,7 @@
  * Never commit these; they stay in localStorage and are sent only to the app API.
  */
 
-export const AI_KEYS_STORAGE_KEY = "pst.aiKeys";
+const AI_KEYS_STORAGE_KEY = "pst.aiKeys";
 export const AI_KEYS_CHANGED_EVENT = "pst:ai-keys-changed";
 
 export type AiKeys = {

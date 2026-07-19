@@ -26,6 +26,8 @@ This file maps documentation artifacts to the primary implementation locations.
 | Export parts paging | `POST /api/admin/export-tasks-page`; export `delivery: "parts"` in `index.ts` / App export flow |
 | Fullscreen helpers | `fullscreenApi.ts`, `badgeFullscreen.ts`, `productivityAnalysisFullscreen.ts` |
 | Runtime persistence model | `backend/src/storage/*`, persistence helpers in `backend/src/index.ts`, local `backend/data/*.runtime.json` or Vercel Blob prefix |
+| Vercel task complete durability | `PATCH /api/tasks/:id/complete` awaits `persistTasks`; Blob `persistDebounceMs=0` when `VERCEL`; `taskCompletePersist.test.ts` |
+| Multi-isolate Blob freshness | `ensureTasksMemoryFresh` / `tasksStorageMtimeMs` in `backend/src/index.ts` (list + complete) |
 | Automated sync/save (no header buttons) | `autoSyncAndSave` in `frontend/src/App.tsx` (post-import; quiet reload-data on tab return) |
 | Large import/export Blob staging | `backend/src/blobTransfer.ts`, `frontend/src/blobImport.ts`, `/api/admin/blob-upload`, `/api/admin/import`, `/api/admin/export-data` |
 | Import/export/sync/save admin flows | Admin routes in `backend/src/index.ts`; Import/Export in `App.tsx` / `TaskBoard.tsx` |
@@ -47,6 +49,7 @@ This file maps documentation artifacts to the primary implementation locations.
 - [ ] Docs mention split runtime persistence (not monolith runtime)
 - [ ] Docs mention `fs` vs `vercel-blob` backends (no Redis/Mongo in current Prod topology)
 - [ ] Docs mention Blob staging for large import/export (`blobPathname`, presigned download, `413`)
+- [ ] Docs mention Vercel Blob debounce `0`, awaited task-complete persist, and multi-isolate freshness
 - [ ] Docs mention automated sync/save and absence of Sync/Save header buttons
 - [ ] Docs mention staged boot progress / production profile fast-path
 - [ ] Profile-scoped behavior reflected in product and technical docs

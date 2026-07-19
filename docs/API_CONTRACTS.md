@@ -55,10 +55,10 @@ In production, the browser resolves the API origin via `frontend/src/apiClient.t
 
 | Method | Path | Notes |
 |---|---|---|
-| `GET` | `/api/tasks` | Profile/project/time scope and pagination controls |
+| `GET` | `/api/tasks` | Profile/project/time scope and pagination; on Vercel Blob, may reload tasks if remote mtime is newer |
 | `POST` | `/api/tasks` | Create task (incl. recurrence materialization paths) |
 | `PUT` | `/api/tasks/:id` | Update task |
-| `PATCH` | `/api/tasks/:id/complete` | Toggle completion |
+| `PATCH` | `/api/tasks/:id/complete` | Toggle completion; **awaits** persist on Vercel; may `500` + rollback if save fails; freshness reload before mutate |
 | `DELETE` | `/api/tasks/:id` | Delete task |
 | `POST` | `/api/tasks/batch-update` | Bulk update / move |
 | `POST` | `/api/tasks/batch-delete` | Bulk delete |
@@ -180,7 +180,7 @@ The UI no longer exposes manual Sync/Save header buttons. After import, the clie
 ## Response / Performance Notes
 
 - Prefer batch task endpoints for multi-item operations.
-- Blob persistence uses longer write debounce than local `fs`.
+- Blob persistence uses longer write debounce than local `fs` on long-running hosts; on **Vercel**, Blob debounce is **`0`** and completion must await flush.
 - SSE (`/api/events`) requires compatible CORS/origin configuration in split hosting.
 
 ---

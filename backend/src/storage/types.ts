@@ -1,13 +1,5 @@
 export type StorageKind = "fs" | "vercel-blob";
 
-export type RuntimeFileName =
-  | "tasks.runtime.json"
-  | "projects.runtime.json"
-  | "profiles.runtime.json"
-  | "focista-unified-data.json"
-  | "tasks.json"
-  | "projects.json";
-
 export type StorageJsonEntry = {
   name: string;
   mtimeMs: number;

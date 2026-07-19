@@ -51,7 +51,9 @@ Define the technical and business limitations that bound safe product developmen
 - Target: majority of core actions under 1 second in normal local usage.
 - Batch operations are preferred over N individual mutation calls.
 - Avoid redundant foreground refetches after successful optimistic updates.
-- Use longer persistence debounce on Blob (~1500ms) than local fs (~40ms) to protect free-tier upload quotas.
+- Use longer persistence debounce on Blob (~1500ms) than local fs (~40ms) on long-running hosts to protect free-tier upload quotas.
+- On **Vercel serverless**, Blob `persistDebounceMs` must be **`0`**, and durability-critical mutations (especially task complete) must **await** persist before returning success—never rely on fire-and-forget timers after the response.
+- Prefer Blob multi-isolate freshness checks before task list/complete so in-memory state does not overwrite newer Blob writes from another isolate.
 - Any potentially degrading change must include before/after measurement evidence (see Performance Guardrail rule).
 - Profile-gated performance diagnostics may exist for specific profile names; do not expose noisy logging to all users by default.
 

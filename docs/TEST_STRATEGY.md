@@ -35,6 +35,7 @@ Provide a practical and auditable testing strategy that validates functional cor
 | `storage/storage.test.ts` | Storage kind resolution / adapters |
 | `productivitySummaryService.test.ts` | Period ranges, digests, progress-date semantics, degraded local brief |
 | `importParse.test.ts` | Per-row import validation and soft coercion |
+| `taskCompletePersist.test.ts` | Vercel Blob debounce is `0`; off-Vercel Blob debounce > 0 |
 
 ### Current frontend unit test inventory
 
@@ -63,6 +64,7 @@ Provide a practical and auditable testing strategy that validates functional cor
 3. **Recurrence integrity**
    - Repeating tasks remain deterministic across edit/delete/reload.
    - No duplicate same-series/same-date persistence after imports.
+   - Virtual occurrences are not force-completed by temporary date backfills.
 4. **Data operations**
    - Import/export complete successfully and preserve scope links.
    - `Both` export emits JSON and CSV outputs.
@@ -72,6 +74,7 @@ Provide a practical and auditable testing strategy that validates functional cor
 5. **Error clarity**
    - Failure paths show friendly root-cause toasts.
    - No status-only generic error text in key user flows.
+   - Task complete persist failures toast and refresh (no silent snap-back).
 6. **Progress surface**
    - `/api/stats` `last7Days` has seven entries for the **current local Monday–Sunday** and aligns with completion counts by progress day.
    - Weekly chart tooltips expose day totals, per-task XP spread, and weekday-historical stats.
@@ -83,6 +86,7 @@ Provide a practical and auditable testing strategy that validates functional cor
 8. **Persistence topology**
    - `/health` reports expected storage kind.
    - Split runtime objects remain the write path (fs or Blob).
+   - On Vercel: Blob debounce `0`; complete awaits persist; freshness reload before list/complete (`taskCompletePersist.test.ts`).
 9. **Feedback layering**
    - Exclusive tooltip slot: opening a new tooltip dismisses the previous; toasts dismiss tooltips.
    - Single toast queue (no multi-toast stack).

@@ -6,6 +6,8 @@ export type VercelBlobStorageOptions = {
   prefix: string;
   /** Must match the Blob store access mode created in the Vercel dashboard. */
   access: "private" | "public";
+  /** Optional env override (tests); defaults to `process.env`. */
+  env?: NodeJS.ProcessEnv;
 };
 
 function joinPrefix(prefix: string, name: string): string {
@@ -30,12 +32,13 @@ async function streamToUtf8(stream: ReadableStream<Uint8Array>): Promise<string>
  */
 export function createVercelBlobStorage(options: VercelBlobStorageOptions): DataStorage {
   const { prefix, access } = options;
+  const env = options.env ?? process.env;
 
   return {
     kind: "vercel-blob",
     // Coalesce writes aggressively — Hobby free tier limits advanced ops (uploads).
-    // On Vercel serverless, keep debounce short so mutations flush before the isolate freezes.
-    persistDebounceMs: process.env.VERCEL ? 80 : 1500,
+    // On Vercel serverless, debounce must be 0: timers after the response are frozen.
+    persistDebounceMs: env.VERCEL ? 0 : 1500,
 
     async ensureReady() {
       // Blob stores need no mkdir; credential errors surface on first read/write.

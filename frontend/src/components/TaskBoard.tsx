@@ -217,13 +217,6 @@ interface TaskBoardProps {
   onTimeScopeChange: (scope: TimeScope) => void;
 }
 
-function isJuly2026DueDate(dueDate: string | undefined): boolean {
-  const iso = (dueDate ?? "").trim();
-  if (!/^2026-07-\d{2}$/.test(iso)) return false;
-  // Historical backfill only — never force-complete today or future July days.
-  return iso < toISODateLocal(new Date());
-}
-
 function formatWithWeekday(dateStr: string | undefined): string {
   if (!dateStr) return "";
   const d = new Date(dateStr);
@@ -679,13 +672,12 @@ function expandRepeatingTasks(
       );
 
       if (!realExistsOnDate) {
-        const forceCompleted = isJuly2026DueDate(iso);
         result.push({
           ...template,
           id: `${template.id}::${iso}`,
           dueDate: iso,
-          completed: forceCompleted,
-          completedAt: forceCompleted ? `${iso}T12:00:00.000Z` : undefined,
+          completed: false,
+          completedAt: undefined,
           virtual: true,
           parentId: pid,
           childId: `${pid}-${occurrenceIndex}`
@@ -1379,19 +1371,9 @@ export function TaskBoard({
         : Array.isArray(payload?.items)
           ? payload.items
           : [];
-      const scoped = data
-        .map((t) =>
-          isJuly2026DueDate(t.dueDate)
-            ? {
-                ...t,
-                completed: true,
-                completedAt: t.completedAt ?? `${t.dueDate}T12:00:00.000Z`
-              }
-            : t
-        )
-        .filter((t) =>
-          requestedProfileId ? (t.profileId ?? null) === requestedProfileId : true
-        );
+      const scoped = data.filter((t) =>
+        requestedProfileId ? (t.profileId ?? null) === requestedProfileId : true
+      );
       if (timeScope === "all" && !Array.isArray(payload)) {
         const normalized = normalizeProjectAssociation(scoped);
         if (opts?.appendHistory) {
@@ -2707,6 +2689,11 @@ export function TaskBoard({
         );
         if (!res.ok) {
           void refreshTasks({ silent: true });
+          toast({
+            kind: "error",
+            title: "Could not update task",
+            message: "Completion status was not saved. Please try again."
+          });
         } else {
           const updated = (await res.json()) as Task & { missing?: boolean };
           if (updated.missing) {
@@ -2718,6 +2705,11 @@ export function TaskBoard({
         }
       } catch {
         void refreshTasks({ silent: true });
+        toast({
+          kind: "error",
+          title: "Could not update task",
+          message: "Completion status was not saved. Please try again."
+        });
       } finally {
         taskMutationInFlightRef.current.delete(target.id);
       }
