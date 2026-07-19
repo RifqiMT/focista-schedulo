@@ -20,9 +20,11 @@ import type { TaskRecord } from "./storage";
 import {
   INLINE_TRANSFER_MAX_BYTES,
   EXPORT_TASKS_PAGE_SIZE,
+  TRANSFER_UPLOAD_CHUNK_MAX_BYTES,
   inlineExportMaxBytes,
   isExportStagingPathname,
-  isImportStagingPathname
+  isImportStagingPathname,
+  parseChunkMeta
 } from "./transferStaging";
 import {
   PeriodRangeError,
@@ -92,9 +94,24 @@ const NEON_FRESHNESS_TTL_MS = Math.max(
   Number(process.env.NEON_FRESHNESS_TTL_MS ?? 2000) || 2000
 );
 console.log(`[storage] backend=${storage.kind} debounceMs=${storage.persistDebounceMs}`);
+if (isVercel && !neonStore) {
+  console.error(
+    "[storage] Vercel Prod is not using Neon. Large import/export and durable persistence require " +
+      "DATABASE_URL (pooled) on the backend service. Create a Neon Free project and set " +
+      "DATABASE_URL + STORAGE_BACKEND=neon (or leave STORAGE_BACKEND unset)."
+  );
+}
 
 function canUseTransferStaging(): boolean {
   return Boolean(neonStore);
+}
+
+function storageSetupHint(): string | null {
+  if (neonStore) return null;
+  if (isVercel) {
+    return "Set DATABASE_URL (Neon pooled connection string) on the Vercel backend service, then redeploy. Optional: STORAGE_BACKEND=neon.";
+  }
+  return null;
 }
 
 const TaskSchema = z.object({
@@ -2039,6 +2056,13 @@ app.get("/health", (_req, res) => {
     storage: storage.kind,
     production: isProduction,
     transferStaging: canUseTransferStaging(),
+    databaseUrlConfigured: Boolean(
+      process.env.DATABASE_URL?.trim() ||
+        process.env.POSTGRES_URL?.trim() ||
+        process.env.NEON_DATABASE_URL?.trim() ||
+        process.env.DATABASE_URL_POOLED?.trim()
+    ),
+    setupHint: storageSetupHint(),
     bootstrap: {
       profilesReady: lightBootstrapComplete || dataBootstrapComplete,
       dataReady: dataBootstrapComplete
@@ -4114,7 +4138,8 @@ app.post("/api/admin/save-data", async (_req, res) => {
 
 app.post(
   "/api/admin/transfer-upload",
-  express.raw({ type: () => true, limit: "50mb" }),
+  // Cap below Vercel Hobby ~4.5MB so oversized single posts fail in-app, not as platform HTML.
+  express.raw({ type: () => true, limit: "3mb" }),
   async (req, res) => {
     if (!neonStore) {
       return res.status(503).json({
@@ -4137,10 +4162,46 @@ app.post(
       if (body.length === 0) {
         return res.status(400).json({ ok: false, error: "Empty upload body" });
       }
-      const content = body.toString("utf8");
+      if (body.length > TRANSFER_UPLOAD_CHUNK_MAX_BYTES) {
+        return res.status(413).json({
+          ok: false,
+          error: `Chunk too large (${body.length} bytes). Max ${TRANSFER_UPLOAD_CHUNK_MAX_BYTES} bytes per upload request.`
+        });
+      }
+
+      const chunkMeta = parseChunkMeta({
+        index: req.header("x-chunk-index"),
+        total: req.header("x-chunk-total")
+      });
+
       await neonStore.pruneExpiredTransferStaging();
+
+      if (chunkMeta) {
+        const result = await neonStore.putTransferStagingChunk(
+          pathnameHeader,
+          chunkMeta.index,
+          chunkMeta.total,
+          body
+        );
+        return res.json({
+          ok: true,
+          pathname: pathnameHeader,
+          chunkIndex: chunkMeta.index,
+          chunkTotal: chunkMeta.total,
+          complete: result.complete,
+          byteLength: result.byteLength
+        });
+      }
+
+      // Single-shot upload (small files only).
+      const content = body.toString("utf8");
       await neonStore.putTransferStaging(pathnameHeader, content);
-      return res.json({ ok: true, pathname: pathnameHeader, byteLength: body.length });
+      return res.json({
+        ok: true,
+        pathname: pathnameHeader,
+        complete: true,
+        byteLength: body.length
+      });
     } catch (error) {
       console.error("[transfer-upload]", error);
       return res.status(400).json({
@@ -4377,6 +4438,99 @@ app.post("/api/admin/sync-from-data", async (_req, res) => {
     });
   } catch (error) {
     res.status(500).json({
+      ok: false,
+      error: error instanceof Error ? error.message : String(error)
+    });
+  }
+});
+
+app.post("/api/admin/import-merge", async (req, res) => {
+  /**
+   * Self-contained batch merge for large Vercel imports (avoids FUNCTION_PAYLOAD_TOO_LARGE
+   * and does not require transfer_staging). Each request merges a small payload and persists.
+   */
+  const body = z
+    .object({
+      profiles: z.array(z.unknown()).max(500).optional(),
+      projects: z.array(z.unknown()).max(2000).optional(),
+      tasks: z.array(z.unknown()).max(800).optional(),
+      finalize: z.boolean().optional()
+    })
+    .safeParse(req.body ?? {});
+  if (!body.success) {
+    return res.status(400).json({ ok: false, error: body.error.flatten() });
+  }
+
+  try {
+    const pParsed = parseImportArrayPerRow(
+      body.data.profiles ?? [],
+      ProfileSchema,
+      coerceProfileImportRow
+    );
+    const jParsed = parseImportArrayPerRow(
+      body.data.projects ?? [],
+      ProjectSchema,
+      coerceProjectImportRow
+    );
+    const tParsed = parseImportArrayPerRow(
+      body.data.tasks ?? [],
+      TaskSchema,
+      coerceTaskImportRow
+    );
+
+    let incomingProfiles = pParsed.ok;
+    if ((body.data.profiles?.length ?? 0) > 0 && incomingProfiles.length === 0) {
+      incomingProfiles = parseProfilesLoose(body.data.profiles ?? []);
+    }
+    const incomingProjects = jParsed.ok;
+    const incomingTasks = tParsed.ok;
+
+    if (incomingProfiles.length) {
+      profiles = mergeProfiles(profiles, incomingProfiles);
+    }
+    if (incomingProjects.length) {
+      projects = mergeProjects(projects, incomingProjects);
+    }
+    if (incomingTasks.length) {
+      tasks = mergeTasksPreferLatest(tasks, incomingTasks);
+    }
+
+    if (body.data.finalize) {
+      const canonical = canonicalizeProfilesAndRemap(profiles, projects, tasks);
+      profiles = canonical.profiles;
+      projects = canonical.projects;
+      tasks = canonical.tasks;
+      await persistProfiles();
+      await persistProjects();
+      await persistTasks();
+      await loadData();
+    } else {
+      if (incomingProfiles.length) await persistProfiles();
+      if (incomingProjects.length) await persistProjects();
+      if (incomingTasks.length) {
+        await persistTasks({ ids: incomingTasks.map((t) => t.id) });
+      }
+    }
+
+    return res.json({
+      ok: true,
+      merged: {
+        profiles: incomingProfiles.length,
+        projects: incomingProjects.length,
+        tasks: incomingTasks.length
+      },
+      dropped: {
+        profiles: pParsed.dropped,
+        projects: jParsed.dropped,
+        tasks: tParsed.dropped
+      },
+      finalized: Boolean(body.data.finalize),
+      counts: { projects: projects.length, tasks: tasks.length, profiles: profiles.length },
+      storage: storage.kind
+    });
+  } catch (error) {
+    console.error("[admin/import-merge]", error);
+    return res.status(500).json({
       ok: false,
       error: error instanceof Error ? error.message : String(error)
     });

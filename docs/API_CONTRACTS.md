@@ -142,7 +142,7 @@ Other top-level fields (illustrative): `totalPoints`, `level`, `xpToNext`, `comp
 | `POST` | `/api/admin/reload-data` | Reload runtime from storage (used for quiet tab-return refresh) |
 | `POST` | `/api/admin/save-data` | Persist in-memory state to storage |
 | `POST` | `/api/admin/sync-from-data` | Sync from interchange/data sources |
-| `POST` | `/api/admin/transfer-upload` | Multipart/chunked upload into Neon `transfer_staging` for large imports |
+| `POST` | `/api/admin/transfer-upload` | Chunked binary upload into Neon `transfer_staging` (headers: `X-Staging-Pathname`, `X-Chunk-Index`, `X-Chunk-Total`; ≤2MB/chunk) |
 | `GET` | `/api/admin/export-download` | Download a previously staged export payload from Neon |
 | `POST` | `/api/admin/export-data` | Export JSON snapshot; may return inline, staging download, or parts manifest |
 | `POST` | `/api/admin/export-tasks-page` | Page of export tasks (used when `delivery: "parts"`) |

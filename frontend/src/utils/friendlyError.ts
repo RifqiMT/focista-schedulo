@@ -14,7 +14,7 @@ function fallbackByStatus(status: number): string {
   if (status === 404) return "The requested item was not found. It may have been removed already.";
   if (status === 409) return "This action conflicts with existing data. Please refresh and retry.";
   if (status === 413)
-    return "This transfer is too large for a direct API response. Large exports download in pages automatically—retry the export. For imports on Vercel, Neon transfer staging is used when DATABASE_URL is configured.";
+    return "This file is too large for a single API request. On Vercel, imports use chunked Neon staging automatically—retry after redeploying the latest build. Large exports use staging or pages.";
   if (status === 422) return "The data format is invalid. Please verify the file structure and values.";
   if (status === 429) return "Too many requests. Please wait a moment, then try again.";
   if (status === 503) return "The workspace is still warming up. Please wait a moment and try again.";
@@ -22,14 +22,35 @@ function fallbackByStatus(status: number): string {
   return `Request failed (${status}). Please try again.`;
 }
 
+function messageFromPayloadText(text: string): string | null {
+  if (/FUNCTION_PAYLOAD_TOO_LARGE|Request Entity Too Large/i.test(text)) {
+    return "This upload exceeds Vercel’s request size limit. Retry import after deploying chunked Neon staging (≤2MB chunks).";
+  }
+  return null;
+}
+
 export async function getFriendlyErrorMessage(res: Response): Promise<string> {
-  const jsonPayload = await res.json().catch(() => null);
-  const directError = jsonPayload && typeof jsonPayload === "object" ? (jsonPayload as any).error : null;
+  const text = await res.text().catch(() => "");
+  const platform = messageFromPayloadText(text);
+  if (platform) return platform;
+
+  let jsonPayload: unknown = null;
+  try {
+    jsonPayload = text ? JSON.parse(text) : null;
+  } catch {
+    jsonPayload = null;
+  }
+  const directError =
+    jsonPayload && typeof jsonPayload === "object" ? (jsonPayload as any).error : null;
   const nestedMessage =
     jsonPayload && typeof jsonPayload === "object" ? (jsonPayload as any).message : null;
 
   if (isMeaningfulMessage(directError)) return directError.trim();
   if (isMeaningfulMessage(nestedMessage)) return nestedMessage.trim();
+  if (text.trim() && !text.trim().startsWith("<")) {
+    const cleaned = text.replace(/\s+/g, " ").trim().slice(0, 240);
+    if (isMeaningfulMessage(cleaned)) return cleaned;
+  }
 
   return fallbackByStatus(res.status);
 }

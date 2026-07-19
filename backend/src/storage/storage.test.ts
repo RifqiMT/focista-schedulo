@@ -18,7 +18,25 @@ describe("resolveStorageKind", () => {
     ).toBe("neon");
   });
 
-  it("honors explicit fs even when DATABASE_URL exists", () => {
+  it("accepts POSTGRES_URL from Vercel Neon integration", () => {
+    expect(
+      resolveStorageKind({
+        POSTGRES_URL: "postgresql://user:pass@ep-test.neon.tech/neondb"
+      })
+    ).toBe("neon");
+  });
+
+  it("on Vercel prefers neon over stale STORAGE_BACKEND=fs when DB URL exists", () => {
+    expect(
+      resolveStorageKind({
+        VERCEL: "1",
+        STORAGE_BACKEND: "fs",
+        DATABASE_URL: "postgresql://user:pass@ep-test.neon.tech/neondb"
+      })
+    ).toBe("neon");
+  });
+
+  it("honors explicit fs when DATABASE_URL exists off Vercel", () => {
     expect(
       resolveStorageKind({
         STORAGE_BACKEND: "fs",
@@ -29,6 +47,15 @@ describe("resolveStorageKind", () => {
 
   it("rejects neon without DATABASE_URL", () => {
     expect(() => resolveStorageKind({ STORAGE_BACKEND: "neon" })).toThrow(/DATABASE_URL/);
+  });
+
+  it("rejects legacy vercel-blob backend", () => {
+    expect(() =>
+      resolveStorageKind({
+        STORAGE_BACKEND: "vercel-blob",
+        BLOB_READ_WRITE_TOKEN: "vercel_blob_rw_test"
+      })
+    ).toThrow(/no longer supported/);
   });
 
   it("rejects unknown storage backends", () => {

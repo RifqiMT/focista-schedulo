@@ -94,6 +94,14 @@ At build time, Vite inlines this value. Production builds on Vercel **fail** if 
 
 ### Persistence (Neon Postgres Free — no Redis / no MongoDB)
 
+**Required for Vercel Prod:** without a Neon URL the API falls back to ephemeral `fs`, and large imports previously failed with “Transfer staging requires Neon storage”.
+
+1. Neon dashboard → create Free project → copy **pooled** connection string.  
+2. Vercel project → **Settings → Environment Variables** → add to the **backend** service (Production):  
+   - `DATABASE_URL` = pooled URL (also accepts `POSTGRES_URL` from the Neon Vercel integration)  
+   - `STORAGE_BACKEND` = `neon` (optional if `DATABASE_URL` is set)  
+3. Redeploy. Verify `GET /health` shows `"storage":"neon"` and `databaseUrlConfigured: true`.
+
 Create a **Neon Free** project (region near your Vercel deployment). Use the **pooled** connection string on the API host.
 
 | Name | Example | Purpose |
@@ -150,7 +158,8 @@ These are **API-host secrets only** — never set `VITE_` prefixes for LLM keys.
 | Topic | Guidance |
 |---|---|
 | **SSE** (`/api/events`) | Works when UI and API share an origin **or** when API CORS allows the UI origin. Validate cross-origin EventSource from the Vercel domain. |
-| **Large imports / exports** | Vercel Hobby caps serverless request/response bodies (~4.5MB). Large **imports** use **Neon `transfer_staging`** via `POST /api/admin/transfer-upload` + `stagingPathname`. Large **exports** prefer staging download; if staging is unavailable they fall back to **parts** paging so export still succeeds. |
+| **Large imports / exports** | Vercel Hobby caps serverless bodies (~4.5MB). Large **imports** use **client-side batched** `POST /api/admin/import-merge` (no multi-MB body). Optional Neon `transfer_staging` chunked upload remains available. Large **exports** prefer staging download or **parts** paging. |
+| **Neon required for durable Prod** | Set **`DATABASE_URL`** (pooled) on the **backend** Vercel service. `/health` reports `storage`, `transferStaging`, `databaseUrlConfigured`, and `setupHint`. |
 | **Neon Free compute** | 100 CU-hours / month; no keep-alive. Cold start after idle is expected. |
 | **Neon Free storage** | 0.5 GB / project; prune staging; avoid duplicate full dumps. |
 | **Hot reload** | `fs.watch` is **disabled** on Neon; use admin reload/sync or process restart after external DB edits. |

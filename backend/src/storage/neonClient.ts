@@ -8,9 +8,21 @@ let cachedSql: NeonSql | null = null;
 let migrationsApplied = false;
 
 export function getDatabaseUrl(env: NodeJS.ProcessEnv = process.env): string | null {
-  const pooled = env.DATABASE_URL?.trim();
-  if (pooled) return pooled;
-  return env.DATABASE_URL_UNPOOLED?.trim() || null;
+  // Prefer pooled / primary names used by Neon + Vercel integrations.
+  const candidates = [
+    env.DATABASE_URL,
+    env.DATABASE_URL_POOLED,
+    env.POSTGRES_URL,
+    env.POSTGRES_PRISMA_URL,
+    env.NEON_DATABASE_URL,
+    env.DATABASE_URL_UNPOOLED,
+    env.POSTGRES_URL_NON_POOLING
+  ];
+  for (const raw of candidates) {
+    const url = raw?.trim();
+    if (url) return url;
+  }
+  return null;
 }
 
 export function createNeonSql(databaseUrl: string, env: NodeJS.ProcessEnv = process.env): NeonSql {

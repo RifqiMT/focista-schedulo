@@ -10,6 +10,10 @@ import type {
   ProjectRecord,
   TaskRecord
 } from "./neonTypes";
+import {
+  assembleTransferChunks,
+  transferChunkPathname
+} from "../transferStaging";
 
 const TASKS_FILE = "tasks.runtime.json";
 const PROJECTS_FILE = "projects.runtime.json";
@@ -210,6 +214,51 @@ export function createNeonStorage(options: NeonStorageOptions = {}): NeonEntityS
               created_at = now(),
               expires_at = now() + make_interval(hours => ${hours})
       `;
+    },
+
+    async putTransferStagingChunk(pathname, index, total, chunk, ttlHours = transferTtlHours) {
+      const hours = Math.max(1, ttlHours);
+      const partPath = transferChunkPathname(pathname, index);
+      const b64 = chunk.toString("base64");
+      await sql`
+        INSERT INTO transfer_staging (pathname, content, byte_size, created_at, expires_at)
+        VALUES (
+          ${partPath},
+          ${b64},
+          ${chunk.length},
+          now(),
+          now() + make_interval(hours => ${hours})
+        )
+        ON CONFLICT (pathname) DO UPDATE
+          SET content = EXCLUDED.content,
+              byte_size = EXCLUDED.byte_size,
+              created_at = now(),
+              expires_at = now() + make_interval(hours => ${hours})
+      `;
+
+      if (index < total - 1) {
+        return { complete: false, byteLength: chunk.length };
+      }
+
+      const buffers: Buffer[] = [];
+      for (let i = 0; i < total; i++) {
+        const rows = await sql`
+          SELECT content FROM transfer_staging
+          WHERE pathname = ${transferChunkPathname(pathname, i)}
+            AND expires_at > now()
+        `;
+        const row = (rows as Array<{ content: string }>)[0];
+        if (!row?.content) {
+          throw new Error(`Missing transfer chunk ${i}/${total} for ${pathname}`);
+        }
+        buffers.push(Buffer.from(row.content, "base64"));
+      }
+      const assembled = assembleTransferChunks(buffers);
+      await api.putTransferStaging(pathname, assembled, hours);
+      for (let i = 0; i < total; i++) {
+        await sql`DELETE FROM transfer_staging WHERE pathname = ${transferChunkPathname(pathname, i)}`;
+      }
+      return { complete: true, byteLength: Buffer.byteLength(assembled, "utf8") };
     },
 
     async readTransferStaging(pathname) {

@@ -14,6 +14,7 @@ import { dismissExclusiveTooltip } from "./uiExclusiveOverlay";
 import { getFriendlyErrorMessage } from "./utils/friendlyError";
 import { apiFetch, apiUrl } from "./apiClient";
 import { shouldStageImport, uploadImportFileToStaging } from "./transferImport";
+import { importFileInBatches, shouldUseBatchedImport } from "./batchedImport";
 import { AiKeysModal } from "./components/AiKeysModal";
 import { AI_KEYS_CHANGED_EVENT, hasAnyAiKey, hasGroqKey, loadAiKeys } from "./aiKeys";
 
@@ -313,7 +314,38 @@ export function App() {
         return;
       }
 
-      let importBody: { format: "json" | "csv"; content?: string; stagingPathname?: string };
+      let importBody: { format: "json" | "csv"; content?: string; stagingPathname?: string } | null =
+        null;
+
+      // On Vercel, prefer client-parsed batch merge (no multi-MB body, no transfer_staging required).
+      if (shouldUseBatchedImport(file)) {
+        try {
+          const result = await importFileInBatches(file, format);
+          window.dispatchEvent(new Event("pst:projects-changed"));
+          window.dispatchEvent(new Event("pst:tasks-changed"));
+          pushToast({
+            kind: "success",
+            title: "Imported",
+            message: `Imported ${result.imported.profiles} profile(s), ${result.imported.projects} project(s), and ${result.imported.tasks} task(s) via batched merge.`,
+            durationMs: Math.max(3200, performance.now() - started)
+          });
+          return;
+        } catch (err) {
+          const message =
+            err instanceof Error
+              ? err.message
+              : "Batched import failed. If storage is unset, add DATABASE_URL (Neon) on Vercel and redeploy.";
+          setImportError(message);
+          pushToast({
+            kind: "error",
+            title: "Import failed",
+            message,
+            durationMs: performance.now() - started
+          });
+          return;
+        }
+      }
+
       if (shouldStageImport(file)) {
         try {
           const stagingPathname = await uploadImportFileToStaging(file);
@@ -337,6 +369,8 @@ export function App() {
         const content = await file.text();
         importBody = { format, content };
       }
+
+      if (!importBody) return;
 
       const res = await apiFetch("/api/admin/import", {
         method: "POST",
