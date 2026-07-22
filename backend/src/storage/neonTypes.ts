@@ -1,4 +1,4 @@
-import type { DataStorage, StorageJsonEntry, StorageKind } from "./types";
+import type { DataStorage } from "./types";
 
 /** Profile row matching ProfileSchema field names in API memory. */
 export type ProfileRecord = {
@@ -54,5 +54,3 @@ export type NeonEntityStorage = DataStorage & {
 export function isNeonEntityStorage(storage: DataStorage): storage is NeonEntityStorage {
   return storage.kind === "neon";
 }
-
-export type { DataStorage, StorageJsonEntry, StorageKind };

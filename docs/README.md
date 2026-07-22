@@ -1,9 +1,11 @@
 # Focista Schedulo Documentation Index
 
-**Last updated:** 2026-07-19  
+**Last updated:** 2026-07-22  
 **Owner:** Product Operations
 
 This index provides a complete map of product, engineering, design, analytics, and governance documentation for Focista Schedulo.
+
+**Currency:** Last full docs-code audit **2026-07-22**. Product truths: Neon Postgres Free (Prod) / `fs` (local); selective task upserts; dual calendar-week Progress charts; AI Productivity Summary; per-row import; exclusive tooltip + single toast.
 
 ---
 

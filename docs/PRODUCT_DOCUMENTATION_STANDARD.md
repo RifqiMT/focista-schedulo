@@ -1,6 +1,6 @@
 # Product Documentation Standard
 
-**Last updated:** 2026-07-19  
+**Last updated:** 2026-07-22  
 **Owner:** Product (with Design + Engineering)
 
 This standard defines how product documentation is authored, reviewed, versioned, and maintained for Focista Schedulo.
@@ -110,6 +110,10 @@ When Productivity Summary, Ask, or AI key flows change:
 2. Document never-log key policy and client vs server key precedence in Guardrails.
 3. Keep degraded local-brief behavior explicit in PRD NFRs and Test Strategy.
 4. Add/adjust stories (US-409–US-413) and FR-21/FR-24–FR-26 as needed.
+
+### 4.5 Requirement ID discipline
+
+Keep functional requirement IDs (`FR-##`) and story IDs (`US-###`) in **numeric order** in catalog tables (`PRD.md`, `TRACEABILITY_MATRIX.md`, story indexes). When inserting new requirements, append the next free ID rather than inserting mid-sequence; reorder tables after each release audit.
 
 ---
 

@@ -1,6 +1,6 @@
 # Product Requirements Document (PRD)
 
-**Last updated:** 2026-07-19  
+**Last updated:** 2026-07-22  
 **Owner:** Product
 
 ---
@@ -144,8 +144,6 @@ Detailed profiles: `USER_PERSONAS.md`.
 | FR-13 | Vercel Prod split hosting with Neon durable store |
 | FR-14 | Large-payload import/export via Neon transfer staging (export parts fallback when staging unavailable) |
 | FR-15 | Calendar-week progress charts (completions + XP) with rich weekday tooltips and shared “today” highlight |
-| FR-25 | Selective Neon task upsert on create/update/batch (persist only touched task ids) |
-| FR-26 | Task editor save progress affordance (await persist; disable dismiss while saving) |
 | FR-16 | Badge PNG export and consistent modal naming |
 | FR-17 | Lock affordance for password-protected profiles |
 | FR-18 | Staged profile boot progress and production fast-path loading |
@@ -155,6 +153,8 @@ Detailed profiles: `USER_PERSONAS.md`.
 | FR-22 | Per-row import validation with soft coercion (skip invalid rows only) |
 | FR-23 | Comprehensive free-text task search with AND token semantics |
 | FR-24 | Browser-local AI keys management with live provider validation |
+| FR-25 | Selective Neon task upsert on create/update/batch (persist only touched task ids) |
+| FR-26 | Task editor save progress affordance (await persist; disable dismiss while saving) |
 
 ---
 
@@ -235,7 +235,7 @@ Detailed definitions: `PRODUCT_METRICS.md` and `METRICS_AND_OKRS.md`.
 
 ## 13) Release Readiness Checklist
 
-- Functional requirements verified (including FR-13–FR-24)
+- Functional requirements verified (including FR-01–FR-26)
 - Core NFR checks completed
 - Variable/metric definitions reconciled
 - Traceability matrix updated

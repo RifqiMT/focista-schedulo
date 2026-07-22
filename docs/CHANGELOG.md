@@ -1,9 +1,18 @@
 # Changelog
 
-**Last updated:** 2026-07-19  
+**Last updated:** 2026-07-22  
 **Owner:** Engineering
 
 ---
+
+## 2026-07-22
+
+### Docs — Full suite currency audit
+
+- Re-audited repo against shipped product truths (Neon Prod, selective upserts, dual week charts, AI Summary, import resilience). No major product-behavior drift beyond hygiene since `4d95d1f`.
+- Reordered **FR-01–FR-26** numerically in `PRD.md` and `TRACEABILITY_MATRIX.md`; readiness checklist covers FR-01–FR-26.
+- Corrected `profile.passwordHash` documentation to `scrypt` storage format `salt:hex` (`VARIABLES.md`, `GUARDRAILS.md`).
+- Code hygiene: removed unused `neonTypes` type re-exports and a stale CSS sidebar comment; crosswalk notes `neonTypes.ts`.
 
 ## 2026-07-19
 

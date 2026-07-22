@@ -1,6 +1,6 @@
 # Focista Schedulo
 
-**Last updated:** 2026-07-19  
+**Last updated:** 2026-07-22  
 **Owner:** Product + Engineering  
 **Version:** 0.1.0  
 **Tagline:** Plan with clarity, focus without noise, and celebrate what you complete.

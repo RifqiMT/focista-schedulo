@@ -1,6 +1,6 @@
 # Docs-Code Crosswalk
 
-**Last updated:** 2026-07-19  
+**Last updated:** 2026-07-22  
 **Owner:** Engineering + Product Operations
 
 This file maps documentation artifacts to the primary implementation locations.
@@ -27,7 +27,7 @@ This file maps documentation artifacts to the primary implementation locations.
 | Analysis chart Y-axis | `frontend/src/utils/chartYAxis.ts` (`niceYDomain`, `buildYTicks`); `ProductivityAnalysisModal.tsx` |
 | Export parts paging | `POST /api/admin/export-tasks-page`; export `delivery: "parts"` in `index.ts` / App export flow |
 | Fullscreen helpers | `fullscreenApi.ts`, `badgeFullscreen.ts`, `productivityAnalysisFullscreen.ts` |
-| Runtime persistence model | `backend/src/storage/*` (`neonStorage.ts`, `createStorage.ts`, `neonClient.ts`), persistence helpers in `backend/src/index.ts`, local `backend/data/*.runtime.json` |
+| Runtime persistence model | `backend/src/storage/*` (`neonStorage.ts`, `createStorage.ts`, `neonClient.ts`, `neonTypes.ts`), persistence helpers in `backend/src/index.ts`, local `backend/data/*.runtime.json` |
 | Neon schema / migrations | `backend/src/storage/migrations/001_neon_core.sql`; `ensureNeonMigrations` in `neonClient.ts` |
 | Vercel task complete durability | `PATCH /api/tasks/:id/complete` awaits `persistTasks`; Neon `persistDebounceMs=0` when `VERCEL`; `taskCompletePersist.test.ts` |
 | Multi-isolate Neon freshness | `ensureTasksMemoryFresh` / `tasks_revision` in `backend/src/index.ts` + `neonStorage.ts` (list + complete) |
@@ -64,7 +64,8 @@ This file maps documentation artifacts to the primary implementation locations.
 - [ ] Exclusive tooltip + single-toast behavior is documented in Design, Architecture, Guardrails, and Stories (US-408)
 - [ ] Productivity Summary + AI keys + degraded mode documented (FR-21/FR-24, US-409/410/413)
 - [ ] Per-row import + task search + chart Y-axis + export parts documented (FR-22/23, US-411/412)
-- [ ] Traceability matrix includes FR-13–FR-24 and related US IDs
+- [ ] Traceability matrix includes FR-01–FR-26 and related US IDs
+- [ ] Selective Neon upsert + editor save-progress documented (FR-25/FR-26, US-202)
 
 ---
 

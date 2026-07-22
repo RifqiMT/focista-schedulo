@@ -1,6 +1,6 @@
 # Variables Documentation
 
-**Last updated:** 2026-07-19  
+**Last updated:** 2026-07-22  
 **Owner:** Product Analytics + Engineering
 
 This catalog defines core application variables with professional, implementation-aligned descriptions. Each entry includes the variable name, friendly name, definition, formula, location in the apps, and an example value.
@@ -141,7 +141,7 @@ flowchart TB
 | `profile.id` | Profile Identifier | Unique profile key used for scoping projects, tasks, and progress. | `PR-<13digit-ms>-<hex6>` | Backend profile routes; frontend active profile state | `PR-1777494302624-98735a` |
 | `profile.name` | Profile Name | User-facing profile label; also used for policy gates (`Test`, performance toggle). | n/a | Profile hub; workspace selector; badge cards | `Rifqi Tjahyono` |
 | `profile.title` | Profile Title | Secondary profile descriptor shown in headers and modals. | n/a | Profile hub; modal titles (`Profile: Name - Title`) | `Product Builder` |
-| `profile.passwordHash` | Profile Security Hash | Optional hashed password for locked profile access and export control. | scrypt hash of password | `profileSecurity.ts`, profile unlock/delete/export | `$scrypt$...` |
+| `profile.passwordHash` | Profile Security Hash | Optional hashed password for locked profile access and export control. | scrypt(`salt:hex`) | `profileSecurity.ts`, profile unlock/delete/export | `a1b2c3…:d4e5f6…` |
 | `pst.activeProfileId` | Active Profile Preference | Browser-persisted last selected profile id. | localStorage get/set | `frontend/src/App.tsx` | `PR-1777494302624-98735a` |
 
 ### Project Variables

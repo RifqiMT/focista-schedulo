@@ -1,6 +1,6 @@
 # Product and Engineering Guardrails
 
-**Last updated:** 2026-07-19  
+**Last updated:** 2026-07-22  
 **Owner:** Product + Engineering
 
 ---
@@ -65,7 +65,7 @@ Define the technical and business limitations that bound safe product developmen
 
 - Never store plaintext secrets/passwords in repository files.
 - Never commit `.env.local`, tokens, or database credentials.
-- Use hashed profile passwords only where lock is enabled (scrypt).
+- Use hashed profile passwords only where lock is enabled (`scrypt` stored as `salt:hex`).
 - Block or constrain sensitive export behavior for locked profiles without valid credentials.
 - Require password confirmation for deleting password-protected profiles.
 - Require `FRONTEND_ORIGIN` in production API environments.

@@ -1,6 +1,6 @@
 # Production deployment on Vercel (full-stack guidance)
 
-**Last updated:** 2026-07-19  
+**Last updated:** 2026-07-22  
 **Owner:** Engineering
 
 ---
